@@ -396,6 +396,78 @@ begin
 end;
 $$;
 
+create or replace function public.add_client_member_by_email(
+  p_client_id uuid,
+  p_email text,
+  p_access_role public.client_access_role,
+  p_profile_role public.client_profile_role
+)
+returns public.client_members
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_profile public.profiles;
+  updated_member public.client_members;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if public.current_client_role(p_client_id) <> 'owner' then
+    raise exception 'Only the owner can add members';
+  end if;
+
+  if p_access_role = 'owner' then
+    raise exception 'Owner role is not assignable';
+  end if;
+
+  select *
+  into target_profile
+  from public.profiles
+  where lower(email) = lower(trim(p_email))
+  limit 1;
+
+  if target_profile.id is null then
+    raise exception 'User not found';
+  end if;
+
+  if exists (
+    select 1
+    from public.clients c
+    where c.id = p_client_id
+      and c.owner_user_id = target_profile.id
+  ) then
+    raise exception 'This user already owns the client';
+  end if;
+
+  insert into public.client_members (
+    client_id,
+    user_id,
+    access_role,
+    profile_role,
+    added_by_user_id
+  )
+  values (
+    p_client_id,
+    target_profile.id,
+    p_access_role,
+    p_profile_role,
+    auth.uid()
+  )
+  on conflict (client_id, user_id) do update
+    set access_role = excluded.access_role,
+        profile_role = excluded.profile_role,
+        added_by_user_id = excluded.added_by_user_id,
+        updated_at = timezone('utc', now())
+  returning *
+  into updated_member;
+
+  return updated_member;
+end;
+$$;
+
 alter table public.profiles enable row level security;
 alter table public.clients enable row level security;
 alter table public.client_members enable row level security;
@@ -596,6 +668,7 @@ grant execute on function public.can_edit_client(uuid) to authenticated;
 grant execute on function public.can_view_profile(uuid) to authenticated;
 grant execute on function public.redeem_client_share_link(text) to authenticated;
 grant execute on function public.create_client(text, text, text) to authenticated;
+grant execute on function public.add_client_member_by_email(uuid, text, public.client_access_role, public.client_profile_role) to authenticated;
 
 insert into public.credit_catalog_items (category, label, credits, sort_order)
 values

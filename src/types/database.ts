@@ -368,6 +368,15 @@ export type Database = {
         };
         Returns: Database["public"]["Tables"]["clients"]["Row"];
       };
+      add_client_member_by_email: {
+        Args: {
+          p_client_id: string;
+          p_email: string;
+          p_access_role: Database["public"]["Enums"]["client_access_role"];
+          p_profile_role: Database["public"]["Enums"]["client_profile_role"];
+        };
+        Returns: Database["public"]["Tables"]["client_members"]["Row"];
+      };
     };
   };
 };

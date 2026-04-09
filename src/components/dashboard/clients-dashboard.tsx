@@ -4,6 +4,7 @@ import { FolderKanban, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ClientCard } from "@/components/dashboard/client-card";
+import { ClientShareModal } from "@/components/dashboard/client-share-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -34,6 +35,7 @@ export function ClientsDashboard({
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sharingClient, setSharingClient] = useState<ClientSummary | null>(null);
 
   const heading = useMemo(() => {
     if (!clients.length) {
@@ -202,10 +204,21 @@ export function ClientsDashboard({
               })
             }
             onDelete={handleDelete}
+            onShare={setSharingClient}
             canDelete={client.access_role === "owner"}
+            canShare={client.access_role === "owner"}
           />
         ))}
       </section>
+
+      {sharingClient ? (
+        <ClientShareModal
+          clientId={sharingClient.id}
+          clientName={sharingClient.name}
+          isOpen
+          onClose={() => setSharingClient(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { SharePanel } from "@/components/onboarding/share-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -111,7 +110,6 @@ export function OnboardingClientPage({
   const [config, setConfig] = useState(initialData.config);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
   const [shareLinks, setShareLinks] = useState(initialData.shareLinks);
-  const [members, setMembers] = useState(initialData.members);
   const [activeStage] = useState<ProjectStage>(initialStage);
   const [draft, setDraft] = useState<InitiativeEditorDraft | null>(null);
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
@@ -1652,20 +1650,6 @@ export function OnboardingClientPage({
         </div>
         </div>
       </section>
-
-      {initialData.accessRole === "owner" ? (
-        <SharePanel
-          clientId={client.id}
-          userId={userId}
-          accessRole={initialData.accessRole}
-          shareLinks={shareLinks}
-          members={members}
-          onShareLinksChange={setShareLinks}
-          onMembersChange={setMembers}
-          onError={showError}
-          onSuccess={showSuccess}
-        />
-      ) : null}
 
       {isOfferModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">

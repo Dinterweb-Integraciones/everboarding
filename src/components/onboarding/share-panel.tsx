@@ -52,6 +52,10 @@ export function SharePanel({
   const [stageScope, setStageScope] = useState<ProjectStage>("client");
   const [expiresInDays, setExpiresInDays] = useState("14");
   const [isCreating, setIsCreating] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"viewer" | "editor">("viewer");
+  const [inviteProfileRole, setInviteProfileRole] = useState<ClientProfileRole>("client");
+  const [isInviting, setIsInviting] = useState(false);
 
   function resolveProfileRole(value: string | null | undefined): ClientProfileRole {
     if (value && value in PROFILE_ROLE_META) {
@@ -125,6 +129,59 @@ export function SharePanel({
       );
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  async function inviteSystemUser() {
+    onError(null);
+
+    if (!inviteEmail.trim()) {
+      onError("Escribe el correo del usuario que ya existe en el sistema.");
+      return;
+    }
+
+    setIsInviting(true);
+
+    try {
+      const { data, error } = await supabase.rpc("add_client_member_by_email", {
+        p_client_id: clientId,
+        p_email: inviteEmail.trim(),
+        p_access_role: inviteRole,
+        p_profile_role: inviteProfileRole,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .eq("id", data.user_id)
+        .maybeSingle();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const nextMember: ClientMemberRecord = {
+        ...data,
+        email: profile?.email ?? inviteEmail.trim(),
+        full_name: profile?.full_name ?? null,
+      };
+
+      onMembersChange([
+        nextMember,
+        ...members.filter((member) => member.user_id !== nextMember.user_id),
+      ]);
+      setInviteEmail("");
+      onSuccess("Usuario agregado al onboarding correctamente.");
+    } catch (caughtError) {
+      onError(
+        formatUserError(caughtError, "No fue posible compartir con ese usuario."),
+      );
+    } finally {
+      setIsInviting(false);
     }
   }
 
@@ -308,6 +365,54 @@ export function SharePanel({
           <Button className="w-full md:w-auto" onClick={createShareLink} disabled={isCreating}>
             {isCreating ? "Creando..." : "Crear enlace"}
           </Button>
+        </div>
+
+        <div className="mt-6 border-t border-slate-200 pt-6">
+          <h4 className="text-base font-semibold text-slate-900">Agregar usuario del sistema</h4>
+          <p className="mt-2 text-sm text-slate-600">
+            Comparte este onboarding con alguien que ya tenga cuenta registrada.
+          </p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <label className="space-y-2 md:col-span-2">
+              <span className="text-sm font-medium text-slate-700">Correo del usuario</span>
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+                placeholder="usuario@empresa.com"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-slate-700">Permiso</span>
+              <Select
+                value={inviteRole}
+                onChange={(event) => setInviteRole(event.target.value as "viewer" | "editor")}
+              >
+                <option value="viewer">Solo lectura</option>
+                <option value="editor">Lectura y escritura</option>
+              </Select>
+            </label>
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-slate-700">Perfil</span>
+              <Select
+                value={inviteProfileRole}
+                onChange={(event) => setInviteProfileRole(event.target.value as ClientProfileRole)}
+              >
+                {Object.entries(PROFILE_ROLE_META).map(([value, meta]) => (
+                  <option key={value} value={value}>
+                    {meta.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          </div>
+
+          <div className="mt-4">
+            <Button className="w-full md:w-auto" onClick={inviteSystemUser} disabled={isInviting}>
+              {isInviting ? "Agregando..." : "Agregar usuario"}
+            </Button>
+          </div>
         </div>
       </Card>
 

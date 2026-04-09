@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Pencil, Trash2 } from "lucide-react";
+import { ArrowRight, Pencil, Share2, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,18 @@ type ClientCardProps = {
   client: ClientSummary;
   onEdit: (client: ClientSummary) => void;
   onDelete: (client: ClientSummary) => void;
+  onShare: (client: ClientSummary) => void;
   canDelete: boolean;
+  canShare: boolean;
 };
 
 export function ClientCard({
   client,
   onEdit,
   onDelete,
+  onShare,
   canDelete,
+  canShare,
 }: ClientCardProps) {
   return (
     <Card className="flex h-full flex-col p-5">
@@ -51,6 +55,12 @@ export function ClientCard({
           <Pencil className="mr-2 h-4 w-4" />
           Editar
         </Button>
+        {canShare ? (
+          <Button variant="secondary" onClick={() => onShare(client)}>
+            <Share2 className="mr-2 h-4 w-4" />
+            Compartir
+          </Button>
+        ) : null}
         {canDelete ? (
           <Button variant="danger" onClick={() => onDelete(client)}>
             <Trash2 className="mr-2 h-4 w-4" />
