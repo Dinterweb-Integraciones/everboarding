@@ -19,15 +19,12 @@ export default async function SharedLinkPage({
   const { token } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const { supabase } = await requireUser();
-
-  const rpc = supabase.rpc as unknown as (
-    fn: string,
-    args: { p_token: string },
-  ) => Promise<{ data: string | null; error: Error | null }>;
-
-  const { data, error } = await rpc("redeem_client_share_link", {
+  const { data, error } = (await supabase.rpc("redeem_client_share_link", {
     p_token: token,
-  });
+  })) as {
+    data: string | null;
+    error: Error | null;
+  };
 
   if (error || !data) {
     return (

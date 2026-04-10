@@ -9,11 +9,15 @@ export async function POST(request: Request) {
     name?: string;
     description?: string | null;
     slug?: string;
+    sellerUserId?: string | null;
+    csmUserId?: string | null;
   };
 
   const name = body.name?.trim();
   const description = body.description?.trim() || null;
   const slug = body.slug?.trim() || `${slugify(name || "cliente")}-${Date.now().toString(36)}`;
+  const sellerUserId = body.sellerUserId?.trim() || null;
+  const csmUserId = body.csmUserId?.trim() || null;
 
   if (!name) {
     return NextResponse.json({ message: "El nombre es requerido." }, { status: 400 });
@@ -23,6 +27,8 @@ export async function POST(request: Request) {
     p_name: name,
     p_description: description,
     p_slug: slug,
+    p_seller_user_id: sellerUserId,
+    p_csm_user_id: csmUserId,
   });
 
   if (error) {
@@ -44,11 +50,15 @@ export async function PUT(request: Request) {
     id?: string;
     name?: string;
     description?: string | null;
+    sellerUserId?: string | null;
+    csmUserId?: string | null;
   };
 
   const id = body.id?.trim();
   const name = body.name?.trim();
   const description = body.description?.trim() || null;
+  const sellerUserId = body.sellerUserId?.trim() || null;
+  const csmUserId = body.csmUserId?.trim() || null;
 
   if (!id || !name) {
     return NextResponse.json({ message: "ID y nombre son requeridos." }, { status: 400 });
@@ -59,6 +69,8 @@ export async function PUT(request: Request) {
     .update({
       name,
       description,
+      seller_user_id: sellerUserId,
+      csm_user_id: csmUserId,
     })
     .eq("id", id)
     .select("*")

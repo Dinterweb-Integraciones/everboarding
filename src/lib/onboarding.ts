@@ -12,9 +12,21 @@ export type ClientProfileRole = Database["public"]["Enums"]["client_profile_role
 export type InitiativeStatus = Database["public"]["Enums"]["initiative_status"];
 export type CustomPlanType = Database["public"]["Enums"]["custom_plan_type"];
 export type ProjectStage = Database["public"]["Enums"]["project_stage"];
+export type PublicOnboardingAudience = "client" | "prospect";
 
 export type ClientSummary = Tables<"clients"> & {
   access_role: ClientAccessRole;
+};
+
+export type PublicClientSummary = Pick<
+  Tables<"clients">,
+  "id" | "slug" | "name" | "description" | "seller_user_id" | "csm_user_id"
+>;
+
+export type AssignableUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
 };
 
 export type CreditCatalogItem = Tables<"credit_catalog_items">;
@@ -45,6 +57,13 @@ export type OnboardingSnapshot = {
   catalog: CreditCatalogItem[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
+};
+
+export type PublicOnboardingSnapshot = {
+  client: PublicClientSummary;
+  config: OnboardingConfig;
+  initiatives: InitiativeRecord[];
+  paymentEmail: string | null;
 };
 
 export type OnboardingMetrics = {
@@ -92,6 +111,12 @@ export function resolveStageFromProfileRole(
   }
 
   return "client";
+}
+
+export function resolveStageFromPublicAudience(
+  audience: PublicOnboardingAudience,
+): ProjectStage {
+  return audience === "prospect" ? "sales" : "client";
 }
 
 export function createDefaultConfig(clientId: string): OnboardingConfig {

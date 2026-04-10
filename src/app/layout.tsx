@@ -9,9 +9,9 @@ const lexend = Lexend({
 });
 
 export const metadata: Metadata = {
-  title: "Everboarding",
+  title: "Strategic Roadmap & Capacity Manager",
   description:
-    "Gestiona clientes, roadmap de onboarding, permisos compartidos y capacidad operativa.",
+    "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
 };
 
 export default function RootLayout({
@@ -20,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={lexend.variable}>
-      <body>{children}</body>
+    <html lang="es" className={lexend.variable} suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

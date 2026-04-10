@@ -3,16 +3,25 @@ import { redirect } from "next/navigation";
 import { ClientsDashboard } from "@/components/dashboard/clients-dashboard";
 import { requireUser } from "@/lib/auth";
 import { fetchUserMemberships } from "@/lib/membership-access";
-import { resolveStageFromProfileRole, type ClientSummary } from "@/lib/onboarding";
+import {
+  resolveStageFromProfileRole,
+  type AssignableUser,
+  type ClientSummary,
+} from "@/lib/onboarding";
 import type { Tables } from "@/types/database";
 
 export default async function DashboardPage() {
   const { supabase, user } = await requireUser();
 
-  const [{ data: clientRows, error: clientsError }, { data: membershipRows, error: membershipError }] =
+  const [
+    { data: clientRows, error: clientsError },
+    { data: membershipRows, error: membershipError },
+    { data: assignableProfiles, error: profilesError },
+  ] =
     await Promise.all([
       supabase.from("clients").select("*").order("updated_at", { ascending: false }),
       fetchUserMemberships(supabase, user.id),
+      supabase.rpc("list_assignable_profiles"),
     ]);
 
   if (clientsError) {
@@ -21,6 +30,10 @@ export default async function DashboardPage() {
 
   if (membershipError) {
     console.error("dashboard_memberships_load_failed", membershipError);
+  }
+
+  if (profilesError) {
+    console.error("dashboard_profiles_load_failed", profilesError);
   }
 
   const membershipRecords = ((membershipError ? [] : membershipRows) ?? []) as Array<{
@@ -52,5 +65,10 @@ export default async function DashboardPage() {
     access_role: client.owner_user_id === user.id ? "owner" : membershipMap.get(client.id) ?? "viewer",
   }));
 
-  return <ClientsDashboard initialClients={clients} />;
+  return (
+    <ClientsDashboard
+      initialClients={clients}
+      assignableUsers={(assignableProfiles ?? []) as AssignableUser[]}
+    />
+  );
 }

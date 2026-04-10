@@ -27,12 +27,20 @@ create table if not exists public.profiles (
 create table if not exists public.clients (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  seller_user_id uuid references auth.users(id) on delete set null,
+  csm_user_id uuid references auth.users(id) on delete set null,
   name text not null,
   slug text not null unique default replace(gen_random_uuid()::text, '-', ''),
   description text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.clients
+add column if not exists seller_user_id uuid references auth.users(id) on delete set null;
+
+alter table public.clients
+add column if not exists csm_user_id uuid references auth.users(id) on delete set null;
 
 create table if not exists public.client_members (
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -135,6 +143,8 @@ create table if not exists public.onboarding_activity_logs (
 );
 
 create index if not exists clients_owner_user_id_idx on public.clients (owner_user_id);
+create index if not exists clients_seller_user_id_idx on public.clients (seller_user_id);
+create index if not exists clients_csm_user_id_idx on public.clients (csm_user_id);
 create index if not exists clients_updated_at_idx on public.clients (updated_at desc);
 create index if not exists client_members_user_id_idx on public.client_members (user_id);
 create index if not exists client_share_links_client_id_idx on public.client_share_links (client_id, created_at desc);
@@ -224,10 +234,85 @@ begin
 end;
 $$;
 
+create or replace function public.sync_client_assignment_members()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.client_members
+  where client_id = new.id
+    and profile_role = 'sales'
+    and user_id is distinct from new.seller_user_id
+    and user_id <> new.owner_user_id;
+
+  delete from public.client_members
+  where client_id = new.id
+    and profile_role = 'csm'
+    and user_id is distinct from new.csm_user_id
+    and user_id <> new.owner_user_id;
+
+  if new.seller_user_id is not null
+     and new.seller_user_id <> new.owner_user_id
+     and (new.csm_user_id is null or new.seller_user_id <> new.csm_user_id) then
+    insert into public.client_members (
+      client_id,
+      user_id,
+      access_role,
+      profile_role,
+      added_by_user_id
+    )
+    values (
+      new.id,
+      new.seller_user_id,
+      'viewer',
+      'sales',
+      new.owner_user_id
+    )
+    on conflict (client_id, user_id) do update
+      set access_role = excluded.access_role,
+          profile_role = excluded.profile_role,
+          added_by_user_id = excluded.added_by_user_id,
+          updated_at = timezone('utc', now());
+  end if;
+
+  if new.csm_user_id is not null
+     and new.csm_user_id <> new.owner_user_id then
+    insert into public.client_members (
+      client_id,
+      user_id,
+      access_role,
+      profile_role,
+      added_by_user_id
+    )
+    values (
+      new.id,
+      new.csm_user_id,
+      'editor',
+      'csm',
+      new.owner_user_id
+    )
+    on conflict (client_id, user_id) do update
+      set access_role = excluded.access_role,
+          profile_role = excluded.profile_role,
+          added_by_user_id = excluded.added_by_user_id,
+          updated_at = timezone('utc', now());
+  end if;
+
+  return new;
+end;
+$$;
+
 drop trigger if exists on_client_created on public.clients;
 create trigger on_client_created
 after insert on public.clients
 for each row execute procedure public.initialize_client();
+
+drop trigger if exists sync_client_assignment_members_on_write on public.clients;
+create trigger sync_client_assignment_members_on_write
+after insert or update of seller_user_id, csm_user_id, owner_user_id on public.clients
+for each row execute procedure public.sync_client_assignment_members();
 
 create or replace function public.current_client_role(target_client_id uuid)
 returns public.client_access_role
@@ -363,7 +448,9 @@ $$;
 create or replace function public.create_client(
   p_name text,
   p_description text default null,
-  p_slug text default null
+  p_slug text default null,
+  p_seller_user_id uuid default null,
+  p_csm_user_id uuid default null
 )
 returns public.clients
 language plpgsql
@@ -379,12 +466,16 @@ begin
 
   insert into public.clients (
     owner_user_id,
+    seller_user_id,
+    csm_user_id,
     name,
     description,
     slug
   )
   values (
     auth.uid(),
+    p_seller_user_id,
+    p_csm_user_id,
     trim(p_name),
     nullif(trim(coalesce(p_description, '')), ''),
     coalesce(nullif(trim(coalesce(p_slug, '')), ''), replace(gen_random_uuid()::text, '-', ''))
@@ -394,6 +485,21 @@ begin
 
   return created_client;
 end;
+$$;
+
+create or replace function public.list_assignable_profiles()
+returns table (
+  id uuid,
+  email text,
+  full_name text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select p.id, p.email, p.full_name
+  from public.profiles p
+  order by coalesce(nullif(trim(p.full_name), ''), p.email);
 $$;
 
 create or replace function public.add_client_member_by_email(
@@ -465,6 +571,237 @@ begin
   into updated_member;
 
   return updated_member;
+end;
+$$;
+
+create or replace function public.resolve_public_client_id(p_slug text)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select c.id
+  from public.clients c
+  where c.slug = trim(p_slug)
+     or c.id::text = trim(p_slug)
+  limit 1;
+$$;
+
+create or replace function public.get_public_onboarding_snapshot(p_slug text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  target_client public.clients;
+  target_config public.onboarding_configs;
+  payment_email text;
+begin
+  select *
+  into target_client
+  from public.clients
+  where id = public.resolve_public_client_id(p_slug)
+  limit 1;
+
+  if target_client.id is null then
+    return null;
+  end if;
+
+  select *
+  into target_config
+  from public.onboarding_configs
+  where client_id = target_client.id
+  limit 1;
+
+  select p.email
+  into payment_email
+  from public.profiles p
+  where p.id = coalesce(target_client.seller_user_id, target_client.owner_user_id)
+  limit 1;
+
+  return jsonb_build_object(
+    'client',
+    jsonb_build_object(
+      'id', target_client.id,
+      'slug', target_client.slug,
+      'name', target_client.name,
+      'description', target_client.description,
+      'seller_user_id', target_client.seller_user_id,
+      'csm_user_id', target_client.csm_user_id
+    ),
+    'config',
+    coalesce(
+      to_jsonb(target_config),
+      jsonb_build_object(
+        'client_id', target_client.id,
+        'start_date', current_date,
+        'base_capacity', 80,
+        'extra_capacity', 0,
+        'lost_credits', 0,
+        'custom_plan_credits', null,
+        'custom_plan_price', null,
+        'custom_plan_type', null,
+        'current_stage', 'cs',
+        'credit_validity_days', 60,
+        'show_all_completed', false,
+        'sales_cleared', false,
+        'created_at', timezone('utc', now()),
+        'updated_at', timezone('utc', now()),
+        'updated_by_user_id', null
+      )
+    ),
+    'payment_email',
+    payment_email,
+    'initiatives',
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', i.id,
+            'client_id', i.client_id,
+            'title', i.title,
+            'type', i.type,
+            'status', i.status,
+            'description', i.description,
+            'owner_client', i.owner_client,
+            'owner_csm', i.owner_csm,
+            'est_start_date', i.est_start_date,
+            'est_end_date', i.est_end_date,
+            'date_planned', i.date_planned,
+            'last_activity', i.last_activity,
+            'is_blocked', i.is_blocked,
+            'sort_order', i.sort_order,
+            'created_at', i.created_at,
+            'updated_at', i.updated_at,
+            'created_by_user_id', i.created_by_user_id,
+            'updated_by_user_id', i.updated_by_user_id,
+            'subitems',
+            coalesce(
+              (
+                select jsonb_agg(
+                  jsonb_build_object(
+                    'id', s.id,
+                    'initiative_id', s.initiative_id,
+                    'catalog_item_id', s.catalog_item_id,
+                    'name', s.name,
+                    'unit_credits', s.unit_credits,
+                    'quantity', s.quantity,
+                    'sort_order', s.sort_order,
+                    'created_at', s.created_at,
+                    'updated_at', s.updated_at
+                  )
+                  order by s.sort_order
+                )
+                from public.onboarding_initiative_subitems s
+                where s.initiative_id = i.id
+              ),
+              '[]'::jsonb
+            ),
+            'logs', '[]'::jsonb,
+            'credits',
+            coalesce(
+              (
+                select sum(s.unit_credits * s.quantity)
+                from public.onboarding_initiative_subitems s
+                where s.initiative_id = i.id
+              ),
+              0
+            )
+          )
+          order by i.sort_order, i.created_at
+        )
+        from public.onboarding_initiatives i
+        where i.client_id = target_client.id
+      ),
+      '[]'::jsonb
+    )
+  );
+end;
+$$;
+
+create or replace function public.create_public_backlog_initiative(
+  p_slug text,
+  p_title text,
+  p_description text default null
+)
+returns public.onboarding_initiatives
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_client_id uuid;
+  created_initiative public.onboarding_initiatives;
+  next_sort_order integer;
+begin
+  target_client_id := public.resolve_public_client_id(p_slug);
+
+  if target_client_id is null then
+    raise exception 'Client not found';
+  end if;
+
+  if nullif(trim(coalesce(p_title, '')), '') is null then
+    raise exception 'Title is required';
+  end if;
+
+  select coalesce(max(i.sort_order) + 1, 0)
+  into next_sort_order
+  from public.onboarding_initiatives i
+  where i.client_id = target_client_id
+    and i.status = 'backlog';
+
+  insert into public.onboarding_initiatives (
+    client_id,
+    title,
+    type,
+    status,
+    description,
+    owner_client,
+    owner_csm,
+    est_start_date,
+    est_end_date,
+    date_planned,
+    last_activity,
+    is_blocked,
+    sort_order,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  values (
+    target_client_id,
+    trim(p_title),
+    'Solicitud publica',
+    'backlog',
+    nullif(trim(coalesce(p_description, '')), ''),
+    null,
+    null,
+    null,
+    null,
+    current_date,
+    current_date,
+    false,
+    next_sort_order,
+    null,
+    null
+  )
+  returning *
+  into created_initiative;
+
+  insert into public.onboarding_activity_logs (
+    initiative_id,
+    entry,
+    created_by_user_id
+  )
+  values (
+    created_initiative.id,
+    'Solicitud creada desde la vista publica.',
+    null
+  );
+
+  return created_initiative;
 end;
 $$;
 
@@ -667,8 +1004,11 @@ grant execute on function public.can_view_client(uuid) to authenticated;
 grant execute on function public.can_edit_client(uuid) to authenticated;
 grant execute on function public.can_view_profile(uuid) to authenticated;
 grant execute on function public.redeem_client_share_link(text) to authenticated;
-grant execute on function public.create_client(text, text, text) to authenticated;
+grant execute on function public.create_client(text, text, text, uuid, uuid) to authenticated;
 grant execute on function public.add_client_member_by_email(uuid, text, public.client_access_role, public.client_profile_role) to authenticated;
+grant execute on function public.list_assignable_profiles() to authenticated;
+grant execute on function public.get_public_onboarding_snapshot(text) to anon, authenticated;
+grant execute on function public.create_public_backlog_initiative(text, text, text) to anon, authenticated;
 
 insert into public.credit_catalog_items (category, label, credits, sort_order)
 values

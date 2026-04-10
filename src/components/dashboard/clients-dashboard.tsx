@@ -9,27 +9,34 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { ClientSummary } from "@/lib/onboarding";
+import type { AssignableUser, ClientSummary } from "@/lib/onboarding";
 import { formatUserError, slugify } from "@/lib/utils";
 
 type ClientsDashboardProps = {
   initialClients: ClientSummary[];
+  assignableUsers: AssignableUser[];
 };
 
 type FormState = {
   id?: string;
   name: string;
   description: string;
+  sellerUserId: string;
+  csmUserId: string;
 };
 
 const emptyForm: FormState = {
   name: "",
   description: "",
+  sellerUserId: "",
+  csmUserId: "",
 };
 
 export function ClientsDashboard({
   initialClients,
+  assignableUsers,
 }: ClientsDashboardProps) {
   const [clients, setClients] = useState(initialClients);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -61,6 +68,8 @@ export function ClientsDashboard({
             id: form.id,
             name: form.name.trim(),
             description: form.description.trim() || null,
+            sellerUserId: form.sellerUserId || null,
+            csmUserId: form.csmUserId || null,
           }),
         });
 
@@ -85,6 +94,8 @@ export function ClientsDashboard({
           body: JSON.stringify({
             name: form.name.trim(),
             description: form.description.trim() || null,
+            sellerUserId: form.sellerUserId || null,
+            csmUserId: form.csmUserId || null,
             slug: `${baseSlug || "cliente"}-${Date.now().toString(36)}`,
           }),
         });
@@ -178,6 +189,40 @@ export function ClientsDashboard({
                 placeholder="Contexto del cliente, equipo, alcance o prioridad."
               />
             </label>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-700">Vendedor</span>
+                <Select
+                  value={form.sellerUserId}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, sellerUserId: event.target.value }))
+                  }
+                >
+                  <option value="">Sin asignar</option>
+                  {assignableUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.full_name || user.email}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-700">CS</span>
+                <Select
+                  value={form.csmUserId}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, csmUserId: event.target.value }))
+                  }
+                >
+                  <option value="">Sin asignar</option>
+                  {assignableUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.full_name || user.email}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            </div>
             {error ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 {error}
@@ -201,6 +246,8 @@ export function ClientsDashboard({
                 id: selectedClient.id,
                 name: selectedClient.name,
                 description: selectedClient.description ?? "",
+                sellerUserId: selectedClient.seller_user_id ?? "",
+                csmUserId: selectedClient.csm_user_id ?? "",
               })
             }
             onDelete={handleDelete}

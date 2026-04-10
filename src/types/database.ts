@@ -36,6 +36,8 @@ export type Database = {
         Row: {
           id: string;
           owner_user_id: string;
+          seller_user_id: string | null;
+          csm_user_id: string | null;
           name: string;
           slug: string;
           description: string | null;
@@ -45,6 +47,8 @@ export type Database = {
         Insert: {
           id?: string;
           owner_user_id: string;
+          seller_user_id?: string | null;
+          csm_user_id?: string | null;
           name: string;
           slug?: string;
           description?: string | null;
@@ -54,6 +58,8 @@ export type Database = {
         Update: {
           id?: string;
           owner_user_id?: string;
+          seller_user_id?: string | null;
+          csm_user_id?: string | null;
           name?: string;
           slug?: string;
           description?: string | null;
@@ -365,8 +371,18 @@ export type Database = {
           p_name: string;
           p_description: string | null;
           p_slug: string | null;
+          p_seller_user_id: string | null;
+          p_csm_user_id: string | null;
         };
         Returns: Database["public"]["Tables"]["clients"]["Row"];
+      };
+      list_assignable_profiles: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          id: string;
+          email: string;
+          full_name: string | null;
+        }[];
       };
       add_client_member_by_email: {
         Args: {
@@ -376,6 +392,20 @@ export type Database = {
           p_profile_role: Database["public"]["Enums"]["client_profile_role"];
         };
         Returns: Database["public"]["Tables"]["client_members"]["Row"];
+      };
+      get_public_onboarding_snapshot: {
+        Args: {
+          p_slug: string;
+        };
+        Returns: Json;
+      };
+      create_public_backlog_initiative: {
+        Args: {
+          p_slug: string;
+          p_title: string;
+          p_description: string | null;
+        };
+        Returns: Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
       };
     };
   };

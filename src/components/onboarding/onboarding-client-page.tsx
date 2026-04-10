@@ -5,17 +5,20 @@ import {
   CalendarDays,
   Copy,
   Download,
+  PencilLine,
   FolderPen,
   Link2,
   Plus,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,16 +37,13 @@ import {
   createEmptyDraft,
   formatDateRange,
   getEstimatedStatus,
-  getRoleLabel,
   suggestPlanPrice,
-  type ClientProfileRole,
   type CustomPlanType,
   type InitiativeEditorDraft,
   type InitiativeRecord,
   type InitiativeStatus,
   type OnboardingSnapshot,
   type ProjectStage,
-  type ShareLinkRecord,
 } from "@/lib/onboarding";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate, formatUserError, safeParseNumber, toIsoDate } from "@/lib/utils";
@@ -56,18 +56,6 @@ type OnboardingClientPageProps = {
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
-
-const stageToProfileRole: Record<ProjectStage, ClientProfileRole> = {
-  sales: "sales",
-  cs: "csm",
-  client: "client",
-};
-
-const quickShareLabels: Record<ProjectStage, string> = {
-  sales: "Copiar link para prospecto",
-  cs: "Copiar link para CS",
-  client: "Copiar link para cliente",
-};
 
 function isReservedStatus(status: InitiativeStatus) {
   return status === "planned" || status === "executing";
@@ -100,6 +88,58 @@ function getDaysUntil(date: string | null) {
   );
 }
 
+function hasUnsupportedColorFunction(value: string) {
+  return /\b(?:oklch|oklab|lab|lch)\(/i.test(value);
+}
+
+function sanitizeExportColors(root: HTMLElement) {
+  const colorFallbacks: Array<[string, string, string]> = [
+    ["color", "color", "#33475b"],
+    ["backgroundColor", "background-color", "transparent"],
+    ["borderTopColor", "border-top-color", "#dfe3eb"],
+    ["borderRightColor", "border-right-color", "#dfe3eb"],
+    ["borderBottomColor", "border-bottom-color", "#dfe3eb"],
+    ["borderLeftColor", "border-left-color", "#dfe3eb"],
+    ["textDecorationColor", "text-decoration-color", "#33475b"],
+    ["outlineColor", "outline-color", "#dfe3eb"],
+    ["caretColor", "caret-color", "#33475b"],
+    ["fill", "fill", "#33475b"],
+    ["stroke", "stroke", "#33475b"],
+  ];
+
+  const styleLookup = {
+    color: (styles: CSSStyleDeclaration) => styles.color,
+    backgroundColor: (styles: CSSStyleDeclaration) => styles.backgroundColor,
+    borderTopColor: (styles: CSSStyleDeclaration) => styles.borderTopColor,
+    borderRightColor: (styles: CSSStyleDeclaration) => styles.borderRightColor,
+    borderBottomColor: (styles: CSSStyleDeclaration) => styles.borderBottomColor,
+    borderLeftColor: (styles: CSSStyleDeclaration) => styles.borderLeftColor,
+    textDecorationColor: (styles: CSSStyleDeclaration) => styles.textDecorationColor,
+    outlineColor: (styles: CSSStyleDeclaration) => styles.outlineColor,
+    caretColor: (styles: CSSStyleDeclaration) => styles.caretColor,
+    fill: (styles: CSSStyleDeclaration) => styles.fill,
+    stroke: (styles: CSSStyleDeclaration) => styles.stroke,
+  };
+
+  const elements = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
+
+  elements.forEach((element) => {
+    const view = element.ownerDocument.defaultView ?? window;
+    const styles = view.getComputedStyle(element);
+
+    colorFallbacks.forEach(([lookupKey, cssProperty, fallback]) => {
+      const currentValue = styleLookup[lookupKey as keyof typeof styleLookup](styles);
+      if (typeof currentValue === "string" && hasUnsupportedColorFunction(currentValue)) {
+        element.style.setProperty(cssProperty, fallback);
+      }
+    });
+
+    if (hasUnsupportedColorFunction(styles.boxShadow)) {
+      element.style.boxShadow = "none";
+    }
+  });
+}
+
 export function OnboardingClientPage({
   initialData,
   initialStage = "cs",
@@ -109,7 +149,6 @@ export function OnboardingClientPage({
   const [client, setClient] = useState(initialData.client);
   const [config, setConfig] = useState(initialData.config);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
-  const [shareLinks, setShareLinks] = useState(initialData.shareLinks);
   const [activeStage] = useState<ProjectStage>(initialStage);
   const [draft, setDraft] = useState<InitiativeEditorDraft | null>(null);
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
@@ -121,8 +160,10 @@ export function OnboardingClientPage({
   const [isSavingMeta, setIsSavingMeta] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [isSavingInitiative, setIsSavingInitiative] = useState(false);
-  const [isGeneratingStageLink, setIsGeneratingStageLink] = useState<ProjectStage | null>(null);
+  const [isClearingBoard, setIsClearingBoard] = useState(false);
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [isExportingReport, setIsExportingReport] = useState(false);
   const [offerDraft, setOfferDraft] = useState<{
     credits: number;
     price: number;
@@ -294,54 +335,19 @@ export function OnboardingClientPage({
     });
   }
 
-  function buildSharedUrl(link: ShareLinkRecord) {
-    return `${window.location.origin}/shared/${link.token}?stage=${link.stage_scope}`;
+  function buildPublicOnboardingUrl(audience: "client" | "prospect") {
+    return `${window.location.origin}/public/${audience}/${client.id}`;
   }
 
-  async function copyStageShareLink(stage: ProjectStage) {
+  function copyPublicOnboardingLink(audience: "client" | "prospect") {
     if (!ownerCanShare) return;
 
-    setFeedback(null);
-
-    const existing = shareLinks.find(
-      (link) =>
-        !link.revoked_at &&
-        link.stage_scope === stage &&
-        link.access_role === "viewer" &&
-        link.profile_role === stageToProfileRole[stage],
-    );
-
-    if (existing) {
-      navigator.clipboard.writeText(buildSharedUrl(existing)).then(() => {
-        showSuccess(`${quickShareLabels[stage]} listo.`);
-      });
-      return;
-    }
-
-    setIsGeneratingStageLink(stage);
-
-    const { data, error } = await supabase
-      .from("client_share_links")
-      .insert({
-        client_id: client.id,
-        access_role: "viewer",
-        profile_role: stageToProfileRole[stage],
-        stage_scope: stage,
-        created_by_user_id: userId,
-      })
-      .select("*")
-      .single();
-
-    setIsGeneratingStageLink(null);
-
-    if (error) {
-      showError(error.message);
-      return;
-    }
-
-    setShareLinks((current) => [data, ...current]);
-    navigator.clipboard.writeText(buildSharedUrl(data)).then(() => {
-      showSuccess(`${quickShareLabels[stage]} listo.`);
+    navigator.clipboard.writeText(buildPublicOnboardingUrl(audience)).then(() => {
+      showSuccess(
+        audience === "client"
+          ? "Link publico para cliente copiado."
+          : "Link publico para prospecto copiado.",
+      );
     });
   }
 
@@ -566,6 +572,13 @@ export function OnboardingClientPage({
 
     setFeedback(null);
 
+    if (initiative.is_blocked) {
+      showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de moverla de etapa.");
+      setDraggedInitiativeId(null);
+      setDropTargetStatus(null);
+      return;
+    }
+
     const currentReserved = isReservedStatus(initiative.status) ? initiative.credits : 0;
     const nextReserved = isReservedStatus(targetStatus) ? initiative.credits : 0;
     const capacityNeeded = nextReserved - currentReserved;
@@ -692,6 +705,12 @@ export function OnboardingClientPage({
     }
 
     const existing = initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null;
+
+    if (existing?.is_blocked && draft.status !== existing.status && draft.isBlocked) {
+      showError("Esta iniciativa esta bloqueada. Desbloqueala antes de cambiarla de etapa.");
+      return;
+    }
+
     const draftCredits = calculateCredits(
       draft.subitems.map((subitem) => ({
         unit_credits: subitem.unitCredits,
@@ -939,63 +958,120 @@ export function OnboardingClientPage({
     showSuccess("Iniciativa eliminada.");
   }
 
+  async function clearBoard() {
+    setFeedback(null);
+    setIsClearingBoard(true);
+
+    try {
+      const { error } = await supabase
+        .from("onboarding_initiatives")
+        .delete()
+        .eq("client_id", client.id);
+
+      if (error) {
+        throw error;
+      }
+
+      const nextConfig = {
+        ...config,
+        lost_credits: 0,
+        show_all_completed: false,
+        updated_by_user_id: userId,
+      };
+
+      const { data: updatedConfig, error: configError } = await supabase
+        .from("onboarding_configs")
+        .upsert(nextConfig)
+        .select("*")
+        .single();
+
+      if (configError) {
+        throw configError;
+      }
+
+      setInitiatives([]);
+      setConfig(updatedConfig);
+      setIsClearModalOpen(false);
+      showSuccess("El board fue limpiado correctamente.");
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error ? caughtError.message : "No fue posible limpiar el board.",
+      );
+    } finally {
+      setIsClearingBoard(false);
+    }
+  }
+
   async function exportPdf() {
-    const target = document.getElementById("onboarding-export-root");
-    if (!target) return;
+    const reportRoot = document.getElementById("report-export-root");
+    if (!reportRoot) return;
 
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import("html2canvas"),
-      import("jspdf"),
-    ]);
+    const pages = Array.from(
+      reportRoot.querySelectorAll<HTMLElement>('[data-report-page="true"]'),
+    );
+    if (!pages.length) return;
 
-    const canvas = await html2canvas(target, { scale: 1.4, backgroundColor: "#f8fafc" });
-    const imageData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    const width = pdf.internal.pageSize.getWidth();
-    const height = pdf.internal.pageSize.getHeight();
-    pdf.addImage(imageData, "PNG", 8, 8, width - 16, height - 16);
-    pdf.save(`roadmap-${client.slug}.pdf`);
+    setFeedback(null);
+    setIsExportingReport(true);
+
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+
+      for (const [index, page] of pages.entries()) {
+        const canvas = await html2canvas(page, {
+          scale: 1.6,
+          backgroundColor: "#f5f8fa",
+          useCORS: true,
+          onclone: (clonedDocument) => {
+            const clonedPage = clonedDocument.getElementById(page.id);
+            if (clonedPage instanceof HTMLElement) {
+              sanitizeExportColors(clonedPage);
+            } else if (clonedDocument.body) {
+              sanitizeExportColors(clonedDocument.body);
+            }
+          },
+        });
+
+        const imageData = canvas.toDataURL("image/png");
+        const usableWidth = pdfWidth - margin * 2;
+        const usableHeight = pdfHeight - margin * 2;
+        const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
+        const renderWidth = canvas.width * ratio;
+        const renderHeight = canvas.height * ratio;
+        const offsetX = (pdfWidth - renderWidth) / 2;
+        const offsetY = (pdfHeight - renderHeight) / 2;
+
+        if (index > 0) {
+          pdf.addPage();
+        }
+
+        pdf.addImage(imageData, "PNG", offsetX, offsetY, renderWidth, renderHeight);
+      }
+
+      pdf.save(`Roadmap_Cliente_${Date.now()}.pdf`);
+      showSuccess("Reporte exportado correctamente.");
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "No fue posible exportar el reporte.",
+      );
+    } finally {
+      setIsExportingReport(false);
+    }
   }
 
   return (
     <div className="space-y-6" id="onboarding-export-root">
       <div className="overflow-hidden border-b border-[#dfe3eb] bg-white">
-        <div className="border-b border-[#dfe3eb] px-6 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
-                Cliente
-              </span>
-              <span className="rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                Vista {STAGE_META[activeStage].shortLabel}
-              </span>
-            </div>
-
-            {ownerCanShare ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  className="rounded-[3px] border-[#cbd6e2] px-3 py-2 text-[11px] font-bold text-[#516f90]"
-                  onClick={() => copyStageShareLink("client")}
-                  disabled={isGeneratingStageLink === "client"}
-                >
-                  <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                  Copiar link para cliente
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="rounded-[3px] border-[#cbd6e2] px-3 py-2 text-[11px] font-bold text-[#ff7a59]"
-                  onClick={() => copyStageShareLink("sales")}
-                  disabled={isGeneratingStageLink === "sales"}
-                >
-                  <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                  Copiar link para prospecto
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
         <div className="bg-white px-6 py-4">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -1004,19 +1080,17 @@ export function OnboardingClientPage({
                 <span className="inline-flex min-h-11 min-w-[180px] max-w-[360px] items-center text-[28px] font-semibold tracking-[-0.02em] text-[#33475b]">
                   {client.name}
                 </span>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <div className="flex items-center gap-2 text-[11px] text-[#516f90]">
                   <CalendarDays className="h-3.5 w-3.5" />
                   <span>{formatLongDate(config.start_date)}</span>
                 </div>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <span className="rounded-[3px] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold text-[#516f90]">
                   {cycleDaysRemaining !== null
                     ? `${cycleDaysRemaining} d restantes del ciclo`
                     : "Sin ciclo activo"}
                 </span>
-                <Badge className="rounded-[3px] bg-[#f5f8fa] text-[#516f90]">
-                  {getRoleLabel(initialData.accessRole)}
-                </Badge>
-                <Badge className="rounded-[3px] bg-[#eaf8f6] text-[#00bda5]">Proyecto unico</Badge>
               </div>
 
               <div className="mt-3 flex flex-wrap items-end gap-6 text-[11px] font-medium">
@@ -1048,21 +1122,36 @@ export function OnboardingClientPage({
 
             {writable ? (
               <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
+                {ownerCanShare ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+                      onClick={() => copyPublicOnboardingLink("client")}
+                    >
+                      <Link2 className="mr-2 h-3.5 w-3.5" />
+                      Copiar link para cliente
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#ffb49f] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
+                      onClick={() => copyPublicOnboardingLink("prospect")}
+                    >
+                      <Link2 className="mr-2 h-3.5 w-3.5" />
+                      Copiar link para prospecto
+                    </Button>
+                    <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  </>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() =>
-                    setConfig((current) => ({
-                      ...current,
-                      base_capacity: 80,
-                      extra_capacity: 0,
-                      custom_plan_price: null,
-                      custom_plan_type: null,
-                    }))
-                  }
-                  className="transition hover:text-[#ef4444]"
+                  onClick={() => setIsClearModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 transition hover:text-[#ef4444]"
                 >
+                  <Trash2 className="h-3.5 w-3.5" />
                   Limpiar
                 </button>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <div className="flex items-center gap-2">
                   <span>Plan:</span>
                   <Select
@@ -1082,13 +1171,16 @@ export function OnboardingClientPage({
                     ))}
                   </Select>
                 </div>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <button
                   type="button"
                   onClick={openOfferModal}
-                  className="transition hover:text-[#33475b]"
+                  className="inline-flex items-center gap-1.5 transition hover:text-[#33475b]"
                 >
+                  <PencilLine className="h-3.5 w-3.5" />
                   Configurar oferta
                 </button>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <button
                   type="button"
                   onClick={() =>
@@ -1097,10 +1189,12 @@ export function OnboardingClientPage({
                       extra_capacity: current.extra_capacity + 1,
                     }))
                   }
-                  className="text-[#ff7a59] transition hover:text-[#dc6548]"
+                  className="inline-flex items-center gap-1.5 text-[#ff7a59] transition hover:text-[#dc6548]"
                 >
+                  <span className="text-[14px] leading-none">+</span>
                   Añadir +{UPSELL_PACK_CREDITS} créditos
                 </button>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <Button
                   className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
                   onClick={saveConfig}
@@ -1108,6 +1202,7 @@ export function OnboardingClientPage({
                 >
                   {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
                 </Button>
+                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <Button
                   className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
                   onClick={saveClientMeta}
@@ -1246,18 +1341,6 @@ export function OnboardingClientPage({
         </section>
       ) : null}
 
-      {feedback ? (
-        <div
-          className={`rounded-2xl border px-4 py-3 text-sm ${
-            feedback.tone === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-rose-200 bg-rose-50 text-rose-700"
-          }`}
-        >
-          {feedback.message}
-        </div>
-      ) : null}
-
       <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
         <div className="overflow-x-auto overflow-y-hidden">
           <div className="flex min-h-[270px] min-w-max gap-4">
@@ -1270,6 +1353,8 @@ export function OnboardingClientPage({
                 (sum, initiative) => sum + initiative.credits,
                 0,
               );
+              const allowsQuickAdd = writable && (status === "backlog" || status === "planned");
+              const showsBottomCreateButton = writable && (status === "backlog" || status === "planned");
 
               return (
                 <div key={status} className="flex w-[340px] flex-col">
@@ -1339,9 +1424,12 @@ export function OnboardingClientPage({
                             key={initiative.id}
                             type="button"
                             onClick={() => openEditModal(initiative)}
-                            draggable={writable}
+                            draggable={writable && !initiative.is_blocked}
                             onDragStart={(event) => {
-                              if (!writable) return;
+                              if (!writable || initiative.is_blocked) {
+                                event.preventDefault();
+                                return;
+                              }
                               event.dataTransfer.setData("text/plain", initiative.id);
                               event.dataTransfer.effectAllowed = "move";
                               setDraggedInitiativeId(initiative.id);
@@ -1399,7 +1487,9 @@ export function OnboardingClientPage({
                           </button>
                         );
                       })
-                    ) : writable && status !== "completed" ? (
+                    ) : null}
+
+                    {allowsQuickAdd ? (
                       <div className="mx-1 rounded-[4px] border border-dashed border-[#cbd6e2] bg-white p-1.5 shadow-sm">
                         <Select
                           value={quickAddSelections[status]}
@@ -1440,26 +1530,24 @@ export function OnboardingClientPage({
                           </Button>
                         </div>
                       </div>
-                    ) : (
+                    ) : !visibleItems.length ? (
                       <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white/70 p-4 text-[11px] text-[#9cb1c6]">
                         Vacio
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="mt-3 flex gap-2">
-                    {writable && (status === "backlog" || status === "planned" || status === "executing") ? (
+                    {showsBottomCreateButton ? (
                       <Button
                         variant="secondary"
-                        className="w-full rounded-[3px] border-dashed border-[#cbd6e2] bg-white px-3 py-2 text-[10px] font-bold text-[#516f90]"
+                        className="w-full rounded-[3px] border-2 border-dashed border-[#cbd6e2] bg-white px-3 py-2 text-[10px] font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b]"
                         onClick={() => openCreateModal(status)}
                       >
                         <Plus className="mr-1.5 h-3.5 w-3.5" />
                         {status === "backlog"
                           ? "Anadir Caso de Uso a En evaluacion"
-                          : status === "planned"
-                            ? "Anadir Caso de Uso Directo"
-                            : "Anadir iniciativa"}
+                          : "Anadir Caso de Uso Directo"}
                       </Button>
                     ) : null}
                     {status === "completed" && groupedInitiatives.completed.length > 6 ? (
@@ -1500,9 +1588,10 @@ export function OnboardingClientPage({
             variant="secondary"
             className="rounded-[3px] border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90]"
             onClick={exportPdf}
+            disabled={isExportingReport}
           >
             <Download className="mr-1.5 h-3.5 w-3.5" />
-            Exportar Reporte
+            {isExportingReport ? "Exportando..." : "Exportar Reporte"}
           </Button>
         </div>
 
@@ -1651,6 +1740,320 @@ export function OnboardingClientPage({
         </div>
       </section>
 
+      <div id="report-export-root" className="pointer-events-none fixed left-[-200vw] top-0 z-[-1]">
+        <div id="report-export-page-1" data-report-page="true" className="flex w-[1120px] min-h-[790px] flex-col bg-[#f5f8fa] px-10 py-8 text-[#33475b]">
+          <div className="flex items-start justify-between border-b border-[#dfe3eb] pb-5">
+            <div>
+              <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#8aa0b4]">
+                Everboarding Reporte
+              </p>
+              <h1 className="mt-3 text-[34px] font-bold tracking-[-0.03em] text-[#33475b]">
+                Mapa Visual de Avance
+              </h1>
+              <p className="mt-2 text-[14px] text-[#516f90]">
+                {client.name} · {formatLongDate(config.start_date)} · Vista {STAGE_META[activeStage].shortLabel}
+              </p>
+            </div>
+            <div className="max-w-[320px] rounded-[14px] border border-[#dfe3eb] bg-white px-5 py-4 text-right">
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#8aa0b4]">
+                Contexto
+              </p>
+              <p className="mt-2 text-[13px] leading-6 text-[#516f90]">
+                {client.description || "Roadmap operativo y ejecutivo del onboarding."}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid grid-cols-4 gap-4">
+            <div className="rounded-[14px] border border-[#d9eee9] bg-[#ecfffb] px-4 py-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#00a88f]">Disponibles</p>
+              <p className="mt-2 text-[28px] font-bold text-[#00bda5]">{metrics.available} créditos</p>
+            </div>
+            <div className="rounded-[14px] border border-[#e2e5fb] bg-[#f2f4ff] px-4 py-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#5865c7]">Comprometidos</p>
+              <p className="mt-2 text-[28px] font-bold text-[#6a78d1]">{metrics.reserved} créditos</p>
+            </div>
+            <div className="rounded-[14px] border border-[#dfe3eb] bg-white px-4 py-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Completados</p>
+              <p className="mt-2 text-[28px] font-bold text-[#33475b]">{metrics.consumed} créditos</p>
+            </div>
+            <div className="rounded-[14px] border border-[#e5e7eb] bg-[#f8fafc] px-4 py-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#94a3b8]">Vigencia</p>
+              <p className="mt-2 text-[28px] font-bold text-[#516f90]">{config.credit_validity_days} días</p>
+            </div>
+          </div>
+
+          <div className="mt-6 h-[6px] overflow-hidden rounded-full bg-[#dfe3eb]">
+            <div className="flex h-full w-full">
+              <div style={{ width: `${progressParts.available}%` }} className="bg-[#00bda5]" />
+              <div style={{ width: `${progressParts.reserved}%` }} className="bg-[#6a78d1]" />
+              <div style={{ width: `${progressParts.consumed}%` }} className="bg-[#54779c]" />
+              <div style={{ width: `${progressParts.lost}%` }} className="bg-[#33475b]" />
+            </div>
+          </div>
+
+          <div className="relative mt-12 flex-1">
+            <div className="absolute left-0 right-0 top-5 border-t border-[#dfe3eb]" />
+            <div className="grid gap-8 grid-cols-4">
+              {summaryStatuses.map((status) => {
+                const items = groupedInitiatives[status];
+                const topItem = items[0];
+                const totalCredits = items.reduce((sum, initiative) => sum + initiative.credits, 0);
+
+                return (
+                  <div key={`report-map-${status}`} className="relative flex flex-col items-center text-center">
+                    <div
+                      className={`relative z-10 grid h-7 w-7 place-items-center rounded-full border-4 border-[#f5f8fa] ${
+                        status === "executing"
+                          ? "bg-[#00bda5]"
+                          : status === "planned"
+                            ? "bg-[#6a78d1]"
+                            : status === "completed"
+                              ? "bg-[#33475b]"
+                              : "bg-[#54779c]"
+                      }`}
+                    />
+                    <h3 className="mt-4 text-[13px] font-bold uppercase tracking-[0.12em] text-[#33475b]">
+                      {STATUS_META[status].label}
+                    </h3>
+                    <p className="mt-1 text-[10px] font-bold text-[#9cb1c6]">
+                      {status === "executing"
+                        ? "Trabajo actual"
+                        : status === "planned"
+                          ? "Reservado"
+                          : status === "backlog"
+                            ? "Prioridades"
+                            : "Exito"}
+                    </p>
+                    <span className="mt-2 rounded-[3px] border border-[#cbd6e2] bg-[#eaf0f6] px-2 py-1 text-[10px] font-bold text-[#516f90]">
+                      {totalCredits} CR
+                    </span>
+
+                    <div className="mt-4 min-h-[120px] w-full rounded-[6px] border border-dashed border-[#dfe3eb] bg-white p-3 text-left">
+                      {topItem ? (
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-bold text-[#33475b]">{topItem.title}</p>
+                              <p className="mt-1 text-[10px] text-[#516f90]">
+                                {topItem.description || "Sin descripcion ejecutiva."}
+                              </p>
+                            </div>
+                            <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
+                              {topItem.credits} CR
+                            </span>
+                          </div>
+                          <div className="mt-3 rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                            {formatDateRange(topItem.est_start_date, topItem.est_end_date)}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="pt-6 text-center text-[10px] text-[#9cb1c6]">Sin iniciativas</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div id="report-export-page-2" data-report-page="true" className="flex w-[1120px] min-h-[790px] flex-col bg-[#f5f8fa] px-10 py-8 text-[#33475b]">
+          <div className="border-b border-[#dfe3eb] pb-5">
+            <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#8aa0b4]">
+              Everboarding Reporte
+            </p>
+            <h1 className="mt-3 text-[34px] font-bold tracking-[-0.03em] text-[#33475b]">
+              Desglose Analítico por Etapa
+            </h1>
+            <p className="mt-2 text-[14px] text-[#516f90]">
+              Evolución estratégica y detalle operativo por cada fase del roadmap.
+            </p>
+          </div>
+
+          <div className="mt-6 flex-1 space-y-5">
+            {summaryStatuses.map((status) => {
+              const items = groupedInitiatives[status];
+              if (!items.length) return null;
+
+              return (
+                <div key={`report-breakdown-${status}`} className="overflow-hidden rounded-[8px] border border-[#dfe3eb] bg-white">
+                  <div className="flex items-center justify-between gap-3 border-b border-[#dfe3eb] bg-[#f8fafc] px-5 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(status)}`} />
+                      <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#33475b]">
+                        {STATUS_META[status].label}
+                      </p>
+                    </div>
+                    <span className="rounded-[2px] bg-[#eaf0f6] px-2 py-0.5 text-[10px] font-bold text-[#516f90]">
+                      {items.reduce((sum, initiative) => sum + initiative.credits, 0)} CR
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-[#eaf0f6]">
+                    {items.map((initiative) => (
+                      <div key={`report-initiative-${initiative.id}`} className="grid gap-4 px-5 py-4 grid-cols-[1.3fr_0.7fr]">
+                        <div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-[12px] font-bold text-[#33475b]">{initiative.title}</h4>
+                                {initiative.is_blocked ? (
+                                  <span className="rounded-[2px] bg-[#fee2e2] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#dc2626]">
+                                    Bloqueado
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-[10px] text-[#516f90]">
+                                {initiative.description || "Sin descripcion ejecutiva."}
+                              </p>
+                              <div className="mt-2 rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                                {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
+                              </div>
+                            </div>
+                            <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
+                              {initiative.credits} CR
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                          <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                            Actividades incluidas
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            {initiative.subitems.length ? (
+                              initiative.subitems.map((subitem) => (
+                                <div
+                                  key={`report-subitem-${subitem.id}`}
+                                  className="flex items-center justify-between gap-3 rounded-[3px] bg-white px-2 py-1.5 text-[10px] text-[#33475b]"
+                                >
+                                  <span className="truncate">{subitem.name}</span>
+                                  <span className="shrink-0 text-[9px] text-[#516f90]">
+                                    {subitem.quantity} x {subitem.unit_credits} CR
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-[3px] bg-white px-2 py-1.5 text-[10px] text-[#9cb1c6]">
+                                Sin actividades desglosadas
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div id="report-export-page-3" data-report-page="true" className="flex w-[1120px] min-h-[790px] flex-col bg-[#f5f8fa] px-10 py-8 text-[#33475b]">
+          <div className="border-b border-[#dfe3eb] pb-5">
+            <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#8aa0b4]">
+              Everboarding Reporte
+            </p>
+            <h1 className="mt-3 text-[34px] font-bold tracking-[-0.03em] text-[#33475b]">
+              Resumen de Capacidad y Precios
+            </h1>
+            <p className="mt-2 text-[14px] text-[#516f90]">
+              Estado del plan, vigencia de créditos y referencia económica del onboarding.
+            </p>
+          </div>
+
+          <div className="mt-6 grid grid-cols-[1.1fr_0.9fr] gap-6">
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8aa0b4]">Cliente</p>
+                  <p className="mt-2 text-[24px] font-bold text-[#33475b]">{client.name}</p>
+                  <p className="mt-2 text-[12px] leading-6 text-[#516f90]">
+                    {client.description || "Sin contexto adicional registrado."}
+                  </p>
+                </div>
+                <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8aa0b4]">Ciclo actual</p>
+                  <p className="mt-2 text-[24px] font-bold text-[#33475b]">
+                    {cycleDaysRemaining ?? 0} días
+                  </p>
+                  <p className="mt-2 text-[12px] leading-6 text-[#516f90]">
+                    Corte estimado: {formatLongDate(metrics.cutoffDate)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
+                <h3 className="text-[15px] font-bold text-[#33475b]">Capacidad consolidada</h3>
+                <div className="mt-4 grid grid-cols-4 gap-3">
+                  <div className="rounded-[10px] bg-[#ecfffb] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#00a88f]">Disponibles</p>
+                    <p className="mt-2 text-[22px] font-bold text-[#00bda5]">{metrics.available}</p>
+                  </div>
+                  <div className="rounded-[10px] bg-[#f2f4ff] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#5865c7]">Reservados</p>
+                    <p className="mt-2 text-[22px] font-bold text-[#6a78d1]">{metrics.reserved}</p>
+                  </div>
+                  <div className="rounded-[10px] bg-[#edf4fb] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#54779c]">Completados</p>
+                    <p className="mt-2 text-[22px] font-bold text-[#54779c]">{metrics.consumed}</p>
+                  </div>
+                  <div className="rounded-[10px] bg-[#eef2f7] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Deducidos</p>
+                    <p className="mt-2 text-[22px] font-bold text-[#33475b]">{metrics.lost}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
+                <h3 className="text-[15px] font-bold text-[#33475b]">Oferta actual</h3>
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {stagePlanPreview.map((plan) => (
+                    <div
+                      key={`report-plan-${plan.credits}`}
+                      className={`rounded-[10px] border px-4 py-4 text-center ${
+                        plan.active ? "border-[#ff7a59] bg-[#fff3f0]" : "border-[#dfe3eb] bg-[#f8fafc]"
+                      }`}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8aa0b4]">Plan</p>
+                      <p className="mt-2 text-[24px] font-bold text-[#33475b]">{plan.credits} CR</p>
+                      <p className="mt-1 text-[12px] text-[#516f90]">{formatCurrency(plan.price)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
+                <h3 className="text-[15px] font-bold text-[#33475b]">Configuración del onboarding</h3>
+                <div className="mt-4 space-y-3 text-[13px] text-[#516f90]">
+                  <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
+                    <span>Créditos base</span>
+                    <strong className="text-[#33475b]">{config.custom_plan_credits ?? config.base_capacity} CR</strong>
+                  </div>
+                  <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
+                    <span>Precio sugerido</span>
+                    <strong className="text-[#33475b]">
+                      {formatCurrency(Number(config.custom_plan_price ?? suggestPlanPrice(config.base_capacity)))}
+                    </strong>
+                  </div>
+                  <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
+                    <span>Tipo de oferta</span>
+                    <strong className="text-[#33475b]">{config.custom_plan_type ?? "mensual"}</strong>
+                  </div>
+                  <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
+                    <span>Vigencia de créditos</span>
+                    <strong className="text-[#33475b]">{config.credit_validity_days} días</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {isOfferModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
           <Card className="w-full max-w-2xl rounded-[24px] border border-slate-200 bg-white p-6">
@@ -1748,6 +2151,40 @@ export function OnboardingClientPage({
                 Recalcular precio
               </Button>
               <Button variant="ghost" onClick={() => setIsOfferModalOpen(false)}>
+                Cancelar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
+      {isClearModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
+          <Card className="w-full max-w-xl rounded-[24px] border border-slate-200 bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Limpiar board
+                </p>
+                <h3 className="mt-2 text-2xl font-semibold text-slate-950">
+                  Esta acción eliminará todas las iniciativas del onboarding.
+                </h3>
+              </div>
+              <Button variant="ghost" onClick={() => setIsClearModalOpen(false)}>
+                Cerrar
+              </Button>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-700">
+              Se borrarán las tareas del board en todas las etapas, junto con sus actividades y
+              notas asociadas. Esta acción no se puede deshacer.
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Button variant="danger" onClick={clearBoard} disabled={isClearingBoard}>
+                {isClearingBoard ? "Limpiando..." : "Sí, limpiar board"}
+              </Button>
+              <Button variant="secondary" onClick={() => setIsClearModalOpen(false)} disabled={isClearingBoard}>
                 Cancelar
               </Button>
             </div>
@@ -1907,30 +2344,65 @@ export function OnboardingClientPage({
                   </div>
                   <div className="mt-4 space-y-3">
                     {draft.subitems.map((subitem, index) => (
-                      <div key={`${subitem.name}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-3">
-                        <div className="grid gap-3 md:grid-cols-[1fr_120px_110px_auto]">
-                          <Input
-                            value={subitem.name}
-                            onChange={(event) => updateDraftSubitem(index, "name", event.target.value)}
-                            disabled={!writable}
-                          />
-                          <Input
-                            type="number"
-                            min={0}
-                            value={subitem.unitCredits}
-                            onChange={(event) => updateDraftSubitem(index, "unitCredits", event.target.value)}
-                            disabled={!writable}
-                          />
-                          <Input
-                            type="number"
-                            min={1}
-                            value={subitem.quantity}
-                            onChange={(event) => updateDraftSubitem(index, "quantity", event.target.value)}
-                            disabled={!writable}
-                          />
-                          <Button variant="danger" onClick={() => removeDraftSubitem(index)} disabled={!writable}>
-                            Quitar
-                          </Button>
+                      <div
+                        key={subitem.id ?? `draft-subitem-${index}`}
+                        className="rounded-2xl border border-slate-200 bg-white p-3"
+                      >
+                        <div className="space-y-3">
+                          <label className="space-y-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Actividad
+                            </span>
+                            <Input
+                              value={subitem.name}
+                              onChange={(event) =>
+                                updateDraftSubitem(index, "name", event.target.value)
+                              }
+                              placeholder="Nombre de la actividad"
+                              className="text-sm"
+                              disabled={!writable}
+                            />
+                          </label>
+
+                          <div className="grid gap-3 md:grid-cols-[140px_120px_auto]">
+                            <label className="space-y-2">
+                              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                Créditos
+                              </span>
+                              <Input
+                                type="number"
+                                min={0}
+                                value={subitem.unitCredits}
+                                onChange={(event) =>
+                                  updateDraftSubitem(index, "unitCredits", event.target.value)
+                                }
+                                disabled={!writable}
+                              />
+                            </label>
+                            <label className="space-y-2">
+                              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                Cantidad
+                              </span>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={subitem.quantity}
+                                onChange={(event) =>
+                                  updateDraftSubitem(index, "quantity", event.target.value)
+                                }
+                                disabled={!writable}
+                              />
+                            </label>
+                            <div className="flex items-end">
+                              <Button
+                                variant="danger"
+                                onClick={() => removeDraftSubitem(index)}
+                                disabled={!writable}
+                              >
+                                Quitar
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1994,6 +2466,8 @@ export function OnboardingClientPage({
           </Card>
         </div>
       ) : null}
+
+      <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />
     </div>
   );
 }

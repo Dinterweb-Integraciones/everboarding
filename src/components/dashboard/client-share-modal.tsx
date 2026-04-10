@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 import { SharePanel } from "@/components/onboarding/share-panel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import type { ClientMemberRecord, ShareLinkRecord } from "@/lib/onboarding";
+import { FeedbackToast } from "@/components/ui/feedback-toast";
+import type { ClientMemberRecord } from "@/lib/onboarding";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatUserError } from "@/lib/utils";
 
@@ -25,7 +26,6 @@ export function ClientShareModal({
 }: ClientShareModalProps) {
   const supabase = createSupabaseBrowserClient();
   const [userId, setUserId] = useState<string | null>(null);
-  const [shareLinks, setShareLinks] = useState<ShareLinkRecord[]>([]);
   const [members, setMembers] = useState<ClientMemberRecord[]>([]);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -53,19 +53,10 @@ export function ClientShareModal({
           throw new Error("No pudimos validar la sesion actual.");
         }
 
-        const [{ data: shareLinkRows, error: shareLinksError }, { data: memberRows, error: membersError }] =
-          await Promise.all([
-            supabase
-              .from("client_share_links")
-              .select("*")
-              .eq("client_id", clientId)
-              .order("created_at", { ascending: false }),
-            supabase.from("client_members").select("*").eq("client_id", clientId),
-          ]);
-
-        if (shareLinksError) {
-          throw shareLinksError;
-        }
+        const { data: memberRows, error: membersError } = await supabase
+          .from("client_members")
+          .select("*")
+          .eq("client_id", clientId);
 
         if (membersError) {
           throw membersError;
@@ -102,7 +93,6 @@ export function ClientShareModal({
         }
 
         setUserId(user.id);
-        setShareLinks((shareLinkRows ?? []) as ShareLinkRecord[]);
         setMembers(
           memberRecords.map((member) => ({
             ...member,
@@ -156,18 +146,6 @@ export function ClientShareModal({
           </Button>
         </div>
 
-        {feedback ? (
-          <div
-            className={`mt-5 rounded-2xl border px-4 py-3 text-sm ${
-              feedback.tone === "success"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-rose-200 bg-rose-50 text-rose-700"
-            }`}
-          >
-            {feedback.message}
-          </div>
-        ) : null}
-
         {isLoading ? (
           <div className="flex min-h-60 items-center justify-center text-slate-500">
             <Loader2 className="mr-3 h-5 w-5 animate-spin" />
@@ -177,11 +155,8 @@ export function ClientShareModal({
           <div className="mt-6">
             <SharePanel
               clientId={clientId}
-              userId={userId}
               accessRole="owner"
-              shareLinks={shareLinks}
               members={members}
-              onShareLinksChange={setShareLinks}
               onMembersChange={setMembers}
               onError={(message) =>
                 setFeedback(message ? { tone: "error", message } : null)
@@ -190,6 +165,8 @@ export function ClientShareModal({
             />
           </div>
         ) : null}
+
+        <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />
       </Card>
     </div>
   );
