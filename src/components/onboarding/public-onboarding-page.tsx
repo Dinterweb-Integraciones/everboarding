@@ -71,6 +71,7 @@ export function PublicOnboardingPage({
     message: string;
   } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStartingPayment, setIsStartingPayment] = useState(false);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
@@ -106,14 +107,6 @@ export function PublicOnboardingPage({
       available: (Math.max(metrics.available, 0) / total) * 100,
     };
   }, [metrics.available, metrics.consumed, metrics.lost, metrics.reserved, metrics.total]);
-
-  const paymentHref = initialData.paymentEmail
-    ? `mailto:${initialData.paymentEmail}?subject=${encodeURIComponent(
-        `Pago onboarding ${initialData.client.name}`,
-      )}&body=${encodeURIComponent(
-        `Hola, quiero avanzar con el onboarding de ${initialData.client.name} y proceder con el pago de ${formatCurrency(paymentAmount)}.`,
-      )}`
-    : null;
 
   async function submitPublicRequest() {
     setFeedback(null);
@@ -177,6 +170,44 @@ export function PublicOnboardingPage({
     }
   }
 
+  async function startStripeCheckout() {
+    setFeedback(null);
+    setIsStartingPayment(true);
+
+    try {
+      const response = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          audience,
+          slug: publicSlug,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        url?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.message || "No pudimos abrir el formulario de pago.");
+      }
+
+      window.location.assign(payload.url);
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(
+          caughtError,
+          "No pudimos abrir el formulario de pago.",
+        ),
+      });
+      setIsStartingPayment(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#f5f8fa] text-[#33475b]">
       <header className="border-b border-[#dfe3eb] bg-white">
@@ -192,16 +223,12 @@ export function PublicOnboardingPage({
           </div>
 
           <Button
-            onClick={() => {
-              if (paymentHref) {
-                window.location.href = paymentHref;
-              }
-            }}
-            disabled={!paymentHref}
+            onClick={startStripeCheckout}
+            disabled={isStartingPayment || paymentAmount <= 0}
             className="rounded-[10px] px-5"
           >
             <CreditCard className="mr-2 h-4 w-4" />
-            Pagar {formatCurrency(paymentAmount)}
+            {isStartingPayment ? "Abriendo pago..." : `Pagar ${formatCurrency(paymentAmount)}`}
           </Button>
         </div>
       </header>

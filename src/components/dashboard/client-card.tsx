@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Pencil, Share2, Trash2 } from "lucide-react";
+import { ArrowRight, CalendarDays, Pencil, Share2, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ type ClientCardProps = {
   onEdit: (client: ClientSummary) => void;
   onDelete: (client: ClientSummary) => void;
   onShare: (client: ClientSummary) => void;
+  onGameplan: (client: ClientSummary) => void;
   canDelete: boolean;
   canShare: boolean;
 };
@@ -22,6 +23,7 @@ export function ClientCard({
   onEdit,
   onDelete,
   onShare,
+  onGameplan,
   canDelete,
   canShare,
 }: ClientCardProps) {
@@ -54,6 +56,10 @@ export function ClientCard({
         <Button variant="secondary" onClick={() => onEdit(client)}>
           <Pencil className="mr-2 h-4 w-4" />
           Editar
+        </Button>
+        <Button variant="secondary" onClick={() => onGameplan(client)}>
+          <CalendarDays className="mr-2 h-4 w-4" />
+          Gameplan
         </Button>
         {canShare ? (
           <Button variant="secondary" onClick={() => onShare(client)}>

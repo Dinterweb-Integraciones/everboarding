@@ -4,6 +4,7 @@ import { FolderKanban, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ClientCard } from "@/components/dashboard/client-card";
+import { ClientGameplanModal } from "@/components/dashboard/client-gameplan-modal";
 import { ClientShareModal } from "@/components/dashboard/client-share-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ export function ClientsDashboard({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sharingClient, setSharingClient] = useState<ClientSummary | null>(null);
+  const [gameplanClient, setGameplanClient] = useState<ClientSummary | null>(null);
 
   const heading = useMemo(() => {
     if (!clients.length) {
@@ -252,6 +254,7 @@ export function ClientsDashboard({
             }
             onDelete={handleDelete}
             onShare={setSharingClient}
+            onGameplan={setGameplanClient}
             canDelete={client.access_role === "owner"}
             canShare={client.access_role === "owner"}
           />
@@ -264,6 +267,15 @@ export function ClientsDashboard({
           clientName={sharingClient.name}
           isOpen
           onClose={() => setSharingClient(null)}
+        />
+      ) : null}
+
+      {gameplanClient ? (
+        <ClientGameplanModal
+          clientId={gameplanClient.id}
+          clientName={gameplanClient.name}
+          isOpen
+          onClose={() => setGameplanClient(null)}
         />
       ) : null}
     </div>
