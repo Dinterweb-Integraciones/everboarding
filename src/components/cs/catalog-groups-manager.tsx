@@ -283,7 +283,7 @@ export function CatalogGroupsManager({
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aquí armas grupos personalizados de tareas. Cada grupo puede mezclar tareas de varias categorías.
+            Administra grupos de tareas.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>

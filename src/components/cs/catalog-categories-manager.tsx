@@ -148,7 +148,7 @@ export function CatalogCategoriesManager({
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aquí administras los tipos o clasificaciones de las tareas del catálogo.
+            Aquí administras los tipos o clasificaciones de las tareas.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>

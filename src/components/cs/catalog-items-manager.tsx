@@ -208,7 +208,7 @@ export function CatalogItemsManager({
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aquí registras tareas base. La categoría define el tipo de tarea, pero los grupos se arman aparte.
+            Aquí registras tareas base.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
