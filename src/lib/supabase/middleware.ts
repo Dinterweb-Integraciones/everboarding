@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isAllowedEmailDomain } from "@/lib/auth-domain";
 import { env } from "@/lib/env";
 
 export async function updateSession(request: NextRequest) {
@@ -33,7 +34,15 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user?.email && !isAllowedEmailDomain(user.email)) {
+    await supabase.auth.signOut();
+    const loginUrl = new URL("/login?error=domain", request.url);
+    return NextResponse.redirect(loginUrl);
+  }
 
   return response;
 }

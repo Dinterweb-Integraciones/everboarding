@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
 import {
+  getPlanPeriodLabel,
   suggestPlanPrice,
   type OnboardingConfig,
   type PublicClientSummary,
@@ -29,11 +30,13 @@ function getStripe() {
 }
 
 function resolveOrigin(request: Request) {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    request.headers.get("origin") ||
-    new URL(request.url).origin
-  ).replace(/\/$/, "");
+  const requestOrigin = request.headers.get("origin") || new URL(request.url).origin;
+
+  if (requestOrigin.includes("localhost") || requestOrigin.includes("127.0.0.1")) {
+    return requestOrigin.replace(/\/$/, "");
+  }
+
+  return (process.env.NEXT_PUBLIC_SITE_URL || requestOrigin).replace(/\/$/, "");
 }
 
 function resolveCurrency() {
@@ -78,6 +81,8 @@ export async function POST(request: Request) {
         suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
     );
     const amountInCents = Math.round(amount * 100);
+    const periodMonths = data.config.custom_plan_period_months ?? 1;
+    const usesSubscription = data.config.custom_plan_billing_mode !== "one_time";
 
     if (!Number.isFinite(amountInCents) || amountInCents <= 0) {
       return NextResponse.json(
@@ -89,31 +94,62 @@ export async function POST(request: Request) {
     const origin = resolveOrigin(request);
     const checkoutUrl = `${origin}/public/${body.audience}/${body.slug}`;
     const stripe = getStripe();
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      submit_type: "pay",
+    const metadata = {
+      client_id: data.client.id,
+      client_slug: data.client.slug,
+      audience: body.audience,
+      billing_kind: usesSubscription ? "subscription" : "one_time",
+      period_months: String(periodMonths),
+    };
+    const productName = usesSubscription
+      ? `Membresia Onboarding ${getPlanPeriodLabel(periodMonths)} - ${data.client.name}`
+      : `Onboarding - ${data.client.name}`;
+    const productDescription =
+      data.client.description ||
+      (usesSubscription
+        ? "Membresia recurrente de onboarding y acompanamiento operativo."
+        : "Plan de onboarding y acompanamiento operativo.");
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+      mode: usesSubscription ? "subscription" : "payment",
+      submit_type: usesSubscription ? "subscribe" : "pay",
       line_items: [
         {
           quantity: 1,
           price_data: {
             currency: resolveCurrency(),
             unit_amount: amountInCents,
+            ...(usesSubscription
+              ? {
+                  recurring: {
+                    interval: "month" as const,
+                    interval_count: periodMonths,
+                  },
+                }
+              : {}),
             product_data: {
-              name: `Onboarding - ${data.client.name}`,
-              description:
-                data.client.description || "Plan de onboarding y acompañamiento operativo.",
+              name: productName,
+              description: productDescription,
             },
           },
         },
       ],
-      metadata: {
-        client_id: data.client.id,
-        client_slug: data.client.slug,
-        audience: body.audience,
-      },
+      metadata,
       success_url: `${checkoutUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${checkoutUrl}?payment=cancelled`,
-    });
+    };
+
+    if (usesSubscription) {
+      sessionParams.subscription_data = {
+        description: productDescription,
+        metadata,
+      };
+    } else {
+      sessionParams.payment_intent_data = {
+        metadata,
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     if (!session.url) {
       return NextResponse.json(

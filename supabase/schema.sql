@@ -3,8 +3,11 @@ create extension if not exists pgcrypto;
 create type public.client_access_role as enum ('viewer', 'editor', 'owner');
 create type public.client_profile_role as enum ('sales', 'csm', 'client', 'stakeholder');
 create type public.initiative_status as enum ('backlog', 'planned', 'executing', 'completed');
+create type public.initiative_task_status as enum ('pending', 'in_progress', 'blocked', 'completed');
 create type public.custom_plan_type as enum ('mensual', 'proyecto');
+create type public.custom_plan_billing_mode as enum ('subscription', 'one_time');
 create type public.project_stage as enum ('sales', 'cs', 'client');
+create type public.sales_proposal_status as enum ('draft', 'checkout_pending', 'paid', 'board_activated', 'archived');
 
 create or replace function public.set_current_timestamp_updated_at()
 returns trigger
@@ -32,6 +35,41 @@ create table if not exists public.clients (
   name text not null,
   slug text not null unique default replace(gen_random_uuid()::text, '-', ''),
   description text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.sales_proposals (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique default replace(gen_random_uuid()::text, '-', ''),
+  title text not null default 'Propuesta comercial',
+  seller_name text,
+  seller_email text,
+  seller_company text,
+  client_name text not null,
+  client_email text,
+  client_company text,
+  client_phone text,
+  client_description text,
+  assigned_csm_user_id uuid references auth.users(id) on delete set null,
+  start_date date not null default current_date,
+  contracted_credits integer not null default 80 check (contracted_credits >= 0),
+  quoted_price numeric(10, 2) not null default 0 check (quoted_price >= 0),
+  currency text not null default 'usd',
+  billing_mode public.custom_plan_billing_mode not null default 'subscription',
+  plan_period_months integer not null default 1 check (plan_period_months in (1, 3, 6, 12)),
+  status public.sales_proposal_status not null default 'draft',
+  snapshot jsonb not null default '{"initiatives":[]}'::jsonb,
+  hubspot_deal_id text,
+  hubspot_pipeline_id text,
+  hubspot_deal_stage_id text,
+  stripe_checkout_session_id text,
+  stripe_payment_intent_id text,
+  stripe_subscription_id text,
+  activated_client_id uuid references public.clients(id) on delete set null,
+  paid_at timestamptz,
+  activated_at timestamptz,
+  last_synced_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -72,6 +110,27 @@ create table if not exists public.client_share_links (
   constraint client_share_links_no_owner_role check (access_role <> 'owner')
 );
 
+create table if not exists public.credit_catalog_groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  description text,
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.credit_catalog_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  description text,
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.credit_catalog_items (
   id uuid primary key default gen_random_uuid(),
   category text not null,
@@ -83,6 +142,15 @@ create table if not exists public.credit_catalog_items (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.credit_catalog_group_items (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.credit_catalog_groups(id) on delete cascade,
+  catalog_item_id uuid not null references public.credit_catalog_items(id) on delete cascade,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (group_id, catalog_item_id)
+);
+
 create table if not exists public.onboarding_configs (
   client_id uuid primary key references public.clients(id) on delete cascade,
   start_date date not null default current_date,
@@ -92,6 +160,8 @@ create table if not exists public.onboarding_configs (
   custom_plan_credits integer check (custom_plan_credits is null or custom_plan_credits >= 0),
   custom_plan_price numeric(10, 2) check (custom_plan_price is null or custom_plan_price >= 0),
   custom_plan_type public.custom_plan_type,
+  custom_plan_billing_mode public.custom_plan_billing_mode not null default 'subscription',
+  custom_plan_period_months integer not null default 1 check (custom_plan_period_months in (1, 3, 6, 12)),
   current_stage public.project_stage not null default 'cs',
   credit_validity_days integer not null default 60 check (credit_validity_days > 0),
   show_all_completed boolean not null default false,
@@ -101,11 +171,75 @@ create table if not exists public.onboarding_configs (
   updated_by_user_id uuid references auth.users(id) on delete set null
 );
 
+alter table public.onboarding_configs
+add column if not exists custom_plan_period_months integer not null default 1;
+
+alter table public.onboarding_configs
+add column if not exists custom_plan_billing_mode public.custom_plan_billing_mode not null default 'subscription';
+
+update public.onboarding_configs
+set custom_plan_billing_mode = 'one_time'
+where custom_plan_type = 'proyecto'
+  and custom_plan_billing_mode = 'subscription';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'onboarding_configs_custom_plan_period_months_check'
+      and conrelid = 'public.onboarding_configs'::regclass
+  ) then
+    alter table public.onboarding_configs
+      add constraint onboarding_configs_custom_plan_period_months_check
+      check (custom_plan_period_months in (1, 3, 6, 12));
+  end if;
+end;
+$$;
+
+create table if not exists public.client_billing_cycles (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  cycle_start_date date not null,
+  cycle_end_date date not null,
+  status text not null default 'unpaid' check (status in ('unpaid', 'paid', 'void')),
+  paid_at timestamptz,
+  stripe_checkout_session_id text,
+  stripe_payment_intent_id text,
+  stripe_subscription_id text,
+  stripe_invoice_id text,
+  amount_cents integer check (amount_cents is null or amount_cents >= 0),
+  currency text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (client_id, cycle_start_date)
+);
+
+alter table public.client_billing_cycles
+add column if not exists stripe_subscription_id text,
+add column if not exists stripe_invoice_id text;
+
+create table if not exists public.client_credit_grants (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  billing_cycle_id uuid references public.client_billing_cycles(id) on delete cascade,
+  source text not null default 'monthly_cycle' check (source in ('monthly_cycle', 'manual_adjustment')),
+  granted_credits integer not null check (granted_credits >= 0),
+  used_credits integer not null default 0 check (used_credits >= 0),
+  expired_credits integer not null default 0 check (expired_credits >= 0),
+  grant_date date not null default current_date,
+  expires_at date not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  constraint client_credit_grants_valid_usage check (used_credits + expired_credits <= granted_credits)
+);
+
 create table if not exists public.onboarding_initiatives (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
   title text not null,
   type text,
+  labels text[] not null default '{}'::text[],
   status public.initiative_status not null default 'backlog',
   description text,
   owner_client text,
@@ -127,12 +261,21 @@ create table if not exists public.onboarding_initiative_subitems (
   initiative_id uuid not null references public.onboarding_initiatives(id) on delete cascade,
   catalog_item_id uuid references public.credit_catalog_items(id) on delete set null,
   name text not null,
+  status public.initiative_task_status not null default 'pending',
+  target_date date,
   unit_credits integer not null check (unit_credits >= 0),
   quantity integer not null default 1 check (quantity > 0),
   sort_order integer not null default 0,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.onboarding_initiatives
+add column if not exists labels text[] not null default '{}'::text[];
+
+alter table public.onboarding_initiative_subitems
+add column if not exists status public.initiative_task_status not null default 'pending',
+add column if not exists target_date date;
 
 create table if not exists public.onboarding_activity_logs (
   id uuid primary key default gen_random_uuid(),
@@ -148,9 +291,29 @@ create index if not exists clients_csm_user_id_idx on public.clients (csm_user_i
 create index if not exists clients_updated_at_idx on public.clients (updated_at desc);
 create index if not exists client_members_user_id_idx on public.client_members (user_id);
 create index if not exists client_share_links_client_id_idx on public.client_share_links (client_id, created_at desc);
+create index if not exists client_billing_cycles_client_cycle_idx on public.client_billing_cycles (client_id, cycle_start_date desc);
+create index if not exists client_billing_cycles_paid_idx on public.client_billing_cycles (client_id, status, paid_at desc);
+create index if not exists client_billing_cycles_stripe_checkout_session_idx on public.client_billing_cycles (stripe_checkout_session_id);
+create index if not exists client_billing_cycles_stripe_subscription_idx on public.client_billing_cycles (stripe_subscription_id);
+create index if not exists client_billing_cycles_stripe_invoice_idx on public.client_billing_cycles (stripe_invoice_id);
+create index if not exists client_credit_grants_client_expiration_idx on public.client_credit_grants (client_id, expires_at);
+create unique index if not exists client_credit_grants_billing_cycle_unique_idx
+on public.client_credit_grants (billing_cycle_id)
+where billing_cycle_id is not null;
+
+alter table public.client_billing_cycles
+drop constraint if exists client_billing_cycles_stripe_checkout_session_id_key;
 create index if not exists onboarding_initiatives_client_status_idx on public.onboarding_initiatives (client_id, status, sort_order);
 create index if not exists onboarding_subitems_initiative_id_idx on public.onboarding_initiative_subitems (initiative_id, sort_order);
 create index if not exists onboarding_logs_initiative_id_idx on public.onboarding_activity_logs (initiative_id, created_at desc);
+create index if not exists sales_proposals_status_idx on public.sales_proposals (status, updated_at desc);
+create index if not exists sales_proposals_assigned_csm_user_id_idx on public.sales_proposals (assigned_csm_user_id);
+create index if not exists credit_catalog_categories_sort_idx
+on public.credit_catalog_categories (sort_order, name);
+create index if not exists credit_catalog_group_items_group_idx
+on public.credit_catalog_group_items (group_id, sort_order);
+create index if not exists credit_catalog_group_items_item_idx
+on public.credit_catalog_group_items (catalog_item_id);
 
 drop trigger if exists set_profiles_updated_at on public.profiles;
 create trigger set_profiles_updated_at
@@ -160,6 +323,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_clients_updated_at on public.clients;
 create trigger set_clients_updated_at
 before update on public.clients
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_sales_proposals_updated_at on public.sales_proposals;
+create trigger set_sales_proposals_updated_at
+before update on public.sales_proposals
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_client_members_updated_at on public.client_members;
@@ -177,9 +345,29 @@ create trigger set_credit_catalog_items_updated_at
 before update on public.credit_catalog_items
 for each row execute procedure public.set_current_timestamp_updated_at();
 
+drop trigger if exists set_credit_catalog_categories_updated_at on public.credit_catalog_categories;
+create trigger set_credit_catalog_categories_updated_at
+before update on public.credit_catalog_categories
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_credit_catalog_groups_updated_at on public.credit_catalog_groups;
+create trigger set_credit_catalog_groups_updated_at
+before update on public.credit_catalog_groups
+for each row execute procedure public.set_current_timestamp_updated_at();
+
 drop trigger if exists set_onboarding_configs_updated_at on public.onboarding_configs;
 create trigger set_onboarding_configs_updated_at
 before update on public.onboarding_configs
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_client_billing_cycles_updated_at on public.client_billing_cycles;
+create trigger set_client_billing_cycles_updated_at
+before update on public.client_billing_cycles
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_client_credit_grants_updated_at on public.client_credit_grants;
+create trigger set_client_credit_grants_updated_at
+before update on public.client_credit_grants
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_onboarding_initiatives_updated_at on public.onboarding_initiatives;
@@ -266,7 +454,7 @@ begin
     values (
       new.id,
       new.seller_user_id,
-      'viewer',
+      'editor',
       'sales',
       new.owner_user_id
     )
@@ -574,6 +762,335 @@ begin
 end;
 $$;
 
+create or replace function public.get_client_cycle_window(
+  p_client_id uuid,
+  p_reference_date date default current_date
+)
+returns table (
+  cycle_start_date date,
+  cycle_end_date date
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  target_config public.onboarding_configs;
+  anchor_day integer;
+  target_month date;
+  days_in_month integer;
+  computed_start date;
+begin
+  select *
+  into target_config
+  from public.onboarding_configs
+  where client_id = p_client_id
+  limit 1;
+
+  anchor_day := extract(day from coalesce(target_config.start_date, p_reference_date))::integer;
+  target_month := date_trunc('month', p_reference_date)::date;
+  days_in_month := extract(day from (target_month + interval '1 month - 1 day'))::integer;
+  computed_start := make_date(
+    extract(year from target_month)::integer,
+    extract(month from target_month)::integer,
+    least(anchor_day, days_in_month)
+  );
+
+  if p_reference_date < computed_start then
+    target_month := (target_month - interval '1 month')::date;
+    days_in_month := extract(day from (target_month + interval '1 month - 1 day'))::integer;
+    computed_start := make_date(
+      extract(year from target_month)::integer,
+      extract(month from target_month)::integer,
+      least(anchor_day, days_in_month)
+    );
+  end if;
+
+  return query
+  select
+    computed_start,
+    (computed_start + interval '1 month - 1 day')::date;
+end;
+$$;
+
+create or replace function public.expire_unused_client_credits(p_client_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  declare
+    used_remaining integer;
+    grant_record record;
+    allocated_used integer;
+    next_expired integer;
+  begin
+    select coalesce(sum(s.unit_credits * s.quantity), 0)
+    into used_remaining
+    from public.onboarding_initiatives i
+    join public.onboarding_initiative_subitems s
+      on s.initiative_id = i.id
+    where i.client_id = p_client_id
+      and i.status in ('planned', 'executing', 'completed');
+
+    for grant_record in
+      select *
+      from public.client_credit_grants
+      where client_id = p_client_id
+      order by grant_date asc, created_at asc
+    loop
+      allocated_used := least(grant_record.granted_credits, greatest(used_remaining, 0));
+      used_remaining := greatest(used_remaining - allocated_used, 0);
+
+      next_expired := case
+        when grant_record.expires_at < current_date
+          then greatest(grant_record.granted_credits - allocated_used, 0)
+        else 0
+      end;
+
+      update public.client_credit_grants
+      set used_credits = allocated_used,
+          expired_credits = next_expired,
+          updated_at = timezone('utc', now())
+      where id = grant_record.id;
+    end loop;
+  end;
+end;
+$$;
+
+create or replace function public.get_client_billing_status(p_client_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  cycle_window record;
+  paid_cycle public.client_billing_cycles;
+  active_credits integer;
+  expired_unused_credits integer;
+  next_expiration_date date;
+begin
+  if auth.uid() is not null and not public.can_view_client(p_client_id) then
+    raise exception 'Access denied';
+  end if;
+
+  perform public.expire_unused_client_credits(p_client_id);
+
+  select *
+  into cycle_window
+  from public.get_client_cycle_window(p_client_id, current_date)
+  limit 1;
+
+  select *
+  into paid_cycle
+  from public.client_billing_cycles
+  where client_id = p_client_id
+    and cycle_start_date = cycle_window.cycle_start_date
+    and status = 'paid'
+  order by paid_at desc nulls last
+  limit 1;
+
+  select coalesce(sum(granted_credits), 0)
+  into active_credits
+  from public.client_credit_grants
+  where client_id = p_client_id;
+
+  select coalesce(sum(expired_credits), 0)
+  into expired_unused_credits
+  from public.client_credit_grants
+  where client_id = p_client_id;
+
+  select min(expires_at)
+  into next_expiration_date
+  from public.client_credit_grants
+  where client_id = p_client_id
+    and expires_at >= current_date
+    and granted_credits - used_credits - expired_credits > 0;
+
+  return jsonb_build_object(
+    'current_cycle_paid', paid_cycle.id is not null,
+    'current_cycle_start', cycle_window.cycle_start_date,
+    'current_cycle_end', cycle_window.cycle_end_date,
+    'active_credits', active_credits,
+    'expired_unused_credits', expired_unused_credits,
+    'next_expiration_date', next_expiration_date,
+    'paid_at', paid_cycle.paid_at
+  );
+end;
+$$;
+
+create or replace function public.record_stripe_checkout_payment(
+  p_client_id uuid,
+  p_checkout_session_id text,
+  p_payment_intent_id text,
+  p_amount_cents integer,
+  p_currency text,
+  p_stripe_subscription_id text default null,
+  p_stripe_invoice_id text default null
+)
+returns public.client_billing_cycles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_config public.onboarding_configs;
+  cycle_window record;
+  target_cycle record;
+  paid_cycle public.client_billing_cycles;
+  contract_credits integer;
+  period_months integer;
+  month_index integer;
+  monthly_base integer;
+  monthly_remainder integer;
+  cycle_credits integer;
+  credit_validity integer;
+begin
+  select *
+  into target_config
+  from public.onboarding_configs
+  where client_id = p_client_id
+  limit 1;
+
+  if target_config.client_id is null then
+    raise exception 'Onboarding config not found';
+  end if;
+
+  select *
+  into cycle_window
+  from public.get_client_cycle_window(p_client_id, current_date)
+  limit 1;
+
+  period_months := coalesce(target_config.custom_plan_period_months, 1);
+  if period_months not in (1, 3, 6, 12) then
+    period_months := 1;
+  end if;
+
+  contract_credits := coalesce(target_config.custom_plan_credits, target_config.base_capacity * period_months);
+  monthly_base := floor(contract_credits::numeric / period_months)::integer;
+  monthly_remainder := mod(contract_credits, period_months);
+  credit_validity := target_config.credit_validity_days;
+
+  for month_index in 0..(period_months - 1) loop
+    select *
+    into target_cycle
+    from public.get_client_cycle_window(
+      p_client_id,
+      (cycle_window.cycle_start_date + (month_index || ' months')::interval)::date
+    )
+    limit 1;
+
+    cycle_credits := monthly_base + case when month_index < monthly_remainder then 1 else 0 end;
+
+    insert into public.client_billing_cycles (
+      client_id,
+      cycle_start_date,
+      cycle_end_date,
+      status,
+      paid_at,
+      stripe_checkout_session_id,
+      stripe_payment_intent_id,
+      stripe_subscription_id,
+      stripe_invoice_id,
+      amount_cents,
+      currency
+    )
+    values (
+      p_client_id,
+      target_cycle.cycle_start_date,
+      target_cycle.cycle_end_date,
+      'paid',
+      timezone('utc', now()),
+      p_checkout_session_id,
+      p_payment_intent_id,
+      p_stripe_subscription_id,
+      p_stripe_invoice_id,
+      case when month_index = 0 then p_amount_cents else null end,
+      lower(p_currency)
+    )
+    on conflict (client_id, cycle_start_date) do update
+      set status = 'paid',
+          paid_at = coalesce(public.client_billing_cycles.paid_at, excluded.paid_at),
+          stripe_checkout_session_id = coalesce(
+            public.client_billing_cycles.stripe_checkout_session_id,
+            excluded.stripe_checkout_session_id
+          ),
+          stripe_payment_intent_id = coalesce(
+            public.client_billing_cycles.stripe_payment_intent_id,
+            excluded.stripe_payment_intent_id
+          ),
+          stripe_subscription_id = coalesce(
+            public.client_billing_cycles.stripe_subscription_id,
+            excluded.stripe_subscription_id
+          ),
+          stripe_invoice_id = coalesce(
+            public.client_billing_cycles.stripe_invoice_id,
+            excluded.stripe_invoice_id
+          ),
+          amount_cents = coalesce(public.client_billing_cycles.amount_cents, excluded.amount_cents),
+          currency = excluded.currency,
+          updated_at = timezone('utc', now())
+    returning *
+    into paid_cycle;
+
+    insert into public.client_credit_grants (
+      client_id,
+      billing_cycle_id,
+      source,
+      granted_credits,
+      grant_date,
+      expires_at
+    )
+    values (
+      p_client_id,
+      paid_cycle.id,
+      'monthly_cycle',
+      cycle_credits,
+      target_cycle.cycle_start_date,
+      (target_cycle.cycle_start_date + (credit_validity || ' days')::interval)::date
+    )
+    on conflict (billing_cycle_id) where billing_cycle_id is not null do update
+      set granted_credits = excluded.granted_credits,
+          expires_at = excluded.expires_at,
+          updated_at = timezone('utc', now());
+  end loop;
+
+  perform public.expire_unused_client_credits(p_client_id);
+
+  return paid_cycle;
+end;
+$$;
+
+create or replace function public.enforce_paid_cycle_for_reserved_initiatives()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  billing_status jsonb;
+begin
+  if new.status in ('planned', 'executing')
+     and (tg_op = 'INSERT' or old.status is distinct from new.status) then
+    billing_status := public.get_client_billing_status(new.client_id);
+
+    if not coalesce((billing_status ->> 'current_cycle_paid')::boolean, false) then
+      raise exception 'El ciclo mensual debe estar pagado para usar Planificado o En ejecucion';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_paid_cycle_for_reserved_initiatives_on_write on public.onboarding_initiatives;
+create trigger enforce_paid_cycle_for_reserved_initiatives_on_write
+before insert or update of status on public.onboarding_initiatives
+for each row execute procedure public.enforce_paid_cycle_for_reserved_initiatives();
+
 create or replace function public.resolve_public_client_id(p_slug text)
 returns uuid
 language sql
@@ -591,7 +1108,6 @@ $$;
 create or replace function public.get_public_onboarding_snapshot(p_slug text)
 returns jsonb
 language plpgsql
-stable
 security definer
 set search_path = public
 as $$
@@ -644,6 +1160,8 @@ begin
         'custom_plan_credits', null,
         'custom_plan_price', null,
         'custom_plan_type', null,
+        'custom_plan_billing_mode', 'subscription',
+        'custom_plan_period_months', 1,
         'current_stage', 'cs',
         'credit_validity_days', 60,
         'show_all_completed', false,
@@ -653,6 +1171,8 @@ begin
         'updated_by_user_id', null
       )
     ),
+    'billing',
+    public.get_client_billing_status(target_client.id),
     'payment_email',
     payment_email,
     'initiatives',
@@ -664,6 +1184,7 @@ begin
             'client_id', i.client_id,
             'title', i.title,
             'type', i.type,
+            'labels', i.labels,
             'status', i.status,
             'description', i.description,
             'owner_client', i.owner_client,
@@ -687,6 +1208,8 @@ begin
                     'initiative_id', s.initiative_id,
                     'catalog_item_id', s.catalog_item_id,
                     'name', s.name,
+                    'status', s.status,
+                    'target_date', s.target_date,
                     'unit_credits', s.unit_credits,
                     'quantity', s.quantity,
                     'sort_order', s.sort_order,
@@ -809,11 +1332,17 @@ alter table public.profiles enable row level security;
 alter table public.clients enable row level security;
 alter table public.client_members enable row level security;
 alter table public.client_share_links enable row level security;
+alter table public.credit_catalog_groups enable row level security;
+alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
+alter table public.credit_catalog_group_items enable row level security;
 alter table public.onboarding_configs enable row level security;
+alter table public.client_billing_cycles enable row level security;
+alter table public.client_credit_grants enable row level security;
 alter table public.onboarding_initiatives enable row level security;
 alter table public.onboarding_initiative_subitems enable row level security;
 alter table public.onboarding_activity_logs enable row level security;
+alter table public.sales_proposals enable row level security;
 
 drop policy if exists "profiles_select_allowed" on public.profiles;
 drop policy if exists "profiles_update_own" on public.profiles;
@@ -825,9 +1354,20 @@ drop policy if exists "client_members_select_accessible" on public.client_member
 drop policy if exists "client_members_manage_owner" on public.client_members;
 drop policy if exists "client_share_links_select_owner" on public.client_share_links;
 drop policy if exists "client_share_links_manage_owner" on public.client_share_links;
+drop policy if exists "catalog_groups_read_authenticated" on public.credit_catalog_groups;
+drop policy if exists "catalog_groups_manage_authenticated" on public.credit_catalog_groups;
+drop policy if exists "catalog_categories_read_authenticated" on public.credit_catalog_categories;
+drop policy if exists "catalog_categories_manage_authenticated" on public.credit_catalog_categories;
 drop policy if exists "catalog_read_authenticated" on public.credit_catalog_items;
+drop policy if exists "catalog_manage_authenticated" on public.credit_catalog_items;
+drop policy if exists "catalog_group_items_read_authenticated" on public.credit_catalog_group_items;
+drop policy if exists "catalog_group_items_manage_authenticated" on public.credit_catalog_group_items;
 drop policy if exists "onboarding_configs_select_accessible" on public.onboarding_configs;
 drop policy if exists "onboarding_configs_manage_editors" on public.onboarding_configs;
+drop policy if exists "billing_cycles_select_accessible" on public.client_billing_cycles;
+drop policy if exists "billing_cycles_manage_owner" on public.client_billing_cycles;
+drop policy if exists "credit_grants_select_accessible" on public.client_credit_grants;
+drop policy if exists "credit_grants_manage_owner" on public.client_credit_grants;
 drop policy if exists "initiatives_select_accessible" on public.onboarding_initiatives;
 drop policy if exists "initiatives_manage_editors" on public.onboarding_initiatives;
 drop policy if exists "subitems_select_accessible" on public.onboarding_initiative_subitems;
@@ -899,11 +1439,57 @@ to authenticated
 using (public.current_client_role(client_id) = 'owner')
 with check (public.current_client_role(client_id) = 'owner');
 
+create policy "catalog_groups_read_authenticated"
+on public.credit_catalog_groups
+for select
+to authenticated
+using (true);
+
+create policy "catalog_groups_manage_authenticated"
+on public.credit_catalog_groups
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_categories_read_authenticated"
+on public.credit_catalog_categories
+for select
+to authenticated
+using (true);
+
+create policy "catalog_categories_manage_authenticated"
+on public.credit_catalog_categories
+for all
+to authenticated
+using (true)
+with check (true);
+
 create policy "catalog_read_authenticated"
 on public.credit_catalog_items
 for select
 to authenticated
 using (true);
+
+create policy "catalog_manage_authenticated"
+on public.credit_catalog_items
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_items_read_authenticated"
+on public.credit_catalog_group_items
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_items_manage_authenticated"
+on public.credit_catalog_group_items
+for all
+to authenticated
+using (true)
+with check (true);
 
 create policy "onboarding_configs_select_accessible"
 on public.onboarding_configs
@@ -917,6 +1503,32 @@ for all
 to authenticated
 using (public.can_edit_client(client_id))
 with check (public.can_edit_client(client_id));
+
+create policy "billing_cycles_select_accessible"
+on public.client_billing_cycles
+for select
+to authenticated
+using (public.can_view_client(client_id));
+
+create policy "billing_cycles_manage_owner"
+on public.client_billing_cycles
+for all
+to authenticated
+using (public.current_client_role(client_id) = 'owner')
+with check (public.current_client_role(client_id) = 'owner');
+
+create policy "credit_grants_select_accessible"
+on public.client_credit_grants
+for select
+to authenticated
+using (public.can_view_client(client_id));
+
+create policy "credit_grants_manage_owner"
+on public.client_credit_grants
+for all
+to authenticated
+using (public.current_client_role(client_id) = 'owner')
+with check (public.current_client_role(client_id) = 'owner');
 
 create policy "initiatives_select_accessible"
 on public.onboarding_initiatives
@@ -1007,6 +1619,11 @@ grant execute on function public.redeem_client_share_link(text) to authenticated
 grant execute on function public.create_client(text, text, text, uuid, uuid) to authenticated;
 grant execute on function public.add_client_member_by_email(uuid, text, public.client_access_role, public.client_profile_role) to authenticated;
 grant execute on function public.list_assignable_profiles() to authenticated;
+grant execute on function public.get_client_cycle_window(uuid, date) to authenticated;
+grant execute on function public.expire_unused_client_credits(uuid) to authenticated;
+grant execute on function public.get_client_billing_status(uuid) to authenticated, service_role;
+revoke execute on function public.record_stripe_checkout_payment(uuid, text, text, integer, text, text, text) from public, anon, authenticated;
+grant execute on function public.record_stripe_checkout_payment(uuid, text, text, integer, text, text, text) to service_role;
 grant execute on function public.get_public_onboarding_snapshot(text) to anon, authenticated;
 grant execute on function public.create_public_backlog_initiative(text, text, text) to anon, authenticated;
 
@@ -1041,5 +1658,18 @@ on conflict (label) do update
 set category = excluded.category,
     credits = excluded.credits,
     sort_order = excluded.sort_order,
+    is_active = true,
+    updated_at = timezone('utc', now());
+
+insert into public.credit_catalog_categories (name, sort_order, is_active)
+select
+  category,
+  row_number() over (order by min(sort_order), category) - 1,
+  true
+from public.credit_catalog_items
+where nullif(trim(category), '') is not null
+group by category
+on conflict (name) do update
+set sort_order = excluded.sort_order,
     is_active = true,
     updated_at = timezone('utc', now());

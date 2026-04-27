@@ -5,13 +5,15 @@ import { requireUser } from "@/lib/auth";
 import { fetchClientMembership } from "@/lib/membership-access";
 import {
   createDefaultConfig,
+  createDefaultBillingStatus,
   mapInitiative,
   resolveStageFromProfileRole,
+  type ClientBillingStatus,
   type ClientMemberRecord,
   type ProjectStage,
   type ShareLinkRecord,
 } from "@/lib/onboarding";
-import type { Tables } from "@/types/database";
+import type { Database, Tables } from "@/types/database";
 
 type ClientDetailPageProps = {
   params: Promise<{
@@ -159,6 +161,17 @@ export default async function ClientDetailPage({
     requestedStage ??
     (membershipProfileRole ? resolveStageFromProfileRole(membershipProfileRole) : undefined) ??
     ((configRow?.current_stage as ProjectStage | undefined) ?? "cs");
+  const configRecord = configRow ?? createDefaultConfig(clientRecord.id);
+  const billingStatusArgs: Database["public"]["Functions"]["get_client_billing_status"]["Args"] = {
+    p_client_id: clientRecord.id,
+  };
+  const { data: billingRow } = (await supabase.rpc(
+    "get_client_billing_status" as never,
+    billingStatusArgs as never,
+  )) as {
+    data: ClientBillingStatus | null;
+    error: Error | null;
+  };
 
   return (
     <OnboardingClientPage
@@ -168,7 +181,8 @@ export default async function ClientDetailPage({
           access_role: accessRole,
         },
         accessRole,
-        config: configRow ?? createDefaultConfig(clientRecord.id),
+        config: configRecord,
+        billing: billingRow ?? createDefaultBillingStatus(configRecord),
         initiatives,
         catalog: catalogRows ?? [],
         shareLinks,

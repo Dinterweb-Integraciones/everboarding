@@ -1,7 +1,7 @@
 "use client";
 
 import { CalendarDays, CreditCard, Plus, ShieldCheck } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { Badge } from "@/components/ui/badge";
@@ -10,19 +10,21 @@ import { Card } from "@/components/ui/card";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { STATUS_META, STAGE_META } from "@/lib/constants";
+import { STATUS_META, STAGE_META, TASK_STATUS_META } from "@/lib/constants";
 import {
   calculateMetrics,
   formatDateRange,
   getEstimatedStatus,
+  getPlanCadenceLabel,
   resolveStageFromPublicAudience,
   suggestPlanPrice,
+  type ClientBillingStatus,
   type InitiativeRecord,
   type InitiativeStatus,
   type PublicOnboardingAudience,
   type PublicOnboardingSnapshot,
 } from "@/lib/onboarding";
-import { formatCurrency, formatUserError } from "@/lib/utils";
+import { formatCurrency, formatDate, formatUserError } from "@/lib/utils";
 
 type PublicOnboardingPageProps = {
   audience: PublicOnboardingAudience;
@@ -65,6 +67,7 @@ export function PublicOnboardingPage({
   initialData,
 }: PublicOnboardingPageProps) {
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
+  const [billing, setBilling] = useState(initialData.billing);
   const [requestDraft, setRequestDraft] = useState({ title: "", description: "" });
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -72,12 +75,13 @@ export function PublicOnboardingPage({
   } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isStartingPayment, setIsStartingPayment] = useState(false);
+  const [isSyncingPayment, setIsSyncingPayment] = useState(false);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
   const metrics = useMemo(
-    () => calculateMetrics(initialData.config, initiatives),
-    [initialData.config, initiatives],
+    () => calculateMetrics(initialData.config, initiatives, billing),
+    [billing, initialData.config, initiatives],
   );
 
   const groupedInitiatives = useMemo(() => {
@@ -97,6 +101,7 @@ export function PublicOnboardingPage({
     initialData.config.custom_plan_price ??
       suggestPlanPrice(initialData.config.custom_plan_credits ?? initialData.config.base_capacity),
   );
+  const usesStripeMembership = initialData.config.custom_plan_billing_mode !== "one_time";
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
 
@@ -107,6 +112,90 @@ export function PublicOnboardingPage({
       available: (Math.max(metrics.available, 0) / total) * 100,
     };
   }, [metrics.available, metrics.consumed, metrics.lost, metrics.reserved, metrics.total]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentStatus = params.get("payment");
+    const sessionId = params.get("session_id");
+
+    if (paymentStatus === "cancelled") {
+      setFeedback({
+        tone: "error",
+        message: "El pago fue cancelado. Puedes intentarlo nuevamente cuando quieras.",
+      });
+      params.delete("payment");
+      const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+      window.history.replaceState({}, "", cleanUrl);
+      return;
+    }
+
+    if (paymentStatus !== "success" || !sessionId) {
+      return;
+    }
+
+    let isMounted = true;
+    setIsSyncingPayment(true);
+    setFeedback({
+      tone: "success",
+      message: "Confirmando pago...",
+    });
+
+    async function syncPayment() {
+      try {
+        const response = await fetch("/api/stripe/sync-session", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sessionId,
+            slug: publicSlug,
+          }),
+        });
+
+        const payload = (await response.json()) as {
+          billing?: ClientBillingStatus;
+          message?: string;
+        };
+
+        if (!response.ok || !payload.billing) {
+          throw new Error(payload.message || "No pudimos confirmar el pago.");
+        }
+
+        if (!isMounted) return;
+
+        setBilling(payload.billing);
+        setFeedback({
+          tone: "success",
+          message: "Pago confirmado. El ciclo quedo activo.",
+        });
+        params.delete("payment");
+        params.delete("session_id");
+        const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+        window.history.replaceState({}, "", cleanUrl);
+      } catch (caughtError) {
+        if (!isMounted) return;
+
+        setFeedback({
+          tone: "error",
+          message: formatUserError(
+            caughtError,
+            "El pago se completo, pero no pudimos actualizar el ciclo automaticamente.",
+          ),
+        });
+      } finally {
+        if (isMounted) {
+          setIsSyncingPayment(false);
+        }
+      }
+    }
+
+    void syncPayment();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [publicSlug]);
 
   async function submitPublicRequest() {
     setFeedback(null);
@@ -224,11 +313,21 @@ export function PublicOnboardingPage({
 
           <Button
             onClick={startStripeCheckout}
-            disabled={isStartingPayment || paymentAmount <= 0}
-            className="rounded-[10px] px-5"
+            disabled={
+              billing.current_cycle_paid || isStartingPayment || isSyncingPayment || paymentAmount <= 0
+            }
+            className={`rounded-[10px] px-5 ${
+              billing.current_cycle_paid ? "bg-emerald-600 text-white hover:bg-emerald-600" : ""
+            }`}
           >
             <CreditCard className="mr-2 h-4 w-4" />
-            {isStartingPayment ? "Abriendo pago..." : `Pagar ${formatCurrency(paymentAmount)}`}
+            {billing.current_cycle_paid
+              ? "Ciclo pagado"
+              : isStartingPayment || isSyncingPayment
+                ? "Confirmando pago..."
+                : usesStripeMembership
+                  ? `Activar membresia ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
+                  : `Pagar ${formatCurrency(paymentAmount)}`}
           </Button>
         </div>
       </header>
@@ -326,6 +425,18 @@ export function PublicOnboardingPage({
                               <h3 className="text-[13px] font-bold text-[#33475b]">
                                 {initiative.title}
                               </h3>
+                              {initiative.labels.length ? (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {initiative.labels.map((label) => (
+                                    <span
+                                      key={`${initiative.id}-${label}`}
+                                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                                    >
+                                      #{label}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
                               <p className="mt-1 text-[11px] text-[#516f90]">
                                 {initiative.description || "Sin descripcion ejecutiva."}
                               </p>
@@ -333,6 +444,19 @@ export function PublicOnboardingPage({
                             <span className="rounded-[3px] bg-[#eaf0f6] px-2 py-0.5 text-[10px] font-bold text-[#516f90]">
                               {initiative.credits} CR
                             </span>
+                          </div>
+
+                          <div className="mt-3">
+                            <div className="mb-1 flex items-center justify-between text-[10px] font-semibold text-[#516f90]">
+                              <span>Avance</span>
+                              <span>{initiative.progressPercent}%</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full bg-[#eaf0f6]">
+                              <div
+                                className="h-full rounded-full bg-[#00bda5]"
+                                style={{ width: `${initiative.progressPercent}%` }}
+                              />
+                            </div>
                           </div>
 
                           <div className="mt-3 rounded-[3px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-1 text-[10px] font-bold text-[#d97706]">
@@ -348,9 +472,13 @@ export function PublicOnboardingPage({
                                   className="flex items-center justify-between gap-3 rounded-[3px] bg-[#f8fbfd] px-2 py-1.5 text-[10px] text-[#33475b]"
                                 >
                                   <span className="truncate">{subitem.name}</span>
-                                  <span className="shrink-0 text-[#516f90]">
-                                    {subitem.quantity} x {subitem.unit_credits} CR
-                                  </span>
+                                  <div className="flex shrink-0 items-center gap-2 text-[#516f90]">
+                                    {subitem.target_date ? <span>{formatDate(subitem.target_date)}</span> : null}
+                                    <span className={`rounded-full px-2 py-0.5 font-semibold ${TASK_STATUS_META[subitem.status].muted}`}>
+                                      {TASK_STATUS_META[subitem.status].label}
+                                    </span>
+                                    <span>{subitem.quantity} x {subitem.unit_credits} CR</span>
+                                  </div>
                                 </div>
                               ))}
                             </div>

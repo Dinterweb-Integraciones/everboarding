@@ -44,6 +44,36 @@ export const STATUS_META: Record<
   },
 };
 
+export const TASK_STATUS_META: Record<
+  Database["public"]["Enums"]["initiative_task_status"],
+  {
+    label: string;
+    accent: string;
+    muted: string;
+  }
+> = {
+  pending: {
+    label: "Pendiente",
+    accent: "text-slate-600",
+    muted: "bg-slate-100 text-slate-700",
+  },
+  in_progress: {
+    label: "En curso",
+    accent: "text-sky-600",
+    muted: "bg-sky-50 text-sky-700",
+  },
+  blocked: {
+    label: "Bloqueada",
+    accent: "text-rose-600",
+    muted: "bg-rose-50 text-rose-700",
+  },
+  completed: {
+    label: "Lista",
+    accent: "text-emerald-600",
+    muted: "bg-emerald-50 text-emerald-700",
+  },
+};
+
 export const ACCESS_ROLE_META: Record<
   Database["public"]["Enums"]["client_access_role"],
   { label: string; description: string }

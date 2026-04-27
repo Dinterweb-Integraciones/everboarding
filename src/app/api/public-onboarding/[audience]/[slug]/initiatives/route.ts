@@ -54,9 +54,11 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       ...data,
+      labels: data.labels ?? [],
       subitems: [],
       logs: [],
       credits: 0,
+      progressPercent: 0,
     });
   } catch (caughtError) {
     return NextResponse.json(

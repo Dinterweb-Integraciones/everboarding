@@ -67,6 +67,110 @@ export type Database = {
           updated_at?: string;
         };
       };
+      sales_proposals: {
+        Row: {
+          id: string;
+          slug: string;
+          title: string;
+          seller_name: string | null;
+          seller_email: string | null;
+          seller_company: string | null;
+          client_name: string;
+          client_email: string | null;
+          client_company: string | null;
+          client_phone: string | null;
+          client_description: string | null;
+          assigned_csm_user_id: string | null;
+          start_date: string;
+          contracted_credits: number;
+          quoted_price: number;
+          currency: string;
+          billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          plan_period_months: number;
+          status: Database["public"]["Enums"]["sales_proposal_status"];
+          snapshot: Json;
+          hubspot_deal_id: string | null;
+          hubspot_pipeline_id: string | null;
+          hubspot_deal_stage_id: string | null;
+          stripe_checkout_session_id: string | null;
+          stripe_payment_intent_id: string | null;
+          stripe_subscription_id: string | null;
+          activated_client_id: string | null;
+          paid_at: string | null;
+          activated_at: string | null;
+          last_synced_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          slug?: string;
+          title?: string;
+          seller_name?: string | null;
+          seller_email?: string | null;
+          seller_company?: string | null;
+          client_name: string;
+          client_email?: string | null;
+          client_company?: string | null;
+          client_phone?: string | null;
+          client_description?: string | null;
+          assigned_csm_user_id?: string | null;
+          start_date?: string;
+          contracted_credits?: number;
+          quoted_price?: number;
+          currency?: string;
+          billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          plan_period_months?: number;
+          status?: Database["public"]["Enums"]["sales_proposal_status"];
+          snapshot?: Json;
+          hubspot_deal_id?: string | null;
+          hubspot_pipeline_id?: string | null;
+          hubspot_deal_stage_id?: string | null;
+          stripe_checkout_session_id?: string | null;
+          stripe_payment_intent_id?: string | null;
+          stripe_subscription_id?: string | null;
+          activated_client_id?: string | null;
+          paid_at?: string | null;
+          activated_at?: string | null;
+          last_synced_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          slug?: string;
+          title?: string;
+          seller_name?: string | null;
+          seller_email?: string | null;
+          seller_company?: string | null;
+          client_name?: string;
+          client_email?: string | null;
+          client_company?: string | null;
+          client_phone?: string | null;
+          client_description?: string | null;
+          assigned_csm_user_id?: string | null;
+          start_date?: string;
+          contracted_credits?: number;
+          quoted_price?: number;
+          currency?: string;
+          billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          plan_period_months?: number;
+          status?: Database["public"]["Enums"]["sales_proposal_status"];
+          snapshot?: Json;
+          hubspot_deal_id?: string | null;
+          hubspot_pipeline_id?: string | null;
+          hubspot_deal_stage_id?: string | null;
+          stripe_checkout_session_id?: string | null;
+          stripe_payment_intent_id?: string | null;
+          stripe_subscription_id?: string | null;
+          activated_client_id?: string | null;
+          paid_at?: string | null;
+          activated_at?: string | null;
+          last_synced_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       client_members: {
         Row: {
           client_id: string;
@@ -156,6 +260,8 @@ export type Database = {
           custom_plan_credits: number | null;
           custom_plan_price: number | null;
           custom_plan_type: Database["public"]["Enums"]["custom_plan_type"] | null;
+          custom_plan_billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          custom_plan_period_months: number;
           current_stage: Database["public"]["Enums"]["project_stage"];
           credit_validity_days: number;
           show_all_completed: boolean;
@@ -173,6 +279,8 @@ export type Database = {
           custom_plan_credits?: number | null;
           custom_plan_price?: number | null;
           custom_plan_type?: Database["public"]["Enums"]["custom_plan_type"] | null;
+          custom_plan_billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          custom_plan_period_months?: number;
           current_stage?: Database["public"]["Enums"]["project_stage"];
           credit_validity_days?: number;
           show_all_completed?: boolean;
@@ -190,6 +298,8 @@ export type Database = {
           custom_plan_credits?: number | null;
           custom_plan_price?: number | null;
           custom_plan_type?: Database["public"]["Enums"]["custom_plan_type"] | null;
+          custom_plan_billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
+          custom_plan_period_months?: number;
           current_stage?: Database["public"]["Enums"]["project_stage"];
           credit_validity_days?: number;
           show_all_completed?: boolean;
@@ -199,12 +309,104 @@ export type Database = {
           updated_by_user_id?: string | null;
         };
       };
+      client_billing_cycles: {
+        Row: {
+          id: string;
+          client_id: string;
+          cycle_start_date: string;
+          cycle_end_date: string;
+          status: "unpaid" | "paid" | "void";
+          paid_at: string | null;
+          stripe_checkout_session_id: string | null;
+          stripe_payment_intent_id: string | null;
+          stripe_subscription_id: string | null;
+          stripe_invoice_id: string | null;
+          amount_cents: number | null;
+          currency: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          cycle_start_date: string;
+          cycle_end_date: string;
+          status?: "unpaid" | "paid" | "void";
+          paid_at?: string | null;
+          stripe_checkout_session_id?: string | null;
+          stripe_payment_intent_id?: string | null;
+          stripe_subscription_id?: string | null;
+          stripe_invoice_id?: string | null;
+          amount_cents?: number | null;
+          currency?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          cycle_start_date?: string;
+          cycle_end_date?: string;
+          status?: "unpaid" | "paid" | "void";
+          paid_at?: string | null;
+          stripe_checkout_session_id?: string | null;
+          stripe_payment_intent_id?: string | null;
+          stripe_subscription_id?: string | null;
+          stripe_invoice_id?: string | null;
+          amount_cents?: number | null;
+          currency?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      client_credit_grants: {
+        Row: {
+          id: string;
+          client_id: string;
+          billing_cycle_id: string | null;
+          source: "monthly_cycle" | "manual_adjustment";
+          granted_credits: number;
+          used_credits: number;
+          expired_credits: number;
+          grant_date: string;
+          expires_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          billing_cycle_id?: string | null;
+          source?: "monthly_cycle" | "manual_adjustment";
+          granted_credits: number;
+          used_credits?: number;
+          expired_credits?: number;
+          grant_date?: string;
+          expires_at: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          billing_cycle_id?: string | null;
+          source?: "monthly_cycle" | "manual_adjustment";
+          granted_credits?: number;
+          used_credits?: number;
+          expired_credits?: number;
+          grant_date?: string;
+          expires_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       onboarding_initiatives: {
         Row: {
           id: string;
           client_id: string;
           title: string;
           type: string | null;
+          labels: string[];
           status: Database["public"]["Enums"]["initiative_status"];
           description: string | null;
           owner_client: string | null;
@@ -225,6 +427,7 @@ export type Database = {
           client_id: string;
           title: string;
           type?: string | null;
+          labels?: string[];
           status?: Database["public"]["Enums"]["initiative_status"];
           description?: string | null;
           owner_client?: string | null;
@@ -245,6 +448,7 @@ export type Database = {
           client_id?: string;
           title?: string;
           type?: string | null;
+          labels?: string[];
           status?: Database["public"]["Enums"]["initiative_status"];
           description?: string | null;
           owner_client?: string | null;
@@ -267,6 +471,8 @@ export type Database = {
           initiative_id: string;
           catalog_item_id: string | null;
           name: string;
+          status: Database["public"]["Enums"]["initiative_task_status"];
+          target_date: string | null;
           unit_credits: number;
           quantity: number;
           sort_order: number;
@@ -278,6 +484,8 @@ export type Database = {
           initiative_id: string;
           catalog_item_id?: string | null;
           name: string;
+          status?: Database["public"]["Enums"]["initiative_task_status"];
+          target_date?: string | null;
           unit_credits: number;
           quantity?: number;
           sort_order?: number;
@@ -289,6 +497,8 @@ export type Database = {
           initiative_id?: string;
           catalog_item_id?: string | null;
           name?: string;
+          status?: Database["public"]["Enums"]["initiative_task_status"];
+          target_date?: string | null;
           unit_credits?: number;
           quantity?: number;
           sort_order?: number;
@@ -316,6 +526,90 @@ export type Database = {
           initiative_id?: string;
           entry?: string;
           created_by_user_id?: string | null;
+          created_at?: string;
+        };
+      };
+      credit_catalog_groups: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          sort_order: number;
+          is_active: boolean;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          sort_order?: number;
+          is_active?: boolean;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          sort_order?: number;
+          is_active?: boolean;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      credit_catalog_categories: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          sort_order: number;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          sort_order?: number;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          sort_order?: number;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      credit_catalog_group_items: {
+        Row: {
+          id: string;
+          group_id: string;
+          catalog_item_id: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          catalog_item_id: string;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          group_id?: string;
+          catalog_item_id?: string;
+          sort_order?: number;
           created_at?: string;
         };
       };
@@ -356,8 +650,11 @@ export type Database = {
       client_access_role: "viewer" | "editor" | "owner";
       client_profile_role: "sales" | "csm" | "client" | "stakeholder";
       initiative_status: "backlog" | "planned" | "executing" | "completed";
+      initiative_task_status: "pending" | "in_progress" | "blocked" | "completed";
       custom_plan_type: "mensual" | "proyecto";
+      custom_plan_billing_mode: "subscription" | "one_time";
       project_stage: "sales" | "cs" | "client";
+      sales_proposal_status: "draft" | "checkout_pending" | "paid" | "board_activated" | "archived";
     };
     Functions: {
       redeem_client_share_link: {
@@ -406,6 +703,24 @@ export type Database = {
           p_description: string | null;
         };
         Returns: Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
+      };
+      get_client_billing_status: {
+        Args: {
+          p_client_id: string;
+        };
+        Returns: Json;
+      };
+      record_stripe_checkout_payment: {
+        Args: {
+          p_client_id: string;
+          p_checkout_session_id: string | null;
+          p_payment_intent_id: string | null;
+          p_amount_cents: number;
+          p_currency: string;
+          p_stripe_subscription_id?: string | null;
+          p_stripe_invoice_id?: string | null;
+        };
+        Returns: Database["public"]["Tables"]["client_billing_cycles"]["Row"];
       };
     };
   };

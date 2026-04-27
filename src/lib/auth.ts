@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function requireUser() {
@@ -12,6 +13,11 @@ export async function requireUser() {
     redirect("/login");
   }
 
+  if (!isAllowedDinterwebUser(user)) {
+    await supabase.auth.signOut();
+    redirect("/login?error=domain");
+  }
+
   return { supabase, user };
 }
 
@@ -20,6 +26,11 @@ export async function getOptionalUser() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  if (user && !isAllowedDinterwebUser(user)) {
+    await supabase.auth.signOut();
+    return { supabase, user: null };
+  }
 
   return { supabase, user };
 }

@@ -6,16 +6,15 @@ import {
   Copy,
   Download,
   PencilLine,
-  FolderPen,
   Link2,
   Plus,
   ShieldCheck,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -27,21 +26,29 @@ import {
   RISK_INACTIVE_DAYS,
   STAGE_META,
   STATUS_META,
+  TASK_STATUS_META,
   UPSELL_PACK_CREDITS,
 } from "@/lib/constants";
 import {
   calculateCredits,
+  calculateInitiativeProgress,
   calculateMetrics,
   calculateReductionPenalty,
   canEdit,
   createEmptyDraft,
   formatDateRange,
   getEstimatedStatus,
+  getMonthlyContractCredits,
+  getPlanBillingModeLabel,
+  getPlanCadenceLabel,
+  getPlanPeriodLabel,
   suggestPlanPrice,
-  type CustomPlanType,
+  type CustomPlanBillingMode,
+  type PlanPeriodMonths,
   type InitiativeEditorDraft,
   type InitiativeRecord,
   type InitiativeStatus,
+  type InitiativeTaskStatus,
   type OnboardingSnapshot,
   type ProjectStage,
 } from "@/lib/onboarding";
@@ -56,6 +63,7 @@ type OnboardingClientPageProps = {
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
+const taskStatusSequence: InitiativeTaskStatus[] = ["pending", "in_progress", "blocked", "completed"];
 
 function isReservedStatus(status: InitiativeStatus) {
   return status === "planned" || status === "executing";
@@ -68,12 +76,97 @@ function getStatusDot(status: InitiativeStatus) {
   return "bg-slate-300";
 }
 
+function getPanelStatusBadgeClass(status: InitiativeStatus) {
+  if (status === "executing") {
+    return "bg-[#eaf8f6] text-[#00bda5]";
+  }
+
+  if (status === "planned") {
+    return "bg-[#f0f2fb] text-[#6a78d1]";
+  }
+
+  if (status === "completed") {
+    return "bg-[#eaf0f6] text-[#33475b]";
+  }
+
+  return "bg-[#eaf0f6] text-[#516f90]";
+}
+
+function getNextTaskStatus(status: InitiativeTaskStatus) {
+  const currentIndex = taskStatusSequence.indexOf(status);
+  return taskStatusSequence[(currentIndex + 1) % taskStatusSequence.length] ?? "pending";
+}
+
+function formatCompactDate(value: string) {
+  if (!value) return "Sin fecha";
+
+  return new Intl.DateTimeFormat("es-NI", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(`${value}T00:00:00`));
+}
+
 function formatLongDate(value: string) {
   return new Intl.DateTimeFormat("es-NI", {
     day: "numeric",
     month: "long",
     year: "numeric",
   }).format(new Date(`${value}T00:00:00`));
+}
+
+function parseCalendarDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function addCalendarDays(value: Date, amount: number) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function addCalendarMonths(value: Date, amount: number) {
+  return new Date(value.getFullYear(), value.getMonth() + amount, 1);
+}
+
+function startOfCalendarMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function diffCalendarDays(left: Date, right: Date) {
+  const leftCopy = new Date(left.getFullYear(), left.getMonth(), left.getDate());
+  const rightCopy = new Date(right.getFullYear(), right.getMonth(), right.getDate());
+  return Math.round((rightCopy.getTime() - leftCopy.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getInitiativeSpanLabel(startDate: string | null, endDate: string | null, fallbackCount = 0) {
+  if (startDate && endDate) {
+    const days = Math.max(
+      diffCalendarDays(parseCalendarDate(startDate), parseCalendarDate(endDate)) + 1,
+      1,
+    );
+    return `${days}d`;
+  }
+
+  return fallbackCount > 0 ? `${fallbackCount} act` : "--";
+}
+
+function getSnappedDayDelta(deltaX: number, dayWidth: number) {
+  if (deltaX === 0) return 0;
+
+  const direction = deltaX > 0 ? 1 : -1;
+  const snappedUnits = Math.floor((Math.abs(deltaX) + dayWidth * 0.35) / dayWidth);
+
+  return direction * snappedUnits;
+}
+
+function minCalendarDate(values: Date[]) {
+  return values.reduce((earliest, current) => (current < earliest ? current : earliest));
+}
+
+function maxCalendarDate(values: Date[]) {
+  return values.reduce((latest, current) => (current > latest ? current : latest));
 }
 
 function getDaysUntil(date: string | null) {
@@ -148,6 +241,7 @@ export function OnboardingClientPage({
   const supabase = createSupabaseBrowserClient();
   const [client, setClient] = useState(initialData.client);
   const [config, setConfig] = useState(initialData.config);
+  const [billing] = useState(initialData.billing);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
   const [activeStage] = useState<ProjectStage>(initialStage);
   const [draft, setDraft] = useState<InitiativeEditorDraft | null>(null);
@@ -167,12 +261,14 @@ export function OnboardingClientPage({
   const [offerDraft, setOfferDraft] = useState<{
     credits: number;
     price: number;
-    type: CustomPlanType;
+    billingMode: CustomPlanBillingMode;
+    periodMonths: PlanPeriodMonths;
     validityDays: number;
   }>({
     credits: config.custom_plan_credits ?? config.base_capacity,
-    price: Number(config.custom_plan_price ?? suggestPlanPrice(config.base_capacity)),
-    type: config.custom_plan_type ?? "mensual",
+    price: Number(config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity)),
+    billingMode: config.custom_plan_billing_mode ?? "subscription",
+    periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
     validityDays: config.credit_validity_days,
   });
   const [quickAddSelections, setQuickAddSelections] = useState<Record<InitiativeStatus, string>>({
@@ -183,14 +279,25 @@ export function OnboardingClientPage({
   });
   const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
+  const [ganttDrag, setGanttDrag] = useState<{
+    initiativeId: string;
+    originX: number;
+    dayDelta: number;
+    startDate: string;
+    endDate: string;
+    mode: "move" | "resize-start" | "resize-end";
+  } | null>(null);
+  const persistGanttDatesRef = useRef<
+    ((initiative: InitiativeRecord, startDate: string, endDate: string) => Promise<void>) | null
+  >(null);
 
   const writable = canEdit(initialData.accessRole);
   const ownerCanShare = initialData.accessRole === "owner";
   const stageMeta = STAGE_META[activeStage];
 
   const metrics = useMemo(
-    () => calculateMetrics(config, initiatives),
-    [config, initiatives],
+    () => calculateMetrics(config, initiatives, billing),
+    [billing, config, initiatives],
   );
 
   const groupedInitiatives = useMemo(() => {
@@ -205,13 +312,16 @@ export function OnboardingClientPage({
     );
   }, [initiatives]);
 
-  const stagePlanPreview = useMemo(() => {
-    return PLAN_TIER_OPTIONS.map((credits) => ({
-      credits,
-      price: suggestPlanPrice(credits),
-      active: config.base_capacity === credits,
-    }));
-  }, [config.base_capacity]);
+  const negotiatedPlanCredits = config.custom_plan_credits ?? config.base_capacity;
+  const negotiatedMonthlyCredits = getMonthlyContractCredits(config);
+  const negotiatedPlanPeriodMonths = (config.custom_plan_period_months ?? 1) as PlanPeriodMonths;
+  const negotiatedPlanPrice = Number(config.custom_plan_price ?? suggestPlanPrice(negotiatedPlanCredits));
+  const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
+  const negotiatedPlanCadence =
+    negotiatedPlanBillingMode === "subscription"
+      ? getPlanCadenceLabel(negotiatedPlanPeriodMonths)
+      : getPlanBillingModeLabel(negotiatedPlanBillingMode);
+  const negotiatedPlanPeriodLabel = getPlanPeriodLabel(negotiatedPlanPeriodMonths);
 
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, typeof initialData.catalog>();
@@ -226,6 +336,120 @@ export function OnboardingClientPage({
   }, [initialData]);
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
+  const ganttTimeline = useMemo(() => {
+    const today = new Date();
+    const baseDateCandidates = [today];
+
+    if (config.start_date) {
+      baseDateCandidates.push(parseCalendarDate(config.start_date));
+    }
+
+    const datedRows = initiatives
+      .map((initiative) => {
+        const subitemDates = initiative.subitems
+          .map((subitem) => subitem.target_date)
+          .filter((value): value is string => Boolean(value))
+          .map(parseCalendarDate);
+
+        const resolvedStart = initiative.est_start_date
+          ? parseCalendarDate(initiative.est_start_date)
+          : subitemDates.length
+            ? minCalendarDate(subitemDates)
+            : null;
+        const resolvedEnd = initiative.est_end_date
+          ? parseCalendarDate(initiative.est_end_date)
+          : subitemDates.length
+            ? maxCalendarDate(subitemDates)
+            : resolvedStart;
+
+        if (!resolvedStart || !resolvedEnd) {
+          return {
+            initiative,
+            start: null,
+            end: null,
+          };
+        }
+
+        const normalizedStart = resolvedStart <= resolvedEnd ? resolvedStart : resolvedEnd;
+        const normalizedEnd = resolvedEnd >= resolvedStart ? resolvedEnd : resolvedStart;
+
+        baseDateCandidates.push(normalizedStart);
+
+        return {
+          initiative,
+          start: normalizedStart,
+          end: normalizedEnd,
+        };
+      })
+      .sort((left, right) => {
+        if (!left.start && !right.start) return left.initiative.sort_order - right.initiative.sort_order;
+        if (!left.start) return 1;
+        if (!right.start) return -1;
+        return left.start.getTime() - right.start.getTime();
+      });
+
+    const windowStart = startOfCalendarMonth(minCalendarDate(baseDateCandidates));
+    const windowEnd = addCalendarMonths(windowStart, 3);
+    const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
+    const monthSegments = Array.from({ length: 3 }, (_, index) => {
+      const monthStart = addCalendarMonths(windowStart, index);
+      const nextMonthStart = addCalendarMonths(windowStart, index + 1);
+      const days = diffCalendarDays(monthStart, nextMonthStart);
+
+      return {
+        key: `${monthStart.getFullYear()}-${monthStart.getMonth() + 1}`,
+        label: new Intl.DateTimeFormat("es-NI", {
+          month: "long",
+          year: "numeric",
+        }).format(monthStart),
+        days,
+      };
+    });
+    const dayMarkers = Array.from({ length: timelineDays }, (_, index) => {
+      const date = addCalendarDays(windowStart, index);
+      const isMonthStart = date.getDate() === 1;
+      const isWeeklyMarker = index === 0 || index % 7 === 0;
+
+      return {
+        key: date.toISOString(),
+        date,
+        label: new Intl.DateTimeFormat("es-NI", { day: "numeric" }).format(date),
+        weekday: new Intl.DateTimeFormat("es-NI", { weekday: "short" }).format(date).replace(".", ""),
+        showLabel: isMonthStart || isWeeklyMarker,
+      };
+    });
+    const todayOffset = diffCalendarDays(windowStart, today);
+    const visibleRows = datedRows
+      .filter((row) => row.start && row.end)
+      .map((row) => {
+        const start = row.start as Date;
+        const end = row.end as Date;
+        const clampedStart = start < windowStart ? windowStart : start;
+        const clampedEnd = end >= windowEnd ? addCalendarDays(windowEnd, -1) : end;
+        const startOffset = Math.max(diffCalendarDays(windowStart, clampedStart), 0);
+        const endOffset = Math.min(diffCalendarDays(windowStart, clampedEnd) + 1, timelineDays);
+        const span = Math.max(endOffset - startOffset, 1);
+
+        return {
+          ...row,
+          startOffset,
+          span,
+          isOutsideRange: end < windowStart || start >= windowEnd,
+        };
+      });
+
+    return {
+      dayWidth: 16,
+      monthSegments,
+      dayMarkers,
+      timelineDays,
+      todayOffset,
+      rows: visibleRows,
+      undatedRows: datedRows.filter((row) => !row.start || !row.end).map((row) => row.initiative),
+      windowStart,
+      windowEnd,
+    };
+  }, [config.start_date, initiatives]);
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
 
@@ -236,6 +460,56 @@ export function OnboardingClientPage({
       available: (Math.max(metrics.available, 0) / total) * 100,
     };
   }, [metrics.available, metrics.consumed, metrics.lost, metrics.reserved, metrics.total]);
+
+  useEffect(() => {
+    if (!ganttDrag) return;
+    const activeDrag = ganttDrag;
+
+    function handlePointerMove(event: PointerEvent) {
+      const deltaX = event.clientX - activeDrag.originX;
+      const nextDelta = getSnappedDayDelta(deltaX, ganttTimeline.dayWidth);
+      setGanttDrag((current) => (current ? { ...current, dayDelta: nextDelta } : current));
+    }
+
+    function handlePointerUp() {
+      setGanttDrag(null);
+
+      if (!activeDrag || activeDrag.dayDelta === 0) {
+        return;
+      }
+
+      const initiative = initiatives.find((item) => item.id === activeDrag.initiativeId);
+      if (!initiative) return;
+
+      const startBase = parseCalendarDate(activeDrag.startDate);
+      const endBase = parseCalendarDate(activeDrag.endDate);
+      let nextStart = activeDrag.startDate;
+      let nextEnd = activeDrag.endDate;
+
+      if (activeDrag.mode === "move") {
+        nextStart = toIsoDate(addCalendarDays(startBase, activeDrag.dayDelta));
+        nextEnd = toIsoDate(addCalendarDays(endBase, activeDrag.dayDelta));
+      } else if (activeDrag.mode === "resize-start") {
+        const candidateStart = addCalendarDays(startBase, activeDrag.dayDelta);
+        const normalizedStart = candidateStart > endBase ? endBase : candidateStart;
+        nextStart = toIsoDate(normalizedStart);
+      } else {
+        const candidateEnd = addCalendarDays(endBase, activeDrag.dayDelta);
+        const normalizedEnd = candidateEnd < startBase ? startBase : candidateEnd;
+        nextEnd = toIsoDate(normalizedEnd);
+      }
+
+      void persistGanttDatesRef.current?.(initiative, nextStart, nextEnd);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [ganttDrag, ganttTimeline.dayWidth, initiatives]);
 
   function showError(message: string | null) {
     setFeedback(
@@ -252,11 +526,26 @@ export function OnboardingClientPage({
     setFeedback({ tone: "success", message });
   }
 
+  function requiresPaidCycle(status: InitiativeStatus) {
+    return status === "planned" || status === "executing";
+  }
+
+  function canUseReservedStage(status: InitiativeStatus) {
+    return !requiresPaidCycle(status) || billing.current_cycle_paid;
+  }
+
+  function showPaymentRequiredMessage() {
+    showError(
+      "Este ciclo mensual no esta pagado. Para crear o mover tareas a Planificado o En ejecucion, primero debe completarse el pago del ciclo.",
+    );
+  }
+
   function openOfferModal() {
     setOfferDraft({
       credits: config.custom_plan_credits ?? config.base_capacity,
-      price: Number(config.custom_plan_price ?? suggestPlanPrice(config.base_capacity)),
-      type: config.custom_plan_type ?? "mensual",
+      price: Number(config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity)),
+      billingMode: config.custom_plan_billing_mode ?? (config.custom_plan_type === "proyecto" ? "one_time" : "subscription"),
+      periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
       validityDays: config.credit_validity_days,
     });
     setIsOfferModalOpen(true);
@@ -265,10 +554,16 @@ export function OnboardingClientPage({
   function applyOfferDraft() {
     setConfig((current) => ({
       ...current,
-      base_capacity: Math.max(1, offerDraft.credits),
+      base_capacity: getMonthlyContractCredits({
+        base_capacity: offerDraft.credits,
+        custom_plan_credits: offerDraft.credits,
+        custom_plan_period_months: offerDraft.periodMonths,
+      }),
       custom_plan_credits: Math.max(1, offerDraft.credits),
       custom_plan_price: Math.max(0, offerDraft.price),
-      custom_plan_type: offerDraft.type,
+      custom_plan_type: offerDraft.billingMode === "subscription" ? "mensual" : "proyecto",
+      custom_plan_billing_mode: offerDraft.billingMode,
+      custom_plan_period_months: offerDraft.periodMonths,
       credit_validity_days: Math.max(1, offerDraft.validityDays),
     }));
     setIsOfferModalOpen(false);
@@ -369,6 +664,8 @@ export function OnboardingClientPage({
         {
           catalogItemId: selectedItem.id,
           name: selectedItem.label,
+          status: "pending",
+          targetDate: "",
           unitCredits: selectedItem.credits,
           quantity: 1,
         },
@@ -386,6 +683,7 @@ export function OnboardingClientPage({
       id: initiative.id,
       title: initiative.title,
       type: initiative.type ?? "",
+      labels: initiative.labels ?? [],
       status: initiative.status,
       description: initiative.description ?? "",
       ownerClient: initiative.owner_client ?? "",
@@ -397,6 +695,8 @@ export function OnboardingClientPage({
         id: subitem.id,
         catalogItemId: subitem.catalog_item_id,
         name: subitem.name,
+        status: subitem.status,
+        targetDate: subitem.target_date ?? "",
         unitCredits: subitem.unit_credits,
         quantity: subitem.quantity,
       })),
@@ -407,7 +707,7 @@ export function OnboardingClientPage({
 
   function updateDraftSubitem(
     index: number,
-    field: "name" | "unitCredits" | "quantity",
+    field: "name" | "status" | "targetDate" | "unitCredits" | "quantity",
     value: string,
   ) {
     if (!draft) return;
@@ -417,6 +717,8 @@ export function OnboardingClientPage({
     if (!target) return;
 
     if (field === "name") target.name = value;
+    if (field === "status") target.status = value as InitiativeTaskStatus;
+    if (field === "targetDate") target.targetDate = value;
     if (field === "unitCredits") target.unitCredits = safeParseNumber(value);
     if (field === "quantity") target.quantity = Math.max(1, safeParseNumber(value));
 
@@ -436,6 +738,8 @@ export function OnboardingClientPage({
         {
           catalogItemId: selectedItem.id,
           name: selectedItem.label,
+          status: "pending",
+          targetDate: "",
           unitCredits: selectedItem.credits,
           quantity: 1,
         },
@@ -451,7 +755,14 @@ export function OnboardingClientPage({
       ...draft,
       subitems: [
         ...draft.subitems,
-        { catalogItemId: null, name: "Nueva actividad", unitCredits: 1, quantity: 1 },
+        {
+          catalogItemId: null,
+          name: "Nueva actividad",
+          status: "pending",
+          targetDate: "",
+          unitCredits: 1,
+          quantity: 1,
+        },
       ],
     });
   }
@@ -471,6 +782,11 @@ export function OnboardingClientPage({
 
     if (!selectedItem) {
       showError("Selecciona una actividad para anadirla.");
+      return;
+    }
+
+    if (!canUseReservedStage(status)) {
+      showPaymentRequiredMessage();
       return;
     }
 
@@ -571,6 +887,13 @@ export function OnboardingClientPage({
     }
 
     setFeedback(null);
+
+    if (!canUseReservedStage(targetStatus)) {
+      showPaymentRequiredMessage();
+      setDraggedInitiativeId(null);
+      setDropTargetStatus(null);
+      return;
+    }
 
     if (initiative.is_blocked) {
       showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de moverla de etapa.");
@@ -706,6 +1029,11 @@ export function OnboardingClientPage({
 
     const existing = initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null;
 
+    if (!canUseReservedStage(draft.status) && (!existing || existing.status !== draft.status)) {
+      showPaymentRequiredMessage();
+      return;
+    }
+
     if (existing?.is_blocked && draft.status !== existing.status && draft.isBlocked) {
       showError("Esta iniciativa esta bloqueada. Desbloqueala antes de cambiarla de etapa.");
       return;
@@ -761,6 +1089,8 @@ export function OnboardingClientPage({
       id: subitem.id,
       catalogItemId: subitem.catalogItemId,
       name: subitem.name.trim(),
+      status: subitem.status,
+      targetDate: subitem.targetDate || null,
       unitCredits: Math.max(0, subitem.unitCredits),
       quantity: Math.max(1, subitem.quantity),
       sortOrder: index,
@@ -790,6 +1120,7 @@ export function OnboardingClientPage({
           client_id: client.id,
           title: draft.title.trim(),
           type: draft.type.trim() || null,
+          labels: draft.labels,
           status: draft.status,
           description: draft.description.trim() || null,
           owner_client: draft.ownerClient.trim() || null,
@@ -815,6 +1146,8 @@ export function OnboardingClientPage({
             initiative_id: insertedInitiative.id,
             catalog_item_id: subitem.catalogItemId,
             name: subitem.name,
+            status: subitem.status,
+            target_date: subitem.targetDate,
             unit_credits: subitem.unitCredits,
             quantity: subitem.quantity,
             sort_order: subitem.sortOrder,
@@ -843,6 +1176,7 @@ export function OnboardingClientPage({
           ),
           logs: insertedLogs ?? [],
           credits: draftCredits,
+          progressPercent: calculateInitiativeProgress(insertedSubitems ?? []),
         },
         ...current,
       ]);
@@ -860,6 +1194,7 @@ export function OnboardingClientPage({
       .update({
         title: draft.title.trim(),
         type: draft.type.trim() || null,
+        labels: draft.labels,
         status: draft.status,
         description: draft.description.trim() || null,
         owner_client: draft.ownerClient.trim() || null,
@@ -890,6 +1225,8 @@ export function OnboardingClientPage({
           initiative_id: existing.id,
           catalog_item_id: subitem.catalogItemId,
           name: subitem.name,
+          status: subitem.status,
+          target_date: subitem.targetDate,
           unit_credits: subitem.unitCredits,
           quantity: subitem.quantity,
           sort_order: subitem.sortOrder,
@@ -931,6 +1268,7 @@ export function OnboardingClientPage({
               ),
               logs: [...(insertedLogs ?? []), ...initiative.logs],
               credits: draftCredits,
+              progressPercent: calculateInitiativeProgress(insertedSubitems ?? []),
             }
           : initiative,
       ),
@@ -939,6 +1277,64 @@ export function OnboardingClientPage({
     setDraft(null);
     setEditingInitiativeId(null);
   }
+
+  async function persistGanttDates(
+    initiative: InitiativeRecord,
+    startDate: string,
+    endDate: string,
+  ) {
+    if (!writable) return;
+
+    setIsSavingInitiative(true);
+    setFeedback(null);
+
+    try {
+      const { data: updatedInitiative, error: updateError } = await supabase
+        .from("onboarding_initiatives")
+        .update({
+          est_start_date: startDate,
+          est_end_date: endDate,
+          last_activity: toIsoDate(),
+          updated_by_user_id: userId,
+        })
+        .eq("id", initiative.id)
+        .select("*")
+        .single();
+
+      if (updateError) throw updateError;
+
+      const { data: insertedLogs, error: logsError } = await supabase
+        .from("onboarding_activity_logs")
+        .insert({
+          initiative_id: initiative.id,
+          entry: `Fechas ajustadas en Plan de Trabajo: ${formatDateRange(startDate, endDate)}.`,
+          created_by_user_id: userId,
+        })
+        .select("*");
+
+      if (logsError) throw logsError;
+
+      setInitiatives((current) =>
+        current.map((item) =>
+          item.id === initiative.id
+            ? {
+                ...item,
+                ...updatedInitiative,
+                logs: [...(insertedLogs ?? []), ...item.logs],
+              }
+            : item,
+        ),
+      );
+      showSuccess("Fechas actualizadas desde el Plan de Trabajo.");
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error ? caughtError.message : "No fue posible actualizar las fechas.",
+      );
+    } finally {
+      setIsSavingInitiative(false);
+    }
+  }
+  persistGanttDatesRef.current = persistGanttDates;
 
   async function deleteInitiative(initiative: InitiativeRecord) {
     const confirmed = window.confirm(
@@ -1069,13 +1465,66 @@ export function OnboardingClientPage({
     }
   }
 
+  const currentEditingInitiative =
+    editingInitiativeId ? initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null : null;
+  const isDraftModified = draft
+    ? editingInitiativeId
+      ? JSON.stringify({
+          title: draft.title,
+          type: draft.type,
+          labels: draft.labels,
+          status: draft.status,
+          description: draft.description,
+          ownerClient: draft.ownerClient,
+          ownerCSM: draft.ownerCSM,
+          estStartDate: draft.estStartDate,
+          estEndDate: draft.estEndDate,
+          isBlocked: draft.isBlocked,
+          subitems: draft.subitems,
+          note: draft.note,
+        }) !==
+        JSON.stringify({
+          title: currentEditingInitiative?.title ?? "",
+          type: currentEditingInitiative?.type ?? "",
+          labels: currentEditingInitiative?.labels ?? [],
+          status: currentEditingInitiative?.status ?? "backlog",
+          description: currentEditingInitiative?.description ?? "",
+          ownerClient: currentEditingInitiative?.owner_client ?? "",
+          ownerCSM: currentEditingInitiative?.owner_csm ?? "",
+          estStartDate: currentEditingInitiative?.est_start_date ?? "",
+          estEndDate: currentEditingInitiative?.est_end_date ?? "",
+          isBlocked: currentEditingInitiative?.is_blocked ?? false,
+          subitems:
+            currentEditingInitiative?.subitems.map((subitem) => ({
+              id: subitem.id,
+              catalogItemId: subitem.catalog_item_id,
+              name: subitem.name,
+              status: subitem.status,
+              targetDate: subitem.target_date ?? "",
+              unitCredits: subitem.unit_credits,
+              quantity: subitem.quantity,
+            })) ?? [],
+          note: "",
+        })
+      : Boolean(
+          draft.title.trim() ||
+            draft.description.trim() ||
+            draft.ownerClient.trim() ||
+            draft.ownerCSM.trim() ||
+            draft.estStartDate ||
+            draft.estEndDate ||
+            draft.subitems.length ||
+            draft.note.trim(),
+        )
+    : false;
+
   return (
     <div className="space-y-6" id="onboarding-export-root">
       <div className="overflow-hidden border-b border-[#dfe3eb] bg-white">
         <div className="bg-white px-6 py-4">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="inline-flex min-h-11 min-w-[180px] max-w-[360px] items-center text-[28px] font-semibold tracking-[-0.02em] text-[#33475b]">
                   {client.name}
@@ -1090,6 +1539,15 @@ export function OnboardingClientPage({
                   {cycleDaysRemaining !== null
                     ? `${cycleDaysRemaining} d restantes del ciclo`
                     : "Sin ciclo activo"}
+                </span>
+                <span
+                  className={`rounded-[3px] px-2 py-1 text-[10px] font-bold ${
+                    billing.current_cycle_paid
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {billing.current_cycle_paid ? "Ciclo pagado" : "Pago pendiente"}
                 </span>
               </div>
 
@@ -1153,7 +1611,12 @@ export function OnboardingClientPage({
                 </button>
                 <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <div className="flex items-center gap-2">
-                  <span>Plan:</span>
+                  <span>Oferta:</span>
+                  <span className="text-[#33475b]">
+                    {negotiatedPlanCredits} CR por {negotiatedPlanPeriodLabel} ·{" "}
+                    {negotiatedMonthlyCredits} CR/mes · {formatCurrency(negotiatedPlanPrice)}
+                  </span>
+                  {false ? (
                   <Select
                     value={String(config.base_capacity)}
                     onChange={(event) =>
@@ -1170,6 +1633,7 @@ export function OnboardingClientPage({
                       </option>
                     ))}
                   </Select>
+                  ) : null}
                 </div>
                 <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                 <button
@@ -1324,18 +1788,31 @@ export function OnboardingClientPage({
             </div>
 
             <div className="grid gap-2 md:grid-cols-3">
-              {stagePlanPreview.map((plan) => (
-                <div
-                  key={plan.credits}
-                  className={`rounded-[4px] border px-3 py-3 text-center ${
-                    plan.active ? "border-[#ff7a59] bg-[#fff3f0]" : "border-[#dfe3eb] bg-[#f5f8fa]"
-                  }`}
-                >
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">Plan</p>
-                  <p className="mt-2 text-[18px] font-extrabold text-[#33475b]">{plan.credits} CR</p>
-                  <p className="mt-1 text-[11px] text-[#516f90]">{formatCurrency(plan.price)}</p>
-                </div>
-              ))}
+              <div className="rounded-[4px] border border-[#ff7a59] bg-[#fff3f0] px-3 py-3 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">
+                  Creditos negociados
+                </p>
+                <p className="mt-2 text-[18px] font-extrabold text-[#33475b]">{negotiatedPlanCredits} CR</p>
+                <p className="mt-1 text-[11px] text-[#516f90]">Capacidad del ciclo</p>
+              </div>
+              <div className="rounded-[4px] border border-[#ff7a59] bg-[#fff3f0] px-3 py-3 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">
+                  Precio negociado
+                </p>
+                <p className="mt-2 text-[18px] font-extrabold text-[#33475b]">
+                  {formatCurrency(negotiatedPlanPrice)}
+                </p>
+                <p className="mt-1 text-[11px] text-[#516f90]">{negotiatedPlanCadence}</p>
+              </div>
+              <div className="rounded-[4px] border border-[#dfe3eb] bg-[#f5f8fa] px-3 py-3 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">
+                  Vigencia
+                </p>
+                <p className="mt-2 text-[18px] font-extrabold text-[#33475b]">
+                  {config.credit_validity_days} dias
+                </p>
+                <p className="mt-1 text-[11px] text-[#516f90]">Creditos no usados</p>
+              </div>
             </div>
           </div>
         </section>
@@ -1408,6 +1885,11 @@ export function OnboardingClientPage({
                           initiative.est_end_date,
                           initiative.status,
                         );
+                        const spanLabel = getInitiativeSpanLabel(
+                          initiative.est_start_date,
+                          initiative.est_end_date,
+                          initiative.subitems.length,
+                        );
                         const inactiveDays =
                           initiative.status === "executing"
                             ? Math.ceil(
@@ -1418,6 +1900,10 @@ export function OnboardingClientPage({
                                   (1000 * 60 * 60 * 24),
                               )
                             : 0;
+                        const progressPercent = Math.max(
+                          0,
+                          Math.min(100, initiative.progressPercent ?? 0),
+                        );
 
                         return (
                           <button
@@ -1438,10 +1924,10 @@ export function OnboardingClientPage({
                               setDraggedInitiativeId(null);
                               setDropTargetStatus(null);
                             }}
-                            className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white p-3 text-left shadow-sm transition hover:border-[#cbd6e2] hover:shadow"
+                            className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm transition hover:border-[#cbd6e2] hover:shadow"
                           >
                             <div
-                              className={`absolute left-0 top-0 h-full w-1 ${
+                              className={`absolute left-0 top-0 h-full w-[3px] ${
                                 status === "executing"
                                   ? "bg-[#00bda5]"
                                   : status === "planned"
@@ -1451,37 +1937,61 @@ export function OnboardingClientPage({
                                       : "bg-[#cbd6e2]"
                               }`}
                             />
-                            <div className="pl-2">
+                            <div className="absolute left-[3px] right-0 top-0 h-[3px] overflow-hidden rounded-tr-[4px] bg-[#eef2f7]">
+                              <div
+                                className={`h-full transition-all ${
+                                  progressPercent >= 100
+                                    ? "bg-[#33475b]"
+                                    : progressPercent >= 60
+                                      ? "bg-[#00bda5]"
+                                      : progressPercent > 0
+                                        ? "bg-[#6a78d1]"
+                                        : "bg-[#cbd6e2]"
+                                }`}
+                                style={{ width: `${progressPercent}%` }}
+                              />
+                            </div>
+                            <div className="min-w-0 pl-1">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <h4 className="text-[12px] font-bold text-[#33475b]">{initiative.title}</h4>
-                                  <p className="mt-1 line-clamp-2 text-[10px] text-[#516f90]">
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="text-[13px] font-bold leading-4 text-[#33475b]">
+                                      {initiative.title}
+                                    </h4>
+                                    <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold text-[#516f90]">
+                                      {progressPercent}%
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
                                     {initiative.description || "Sin descripcion ejecutiva."}
                                   </p>
                                 </div>
-                                <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
-                                  {initiative.credits} CR
-                                </span>
                               </div>
 
-                              <div className="mt-3 space-y-1">
+                              <div className="mt-3 space-y-1.5">
                                 <div className="rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
-                                  {formatDateRange(
-                                    initiative.est_start_date,
-                                    initiative.est_end_date,
-                                  )}
+                                  {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
+                                  {estimated && estimated.label !== "Sin fechas" ? ` · ${estimated.label}` : ""}
                                 </div>
+
                                 {initiative.is_blocked ? (
-                                  <div className="text-[9px] font-bold uppercase text-[#ef4444]">Bloqueada</div>
-                                ) : null}
-                                {estimated ? (
-                                  <div className="text-[9px] text-[#516f90]">{estimated.label}</div>
-                                ) : null}
-                                {initiative.status === "executing" && inactiveDays > RISK_INACTIVE_DAYS ? (
+                                  <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-[#ef4444]">
+                                    Bloqueada
+                                  </div>
+                                ) : initiative.status === "executing" && inactiveDays > RISK_INACTIVE_DAYS ? (
                                   <div className="text-[9px] font-bold text-[#ef4444]">
-                                    {inactiveDays} d sin cambios
+                                    Inactiva {inactiveDays} d
                                   </div>
                                 ) : null}
+                              </div>
+
+                              <div className="mt-3 flex items-center justify-between border-t border-[#eaf0f6] pt-2">
+                                <span className="text-[10px] font-bold text-[#9cb1c6]">
+                                  {spanLabel}
+                                </span>
+                                <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[10px] font-bold text-[#33475b]">
+                                  {initiative.credits} CR
+                                </span>
                               </div>
                             </div>
                           </button>
@@ -1517,7 +2027,11 @@ export function OnboardingClientPage({
                             variant="secondary"
                             className="h-7 flex-1 rounded-[3px] border-[#cbd6e2] bg-white px-2 py-1 text-[10px] font-bold text-[#516f90]"
                             onClick={() => void quickAddInitiative(status)}
-                            disabled={isSavingInitiative || !quickAddSelections[status]}
+                            disabled={
+                              isSavingInitiative ||
+                              !quickAddSelections[status] ||
+                              !canUseReservedStage(status)
+                            }
                           >
                             Anadir
                           </Button>
@@ -1543,6 +2057,7 @@ export function OnboardingClientPage({
                         variant="secondary"
                         className="w-full rounded-[3px] border-2 border-dashed border-[#cbd6e2] bg-white px-3 py-2 text-[10px] font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b]"
                         onClick={() => openCreateModal(status)}
+                        disabled={!canUseReservedStage(status)}
                       >
                         <Plus className="mr-1.5 h-3.5 w-3.5" />
                         {status === "backlog"
@@ -1574,88 +2089,284 @@ export function OnboardingClientPage({
 
       <section className="bg-white px-6 py-10">
         <div className="mx-auto max-w-[1050px]">
-        <div className="flex flex-col gap-4 border-b border-[#dfe3eb] pb-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-[18px] font-bold text-[#33475b]">
-              <Sparkles className="h-4 w-4 text-[#00bda5]" />
-              <span>Resumen de RoadMap</span>
+          <div className="flex flex-col gap-4 border-b border-[#dfe3eb] pb-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-[18px] font-bold text-[#33475b]">
+                <CalendarDays className="h-4 w-4 text-[#00bda5]" />
+                <span>Plan de Trabajo</span>
+              </div>
+              <p className="mt-2 text-[12px] text-[#516f90]">
+                Proyeccion estrategica inicial. Puedes mover las iniciativas en el gantt y las fechas se sincronizan con su tarjeta.
+              </p>
             </div>
-            <p className="mt-2 text-[12px] text-[#516f90]">
-              Evolucion estrategica y resultados consolidados.
-            </p>
+            <Button
+              variant="secondary"
+              className="rounded-[3px] border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90]"
+              onClick={exportPdf}
+              disabled={isExportingReport}
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              {isExportingReport ? "Exportando..." : "Exportar Reporte"}
+            </Button>
           </div>
-          <Button
-            variant="secondary"
-            className="rounded-[3px] border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90]"
-            onClick={exportPdf}
-            disabled={isExportingReport}
-          >
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            {isExportingReport ? "Exportando..." : "Exportar Reporte"}
-          </Button>
-        </div>
 
-        <div className="relative mt-10">
-          <div className="absolute left-0 right-0 top-5 hidden border-t border-[#dfe3eb] md:block" />
-          <div className="grid gap-8 md:grid-cols-4">
-          {summaryStatuses.map((status) => {
-            const items = groupedInitiatives[status];
-            const totalCredits = items.reduce((sum, initiative) => sum + initiative.credits, 0);
-            const topItem = items[0];
-
-            return (
-              <div key={status} className="relative flex flex-col items-center text-center">
-                <div
-                  className={`relative z-10 grid h-7 w-7 place-items-center rounded-full border-4 border-white ${
-                    status === "executing"
-                      ? "bg-[#00bda5]"
-                      : status === "planned"
-                        ? "bg-[#6a78d1]"
-                        : status === "completed"
-                          ? "bg-[#33475b]"
-                          : "bg-[#54779c]"
-                  }`}
-                />
-                <h3 className="mt-4 text-[12px] font-bold uppercase tracking-[0.12em] text-[#33475b]">
-                  {STATUS_META[status].label}
-                </h3>
-                <p className="mt-1 text-[10px] font-bold text-[#9cb1c6]">
-                  {status === "executing"
-                    ? "Trabajo actual"
-                    : status === "planned"
-                      ? "Reservado"
-                      : status === "backlog"
-                        ? "Prioridades"
-                        : "Exito"}
-                </p>
-                <span className="mt-2 rounded-[3px] border border-[#cbd6e2] bg-[#eaf0f6] px-2 py-1 text-[10px] font-bold text-[#516f90]">
-                  {totalCredits} CR
-                </span>
-
-                <div className="mt-4 min-h-[58px] w-full rounded-[4px] border border-dashed border-[#dfe3eb] bg-white p-2 text-left">
-                  {topItem ? (
-                    <button type="button" className="w-full text-left" onClick={() => openEditModal(topItem)}>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-[#33475b]">{topItem.title}</p>
-                          <p className="mt-1 line-clamp-2 text-[10px] text-[#516f90]">
-                            {topItem.description || "Sin descripcion ejecutiva."}
-                          </p>
-                        </div>
-                        <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
-                          {topItem.credits} CR
-                        </span>
+          <div className="mt-8 rounded-[10px] border border-[#dfe3eb] bg-white px-4 py-5 shadow-[0_12px_28px_rgba(51,71,91,0.06)]">
+            <div className="overflow-x-auto">
+              <div
+                className="grid min-w-[1120px]"
+                style={{
+                  gridTemplateColumns: `170px minmax(${ganttTimeline.timelineDays * ganttTimeline.dayWidth}px, 1fr)`,
+                }}
+              >
+                <div className="border-r border-[#dfe3eb] bg-white pr-3" />
+                <div className="rounded-tr-[8px] border border-[#dfe3eb] border-b-0 bg-[#f5f8fa]">
+                  <div className="grid" style={{ gridTemplateColumns: `repeat(3, minmax(0, 1fr))` }}>
+                    {ganttTimeline.monthSegments.map((segment) => (
+                      <div
+                        key={segment.key}
+                        className="border-r border-[#dfe3eb] px-2 py-2 text-[11px] font-bold text-[#516f90] last:border-r-0"
+                      >
+                        {segment.label}
                       </div>
+                    ))}
+                  </div>
+                  <div
+                    className="grid border-t border-[#dfe3eb] bg-white"
+                    style={{ gridTemplateColumns: `repeat(${ganttTimeline.timelineDays}, ${ganttTimeline.dayWidth}px)` }}
+                  >
+                    {ganttTimeline.dayMarkers.map((marker) => (
+                      <div
+                        key={marker.key}
+                        className="grid h-[22px] place-items-center border-r border-[#eef2f7] text-[8px] font-medium text-[#8aa0b4] last:border-r-0"
+                      >
+                        {marker.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {ganttTimeline.rows.length ? (
+                  ganttTimeline.rows.map((row) => {
+                    const baseStart = row.initiative.est_start_date ?? toIsoDate(row.start as Date);
+                    const baseEnd = row.initiative.est_end_date ?? toIsoDate(row.end as Date);
+                    const dragDelta =
+                      ganttDrag?.initiativeId === row.initiative.id ? ganttDrag.dayDelta : 0;
+                    const baseStartDate = parseCalendarDate(baseStart);
+                    const baseEndDate = parseCalendarDate(baseEnd);
+                    const previewStartDate =
+                      ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-start"
+                        ? (() => {
+                            const candidate = addCalendarDays(baseStartDate, dragDelta);
+                            return candidate > baseEndDate ? baseEndDate : candidate;
+                          })()
+                        : ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-end"
+                          ? baseStartDate
+                          : addCalendarDays(baseStartDate, dragDelta);
+                    const previewEndDate =
+                      ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-start"
+                        ? baseEndDate
+                        : ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-end"
+                          ? (() => {
+                              const candidate = addCalendarDays(baseEndDate, dragDelta);
+                              return candidate < baseStartDate ? baseStartDate : candidate;
+                            })()
+                          : addCalendarDays(baseEndDate, dragDelta);
+                    const previewStart = toIsoDate(previewStartDate);
+                    const previewEnd = toIsoDate(previewEndDate);
+                    const previewStartOffset = Math.max(
+                      diffCalendarDays(ganttTimeline.windowStart, previewStartDate),
+                      0,
+                    );
+                    const previewSpan = Math.max(
+                      diffCalendarDays(previewStartDate, previewEndDate) + 1,
+                      1,
+                    );
+                    const barTone =
+                      row.initiative.status === "executing"
+                        ? "bg-[#00bda5]"
+                        : row.initiative.status === "planned"
+                          ? "bg-[#6a78d1]"
+                          : row.initiative.status === "completed"
+                            ? "bg-[#33475b]"
+                            : "bg-[#54779c]";
+
+                    return (
+                      <Fragment key={row.initiative.id}>
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(row.initiative)}
+                          className="border-r border-[#dfe3eb] px-2 py-2 text-left transition hover:bg-[#fafcff]"
+                        >
+                          <p className="truncate text-[11px] font-bold text-[#33475b]">{row.initiative.title}</p>
+                          <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8aa0b4]">
+                            {STATUS_META[row.initiative.status].label}
+                          </p>
+                        </button>
+
+                        <div className="relative border border-[#dfe3eb] border-l-0 border-t-0 bg-white">
+                          {ganttTimeline.todayOffset >= 0 && ganttTimeline.todayOffset < ganttTimeline.timelineDays ? (
+                            <div
+                              className="pointer-events-none absolute bottom-0 top-0 z-10 w-[2px] bg-[#ff7a59]/70"
+                              style={{ left: `${ganttTimeline.todayOffset * ganttTimeline.dayWidth}px` }}
+                            />
+                          ) : null}
+                          <div
+                            className="grid"
+                            style={{
+                              gridTemplateColumns: `repeat(${ganttTimeline.timelineDays}, ${ganttTimeline.dayWidth}px)`,
+                            }}
+                          >
+                            {ganttTimeline.dayMarkers.map((marker) => (
+                              <div
+                                key={`${row.initiative.id}-${marker.key}`}
+                                className="h-[38px] border-r border-[#eef2f7] last:border-r-0"
+                              />
+                            ))}
+                          </div>
+                          {!row.isOutsideRange ? (
+                            <div
+                              className={`absolute top-[6px] h-[24px] rounded-[4px] text-white shadow-[0_8px_18px_rgba(51,71,91,0.16)] ${barTone}`}
+                              style={{
+                                left: `${previewStartOffset * ganttTimeline.dayWidth}px`,
+                                width: `${Math.max(previewSpan * ganttTimeline.dayWidth - 4, ganttTimeline.dayWidth * 2)}px`,
+                                opacity: ganttDrag?.initiativeId === row.initiative.id ? 0.92 : 1,
+                              }}
+                            >
+                              <div
+                                onPointerDown={(event) => {
+                                  if (!writable || isSavingInitiative) return;
+                                  event.preventDefault();
+                                  setGanttDrag({
+                                    initiativeId: row.initiative.id,
+                                    originX: event.clientX,
+                                    dayDelta: 0,
+                                    startDate: baseStart,
+                                    endDate: baseEnd,
+                                    mode: "move",
+                                  });
+                                }}
+                                onDoubleClick={() => openEditModal(row.initiative)}
+                                className="absolute inset-y-0 left-4 right-4 z-0 flex cursor-grab items-center rounded-[4px] px-1 active:cursor-grabbing"
+                                title={writable ? "Arrastra para mover fechas. Doble clic para editar." : "Doble clic para ver detalle."}
+                              >
+                                <span className="truncate text-[10px] font-bold">{row.initiative.title}</span>
+                              </div>
+                              {writable ? (
+                                <button
+                                  type="button"
+                                  aria-label="Ajustar fecha de inicio"
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    event.preventDefault();
+                                    if (isSavingInitiative) return;
+                                    if (row.initiative.is_blocked) {
+                                      showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de ajustar sus fechas.");
+                                      return;
+                                    }
+                                    setGanttDrag({
+                                      initiativeId: row.initiative.id,
+                                      originX: event.clientX,
+                                      dayDelta: 0,
+                                      startDate: baseStart,
+                                      endDate: baseEnd,
+                                      mode: "resize-start",
+                                    });
+                                  }}
+                                  className="absolute left-0 top-0 z-20 h-full w-4 cursor-ew-resize rounded-l-[4px] bg-transparent"
+                                  title="Arrastra para cambiar el inicio"
+                                >
+                                  <span className="absolute left-1 top-1/2 h-4 w-1.5 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                                </button>
+                              ) : null}
+                              {writable ? (
+                                <button
+                                  type="button"
+                                  aria-label="Ajustar fecha de fin"
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    event.preventDefault();
+                                    if (isSavingInitiative) return;
+                                    if (row.initiative.is_blocked) {
+                                      showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de ajustar sus fechas.");
+                                      return;
+                                    }
+                                    setGanttDrag({
+                                      initiativeId: row.initiative.id,
+                                      originX: event.clientX,
+                                      dayDelta: 0,
+                                      startDate: baseStart,
+                                      endDate: baseEnd,
+                                      mode: "resize-end",
+                                    });
+                                  }}
+                                  className="absolute right-0 top-0 z-20 h-full w-4 cursor-ew-resize rounded-r-[4px] bg-transparent"
+                                  title="Arrastra para cambiar el fin"
+                                >
+                                  <span className="absolute right-1 top-1/2 h-4 w-1.5 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="absolute inset-0 grid place-items-center px-4 text-center">
+                              <p className="text-[10px] font-semibold text-[#8aa0b4]">
+                                Fuera de la ventana visible.
+                              </p>
+                            </div>
+                          )}
+                          <div className="pointer-events-none absolute bottom-[4px] left-2 text-[8px] font-semibold text-[#8aa0b4]">
+                            {ganttDrag?.initiativeId === row.initiative.id
+                              ? formatDateRange(previewStart, previewEnd)
+                              : formatDateRange(baseStart, baseEnd)}
+                          </div>
+                        </div>
+                      </Fragment>
+                    );
+                  })
+                ) : (
+                  <>
+                    <div className="border-r border-[#dfe3eb] px-2 py-3 text-[11px] text-[#9cb1c6]">
+                      Sin fechas
+                    </div>
+                    <div className="grid place-items-center border border-[#dfe3eb] border-l-0 px-4 py-6 text-center">
+                      <p className="text-[12px] font-semibold text-[#516f90]">
+                        Agrega fechas estimadas a las iniciativas para ver el gantt.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {ganttTimeline.undatedRows.length ? (
+              <div className="mt-5 rounded-[10px] border border-dashed border-[#dfe3eb] bg-white px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Iniciativas sin rango
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#8aa0b4]">
+                      Aun no entran al calendario porque les falta fecha de inicio o fin.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
+                    {ganttTimeline.undatedRows.length} pendientes
+                  </span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {ganttTimeline.undatedRows.map((initiative) => (
+                    <button
+                      key={initiative.id}
+                      type="button"
+                      onClick={() => openEditModal(initiative)}
+                      className="rounded-full border border-[#dfe3eb] bg-[#f8fbff] px-3 py-2 text-[11px] font-semibold text-[#33475b] transition hover:border-[#bfd3e6] hover:bg-white"
+                    >
+                      {initiative.title}
                     </button>
-                  ) : (
-                    <p className="pt-2 text-center text-[10px] text-[#9cb1c6]">Vacio</p>
-                  )}
+                  ))}
                 </div>
               </div>
-            );
-          })}
-        </div>
-        </div>
+            ) : null}
+          </div>
 
         <div className="mt-10 space-y-4">
           <h3 className="text-[13px] font-bold text-[#33475b]">
@@ -2010,19 +2721,23 @@ export function OnboardingClientPage({
             <div className="space-y-6">
               <div className="rounded-[14px] border border-[#dfe3eb] bg-white p-5">
                 <h3 className="text-[15px] font-bold text-[#33475b]">Oferta actual</h3>
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {stagePlanPreview.map((plan) => (
-                    <div
-                      key={`report-plan-${plan.credits}`}
-                      className={`rounded-[10px] border px-4 py-4 text-center ${
-                        plan.active ? "border-[#ff7a59] bg-[#fff3f0]" : "border-[#dfe3eb] bg-[#f8fafc]"
-                      }`}
-                    >
-                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8aa0b4]">Plan</p>
-                      <p className="mt-2 text-[24px] font-bold text-[#33475b]">{plan.credits} CR</p>
-                      <p className="mt-1 text-[12px] text-[#516f90]">{formatCurrency(plan.price)}</p>
-                    </div>
-                  ))}
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-[10px] border border-[#ff7a59] bg-[#fff3f0] px-4 py-4 text-center">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8aa0b4]">
+                      Creditos
+                    </p>
+                    <p className="mt-2 text-[24px] font-bold text-[#33475b]">{negotiatedPlanCredits} CR</p>
+                    <p className="mt-1 text-[12px] text-[#516f90]">Oferta negociada</p>
+                  </div>
+                  <div className="rounded-[10px] border border-[#ff7a59] bg-[#fff3f0] px-4 py-4 text-center">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8aa0b4]">
+                      Precio
+                    </p>
+                    <p className="mt-2 text-[24px] font-bold text-[#33475b]">
+                      {formatCurrency(negotiatedPlanPrice)}
+                    </p>
+                    <p className="mt-1 text-[12px] text-[#516f90]">{negotiatedPlanCadence}</p>
+                  </div>
                 </div>
               </div>
 
@@ -2031,17 +2746,19 @@ export function OnboardingClientPage({
                 <div className="mt-4 space-y-3 text-[13px] text-[#516f90]">
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
                     <span>Créditos base</span>
-                    <strong className="text-[#33475b]">{config.custom_plan_credits ?? config.base_capacity} CR</strong>
+                    <strong className="text-[#33475b]">{negotiatedPlanCredits} CR</strong>
                   </div>
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
-                    <span>Precio sugerido</span>
+                    <span>Precio negociado</span>
                     <strong className="text-[#33475b]">
-                      {formatCurrency(Number(config.custom_plan_price ?? suggestPlanPrice(config.base_capacity)))}
+                      {formatCurrency(negotiatedPlanPrice)}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
-                    <span>Tipo de oferta</span>
-                    <strong className="text-[#33475b]">{config.custom_plan_type ?? "mensual"}</strong>
+                    <span>Forma de cobro</span>
+                    <strong className="text-[#33475b]">
+                      {getPlanBillingModeLabel(negotiatedPlanBillingMode)}
+                    </strong>
                   </div>
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
                     <span>Vigencia de créditos</span>
@@ -2063,7 +2780,7 @@ export function OnboardingClientPage({
                   Configurar oferta
                 </p>
                 <h3 className="mt-2 text-2xl font-semibold text-slate-950">
-                  Ajusta creditos, precio y vigencia del onboarding.
+                  Define una oferta libre para este cliente, sin paquetes fijos.
                 </h3>
               </div>
               <Button variant="ghost" onClick={() => setIsOfferModalOpen(false)}>
@@ -2073,7 +2790,7 @@ export function OnboardingClientPage({
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Creditos del plan</span>
+                <span className="text-sm font-medium text-slate-700">Creditos contratados</span>
                 <Input
                   type="number"
                   min={1}
@@ -2088,7 +2805,25 @@ export function OnboardingClientPage({
               </label>
 
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Precio sugerido</span>
+                <span className="text-sm font-medium text-slate-700">Periodo de compra</span>
+                <Select
+                  value={String(offerDraft.periodMonths)}
+                  onChange={(event) =>
+                    setOfferDraft((current) => ({
+                      ...current,
+                      periodMonths: safeParseNumber(event.target.value) as PlanPeriodMonths,
+                    }))
+                  }
+                >
+                  <option value="1">Mensual</option>
+                  <option value="3">Trimestre</option>
+                  <option value="6">Semestre</option>
+                  <option value="12">Anual</option>
+                </Select>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Precio negociado</span>
                 <Input
                   type="number"
                   min={0}
@@ -2103,18 +2838,18 @@ export function OnboardingClientPage({
               </label>
 
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Tipo de oferta</span>
+                <span className="text-sm font-medium text-slate-700">Forma de cobro</span>
                 <Select
-                  value={offerDraft.type}
+                  value={offerDraft.billingMode}
                   onChange={(event) =>
                     setOfferDraft((current) => ({
                       ...current,
-                      type: event.target.value as CustomPlanType,
+                      billingMode: event.target.value as CustomPlanBillingMode,
                     }))
                   }
                 >
-                  <option value="mensual">Mensual</option>
-                  <option value="proyecto">Proyecto</option>
+                  <option value="subscription">Membresia recurrente</option>
+                  <option value="one_time">Paquete unico</option>
                 </Select>
               </label>
 
@@ -2136,8 +2871,17 @@ export function OnboardingClientPage({
 
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               <p>
-                Plan propuesto: <strong>{offerDraft.credits} CR</strong> ·{" "}
-                <strong>{formatCurrency(offerDraft.price)}</strong> · vigencia de{" "}
+                Oferta negociada: <strong>{offerDraft.credits} CR</strong> por{" "}
+                <strong>{getPlanPeriodLabel(offerDraft.periodMonths)}</strong> ·{" "}
+                <strong>
+                  {getMonthlyContractCredits({
+                    base_capacity: offerDraft.credits,
+                    custom_plan_credits: offerDraft.credits,
+                    custom_plan_period_months: offerDraft.periodMonths,
+                  })}{" "}
+                  CR/mes
+                </strong>{" "}
+                · <strong>{formatCurrency(offerDraft.price)}</strong> · vigencia de{" "}
                 <strong>{offerDraft.validityDays} dias</strong>.
               </p>
             </div>
@@ -2148,7 +2892,7 @@ export function OnboardingClientPage({
                 ...current,
                 price: suggestPlanPrice(current.credits),
               }))}>
-                Recalcular precio
+                Usar referencia sugerida
               </Button>
               <Button variant="ghost" onClick={() => setIsOfferModalOpen(false)}>
                 Cancelar
@@ -2193,123 +2937,141 @@ export function OnboardingClientPage({
       ) : null}
 
       {draft ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
-          <Card className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  {editingInitiativeId ? "Editar iniciativa" : "Nueva iniciativa"}
-                </p>
-                <h3 className="mt-2 text-2xl font-semibold text-slate-950">
-                  Gestiona alcance, fechas, actividades y notas operativas.
-                </h3>
-              </div>
-              <Button variant="ghost" onClick={() => setDraft(null)}>
-                Cerrar
-              </Button>
-            </div>
-            <div className="mt-6 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-              <div className="space-y-4">
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Titulo</span>
-                  <Input
+        <div className="fixed inset-0 z-50 bg-[#33475b]/60 backdrop-blur-[2px]">
+          <button
+            type="button"
+            className="absolute inset-0"
+            aria-label="Cerrar panel"
+            onClick={() => setDraft(null)}
+          />
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-[620px] flex-col border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+            <div
+              className={`border-b border-[#dfe3eb] bg-[#f5f8fa] px-6 pb-5 pt-6 ${
+                draft.isBlocked ? "border-l-4 border-l-[#ef4444] pl-5" : ""
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={`inline-flex rounded-[2px] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${getPanelStatusBadgeClass(
+                      draft.status,
+                    )}`}
+                  >
+                    {STATUS_META[draft.status].label}
+                  </span>
+                  <textarea
+                    rows={2}
                     value={draft.title}
                     onChange={(event) => setDraft({ ...draft, title: event.target.value })}
                     disabled={!writable}
+                    placeholder="Titulo"
+                    spellCheck={false}
+                    className="mt-4 block w-full resize-none border-0 bg-transparent p-0 text-[22px] font-black leading-[1.1] text-[#33475b] outline-none"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      boxShadow: "none",
+                      borderRadius: 0,
+                      fontWeight: 900,
+                      fontFamily: "inherit",
+                      color: "#33475b",
+                    }}
                   />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Categoria</span>
-                  <Input
-                    value={draft.type}
-                    onChange={(event) => setDraft({ ...draft, type: event.target.value })}
-                    disabled={!writable}
-                  />
-                </label>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Estado</span>
-                    <Select
-                      value={draft.status}
-                      onChange={(event) =>
-                        setDraft({ ...draft, status: event.target.value as InitiativeStatus })
-                      }
-                      disabled={!writable}
-                    >
-                      {boardStatuses.map((status) => (
-                        <option key={status} value={status}>
-                          {STATUS_META[status].label}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                  <label className="flex items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={draft.isBlocked}
-                      onChange={(event) => setDraft({ ...draft, isBlocked: event.target.checked })}
-                      disabled={!writable}
-                    />
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">Bloqueada</p>
-                      <p className="text-xs text-slate-500">Marca dependencias o aprobaciones pendientes.</p>
-                    </div>
-                  </label>
                 </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Fecha estimada inicio</span>
+
+                <div className="flex items-start gap-2 pt-1">
+                  {writable ? (
+                    <button
+                      type="button"
+                      onClick={() => setDraft({ ...draft, isBlocked: !draft.isBlocked })}
+                      className={`rounded-[2px] border px-2 py-[4px] text-[8px] font-bold uppercase tracking-[0.05em] transition ${
+                        draft.isBlocked
+                          ? "border-[#fecaca] bg-[#fff1f2] text-[#ef4444] hover:border-[#fda4af]"
+                          : "border-[#cbd6e2] bg-white text-[#33475b] hover:border-[#9cb1c6]"
+                      }`}
+                    >
+                      {draft.isBlocked ? "Desbloquear" : "Bloquear"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setDraft(null)}
+                    className="rounded-[2px] p-1 text-[#9cb1c6] transition hover:bg-white hover:text-[#33475b]"
+                    aria-label="Cerrar panel"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-dashed border-[#dfe3eb] pt-6">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#516f90]">Mover a:</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {boardStatuses
+                    .filter((status) => status !== draft.status)
+                    .map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setDraft({ ...draft, status })}
+                        disabled={!writable}
+                        className="rounded-[2px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b] transition hover:border-[#9cb1c6] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {STATUS_META[status].label}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
+              <div className="space-y-6">
+
+                <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Rango estimado
+                  </p>
+                  <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                     <Input
                       type="date"
                       value={draft.estStartDate}
                       onChange={(event) => setDraft({ ...draft, estStartDate: event.target.value })}
                       disabled={!writable}
+                      className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
                     />
-                  </label>
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Fecha estimada fin</span>
+                    <span className="text-[11px] font-bold text-[#516f90]">al</span>
                     <Input
                       type="date"
                       value={draft.estEndDate}
                       onChange={(event) => setDraft({ ...draft, estEndDate: event.target.value })}
                       disabled={!writable}
+                      className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
                     />
-                  </label>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Responsable cliente</span>
-                    <Input
-                      value={draft.ownerClient}
-                      onChange={(event) => setDraft({ ...draft, ownerClient: event.target.value })}
-                      disabled={!writable}
-                    />
-                  </label>
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Responsable CSM</span>
-                    <Input
-                      value={draft.ownerCSM}
-                      onChange={(event) => setDraft({ ...draft, ownerCSM: event.target.value })}
-                      disabled={!writable}
-                    />
-                  </label>
-                </div>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Descripcion</span>
+                  </div>
+                </section>
+
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Descripcion
+                  </p>
                   <Textarea
-                    rows={5}
+                    rows={4}
                     value={draft.description}
                     onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                     disabled={!writable}
+                    className="mt-3 min-h-[72px] rounded-none border-[#cbd6e2] bg-white px-3 py-2 text-[12px] text-[#516f90] shadow-none"
+                    style={{ borderRadius: 0, boxShadow: "none" }}
                   />
-                </label>
-              </div>
+                </section>
 
-              <div className="space-y-4">
-                <Card className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 shadow-none">
+                <section className="rounded-[4px] border border-[#dfe3eb] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                   <div className="flex items-center justify-between gap-3">
-                    <h4 className="text-lg font-semibold text-slate-900">Actividades incluidas</h4>
-                    <Badge className="bg-white text-slate-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Actividades incluidas
+                    </p>
+                    <span className="text-[13px] font-bold text-[#ff7a59]">
                       {calculateCredits(
                         draft.subitems.map((subitem) => ({
                           unit_credits: subitem.unitCredits,
@@ -2317,153 +3079,294 @@ export function OnboardingClientPage({
                         })),
                       )}{" "}
                       CR
-                    </Badge>
+                    </span>
                   </div>
-                  <div className="mt-4 flex gap-2">
-                    <Select
-                      value={catalogSelection}
-                      onChange={(event) => setCatalogSelection(event.target.value)}
-                      disabled={!writable}
-                    >
-                      <option value="">Selecciona desde catalogo</option>
-                      {initialData.catalog.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.category} - {item.label} ({item.credits} CR)
-                        </option>
-                      ))}
-                    </Select>
-                    <Button variant="secondary" onClick={addCatalogItem} disabled={!writable}>
-                      Agregar
-                    </Button>
-                  </div>
-                  <div className="mt-3">
-                    <Button variant="ghost" onClick={addManualSubitem} disabled={!writable}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Actividad personalizada
-                    </Button>
-                  </div>
+
                   <div className="mt-4 space-y-3">
                     {draft.subitems.map((subitem, index) => (
                       <div
                         key={subitem.id ?? `draft-subitem-${index}`}
-                        className="rounded-2xl border border-slate-200 bg-white p-3"
+                        className="rounded-[4px] border border-[#dfe3eb] bg-[#f5f8fa] p-3"
                       >
-                        <div className="space-y-3">
-                          <label className="space-y-2">
-                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                              Actividad
-                            </span>
-                            <Input
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <textarea
+                              rows={2}
                               value={subitem.name}
                               onChange={(event) =>
                                 updateDraftSubitem(index, "name", event.target.value)
                               }
-                              placeholder="Nombre de la actividad"
-                              className="text-sm"
+                              placeholder="Actividad"
+                              className="block w-full resize-none border-0 bg-transparent p-0 text-[12px] font-bold leading-[1.25] text-[#33475b] outline-none"
+                              style={{ border: "none", background: "transparent", boxShadow: "none", borderRadius: 0 }}
                               disabled={!writable}
                             />
-                          </label>
-
-                          <div className="grid gap-3 md:grid-cols-[140px_120px_auto]">
-                            <label className="space-y-2">
-                              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                                Créditos
-                              </span>
-                              <Input
-                                type="number"
-                                min={0}
-                                value={subitem.unitCredits}
-                                onChange={(event) =>
-                                  updateDraftSubitem(index, "unitCredits", event.target.value)
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="text-[9px] text-[#516f90]">{subitem.unitCredits} CR c/u</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  writable &&
+                                  updateDraftSubitem(index, "status", getNextTaskStatus(subitem.status))
                                 }
                                 disabled={!writable}
-                              />
-                            </label>
-                            <label className="space-y-2">
-                              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                                Cantidad
-                              </span>
-                              <Input
-                                type="number"
-                                min={1}
-                                value={subitem.quantity}
-                                onChange={(event) =>
-                                  updateDraftSubitem(index, "quantity", event.target.value)
-                                }
-                                disabled={!writable}
-                              />
-                            </label>
-                            <div className="flex items-end">
-                              <Button
-                                variant="danger"
-                                onClick={() => removeDraftSubitem(index)}
-                                disabled={!writable}
+                                className={`inline-flex items-center rounded-[999px] px-2 py-1 text-[9px] font-bold transition disabled:cursor-not-allowed disabled:opacity-70 ${TASK_STATUS_META[subitem.status].muted}`}
                               >
-                                Quitar
-                              </Button>
+                                {TASK_STATUS_META[subitem.status].label}
+                              </button>
+                              {(() => {
+                                const dateInputId = `draft-subitem-date-${draft.id || "new"}-${index}`;
+
+                                return (
+                                  <>
+                                    <input
+                                      id={dateInputId}
+                                      type="date"
+                                      value={subitem.targetDate}
+                                      onChange={(event) =>
+                                        updateDraftSubitem(index, "targetDate", event.target.value)
+                                      }
+                                      disabled={!writable}
+                                      className="sr-only"
+                                      tabIndex={-1}
+                                      aria-hidden="true"
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={!writable}
+                                      onClick={() => {
+                                        if (!writable) return;
+
+                                        const input = document.getElementById(dateInputId) as
+                                          | (HTMLInputElement & { showPicker?: () => void })
+                                          | null;
+
+                                        if (!input) return;
+
+                                        if (typeof input.showPicker === "function") {
+                                          input.showPicker();
+                                          return;
+                                        }
+
+                                        input.focus();
+                                        input.click();
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-[999px] border border-[#cbd6e2] bg-white px-2 py-1 text-[9px] font-medium text-[#516f90] transition hover:border-[#9cb1c6] disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      <CalendarDays className="h-3 w-3" />
+                                      {formatCompactDate(subitem.targetDate)}
+                                    </button>
+                                  </>
+                                );
+                              })()}
                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 pl-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateDraftSubitem(index, "quantity", String(Math.max(1, subitem.quantity - 1)))
+                              }
+                              disabled={!writable}
+                              className="grid h-7 w-7 place-items-center rounded-none border border-[#cbd6e2] border-r-0 bg-white text-[13px] font-bold text-[#33475b] disabled:opacity-60"
+                            >
+                              -
+                            </button>
+                            <span className="flex h-7 min-w-[18px] items-center justify-center border-y border-[#cbd6e2] bg-white px-1 text-center text-[10px] font-bold text-[#33475b]">
+                              {subitem.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateDraftSubitem(index, "quantity", String(subitem.quantity + 1))
+                              }
+                              disabled={!writable}
+                              className="grid h-7 w-7 place-items-center rounded-none border border-[#cbd6e2] border-l-0 bg-white text-[13px] font-bold text-[#33475b] disabled:opacity-60"
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeDraftSubitem(index)}
+                              disabled={!writable}
+                              className="ml-1 grid h-6 w-6 place-items-center text-[#ef4444] transition hover:text-[#dc2626] disabled:opacity-60"
+                              aria-label="Quitar actividad"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
-                </Card>
 
-                <Card className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 shadow-none">
-                  <h4 className="text-lg font-semibold text-slate-900">Historial y notas</h4>
-                  <Textarea
-                    rows={3}
-                    className="mt-4"
-                    placeholder="Escribe una nota operativa para guardar junto con este cambio."
-                    value={draft.note}
-                    onChange={(event) => setDraft({ ...draft, note: event.target.value })}
+                  <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
+                    <select
+                      value={catalogSelection}
+                      onChange={(event) => setCatalogSelection(event.target.value)}
+                      disabled={!writable}
+                      className="h-8 w-full appearance-none border border-[#cbd6e2] bg-white px-3 text-[10px] text-[#33475b] outline-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
+                    >
+                      <option value="">{"-- A\u00f1adir --"}</option>
+                      {catalogOptions.map(([category, items]) => (
+                        <optgroup key={category} label={category}>
+                          {items.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label} ({item.credits} CR)
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={addCatalogItem}
+                      disabled={!writable}
+                      className="h-8 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[10px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {"A\u00f1adir"}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={addManualSubitem}
                     disabled={!writable}
-                  />
-                  {editingInitiativeId ? (
-                    <div className="mt-4 space-y-2">
-                      {initiatives
-                        .find((initiative) => initiative.id === editingInitiativeId)
-                        ?.logs.map((log) => (
-                          <div key={log.id} className="rounded-2xl border border-slate-200 bg-white p-3">
-                            <p className="text-xs text-slate-500">{formatDate(log.created_at)}</p>
-                            <p className="mt-1 text-sm text-slate-700">{log.entry}</p>
-                          </div>
-                        ))}
+                    className="mt-4 inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#516f90] transition hover:text-[#33475b] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Actividad personalizada
+                  </button>
+
+                  <div className="mt-4 flex items-center justify-between border-t border-[#dfe3eb] pt-3">
+                    <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#33475b]">
+                      Costo total:
+                    </p>
+                    <p className="text-[14px] font-bold text-[#ff7a59]">
+                      {calculateCredits(
+                        draft.subitems.map((subitem) => ({
+                          unit_credits: subitem.unitCredits,
+                          quantity: subitem.quantity,
+                        })),
+                      )}{" "}
+                      CR
+                    </p>
+                  </div>
+                </section>
+
+                <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Cliente</p>
+                      <div className="mt-2 border-b border-dashed border-[#00bda5] pb-1">
+                        <input
+                          value={draft.ownerClient}
+                          onChange={(event) => setDraft({ ...draft, ownerClient: event.target.value })}
+                          disabled={!writable}
+                          placeholder="Cliente"
+                          className="h-6 w-full border-0 bg-transparent p-0 text-[12px] font-semibold text-[#33475b] outline-none placeholder:text-[#9cb1c6] disabled:cursor-not-allowed"
+                          style={{ border: "none", background: "transparent", boxShadow: "none", borderRadius: 0 }}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">CSM</p>
+                      <div className="mt-2 border-b border-dashed border-[#00bda5] pb-1">
+                        <input
+                          value={draft.ownerCSM}
+                          onChange={(event) => setDraft({ ...draft, ownerCSM: event.target.value })}
+                          disabled={!writable}
+                          placeholder="CSM"
+                          className="h-6 w-full border-0 bg-transparent p-0 text-[12px] font-semibold text-[#33475b] outline-none placeholder:text-[#9cb1c6] disabled:cursor-not-allowed"
+                          style={{ border: "none", background: "transparent", boxShadow: "none", borderRadius: 0 }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="border-t border-[#dfe3eb] pt-5">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Historial</p>
+                  <div className="mt-3 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                    <Textarea
+                      rows={2}
+                      placeholder="Nueva nota..."
+                      value={draft.note}
+                      onChange={(event) => setDraft({ ...draft, note: event.target.value })}
+                      disabled={!writable}
+                      className="rounded-none border-[#cbd6e2] bg-white text-[12px] text-[#516f90] shadow-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
+                    />
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={saveInitiative}
+                        disabled={!writable || isSavingInitiative}
+                        className="h-8 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[10px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </div>
+                  {currentEditingInitiative?.logs.length ? (
+                    <div className="mt-3 space-y-2">
+                      {currentEditingInitiative.logs.map((log) => (
+                        <div key={log.id} className="rounded-[4px] border border-[#dfe3eb] bg-white px-3 py-2">
+                          <p className="text-[10px] font-semibold text-[#9cb1c6]">{formatDate(log.created_at)}</p>
+                          <p className="mt-1 text-[12px] leading-5 text-[#516f90]">{log.entry}</p>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
-                </Card>
+                </section>
               </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-3 border-t border-slate-100 pt-6">
-              {writable ? (
-                <Button onClick={saveInitiative} disabled={isSavingInitiative}>
-                  <FolderPen className="mr-2 h-4 w-4" />
-                  {isSavingInitiative ? "Guardando..." : "Guardar iniciativa"}
-                </Button>
-              ) : null}
-              {editingInitiativeId && writable ? (
-                <Button
-                  variant="danger"
-                  onClick={() => {
-                    const initiative = initiatives.find((item) => item.id === editingInitiativeId);
-                    if (initiative) void deleteInitiative(initiative);
-                  }}
+            <div className="border-t border-[#dfe3eb] bg-white px-4 py-4">
+              <div className="flex items-center gap-3">
+                {writable ? (
+                  <button
+                    type="button"
+                    onClick={saveInitiative}
+                    disabled={isSavingInitiative}
+                    className={`inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-[2px] border px-3 text-[10px] font-bold transition ${
+                      isSavingInitiative || isDraftModified
+                        ? "border-[#ff7a59] bg-[#ff7a59] text-white hover:bg-[#ea6d4f]"
+                        : "border-[#dfe3eb] bg-[#f5f8fa] text-[#9cb1c6] hover:bg-[#eef3f7]"
+                    }`}
+                  >
+                    {isSavingInitiative ? "Guardando..." : "Guardado"}
+                  </button>
+                ) : (
+                  <div className="flex flex-1 items-center gap-2 rounded-[3px] border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-700">
+                    <AlertTriangle className="h-4 w-4" />
+                    Este onboarding esta en modo solo lectura.
+                  </div>
+                )}
+                {editingInitiativeId && writable ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (currentEditingInitiative) void deleteInitiative(currentEditingInitiative);
+                    }}
+                    className="grid h-8 w-8 place-items-center rounded-[2px] border border-[#fecaca] bg-white text-[#ef4444] transition hover:bg-[#fff1f2]"
+                    aria-label="Eliminar iniciativa"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setDraft(null)}
+                  className="grid h-8 w-8 place-items-center rounded-[2px] border border-[#fecaca] bg-white text-[#ef4444] transition hover:bg-[#fff1f2]"
+                  aria-label="Cerrar panel"
                 >
-                  Eliminar iniciativa
-                </Button>
-              ) : null}
-              <Button variant="secondary" onClick={() => setDraft(null)}>
-                Cerrar
-              </Button>
-              {!writable ? (
-                <div className="ml-auto flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  <AlertTriangle className="h-4 w-4" />
-                  Este onboarding esta en modo solo lectura.
-                </div>
-              ) : null}
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-          </Card>
+          </aside>
         </div>
       ) : null}
 

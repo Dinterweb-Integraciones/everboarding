@@ -148,15 +148,15 @@ export function ClientsDashboard({
         <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.2fr_0.8fr]">
           <div>
             <Badge className="bg-[var(--accent)]/10 text-[var(--accent)]">
-              CRM + onboarding operativo
+              Customer Success workspace
             </Badge>
             <h2 className="mt-4 text-3xl font-semibold text-slate-950">
-              Administra clientes y entra al roadmap compartido.
+              Administra clientes y sigue el roadmap operativo de CS.
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{heading}</p>
             <div className="mt-5 flex items-center gap-3 text-sm text-slate-500">
               <FolderKanban className="h-4 w-4" />
-              Gestiona el acceso del equipo y el onboarding desde un mismo lugar.
+              Gestiona el seguimiento de clientes, tareas y visibilidad del equipo desde un mismo lugar.
             </div>
           </div>
 

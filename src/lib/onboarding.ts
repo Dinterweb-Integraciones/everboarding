@@ -3,6 +3,7 @@ import {
   PLAN_PRICE_FACTOR,
   REDUCTION_PENALTY_RATE,
   RISK_INACTIVE_DAYS,
+  TASK_STATUS_META,
 } from "@/lib/constants";
 import { safeParseNumber, toIsoDate } from "@/lib/utils";
 import type { Database, Tables } from "@/types/database";
@@ -10,9 +11,12 @@ import type { Database, Tables } from "@/types/database";
 export type ClientAccessRole = Database["public"]["Enums"]["client_access_role"];
 export type ClientProfileRole = Database["public"]["Enums"]["client_profile_role"];
 export type InitiativeStatus = Database["public"]["Enums"]["initiative_status"];
+export type InitiativeTaskStatus = Database["public"]["Enums"]["initiative_task_status"];
 export type CustomPlanType = Database["public"]["Enums"]["custom_plan_type"];
+export type CustomPlanBillingMode = Database["public"]["Enums"]["custom_plan_billing_mode"];
 export type ProjectStage = Database["public"]["Enums"]["project_stage"];
 export type PublicOnboardingAudience = "client" | "prospect";
+export type PlanPeriodMonths = 1 | 3 | 6 | 12;
 
 export type ClientSummary = Tables<"clients"> & {
   access_role: ClientAccessRole;
@@ -29,6 +33,9 @@ export type AssignableUser = {
   full_name: string | null;
 };
 
+export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
+export type CreditCatalogCategory = Tables<"credit_catalog_categories">;
+export type CreditCatalogGroupItem = Tables<"credit_catalog_group_items">;
 export type CreditCatalogItem = Tables<"credit_catalog_items">;
 export type InitiativeSubItem = Tables<"onboarding_initiative_subitems">;
 export type InitiativeLog = Tables<"onboarding_activity_logs"> & {
@@ -40,6 +47,7 @@ export type InitiativeRecord = Tables<"onboarding_initiatives"> & {
   subitems: InitiativeSubItem[];
   logs: InitiativeLog[];
   credits: number;
+  progressPercent: number;
 };
 
 export type OnboardingConfig = Tables<"onboarding_configs">;
@@ -49,10 +57,21 @@ export type ClientMemberRecord = Tables<"client_members"> & {
   full_name: string | null;
 };
 
+export type ClientBillingStatus = {
+  current_cycle_paid: boolean;
+  current_cycle_start: string;
+  current_cycle_end: string;
+  active_credits: number;
+  expired_unused_credits: number;
+  next_expiration_date: string | null;
+  paid_at: string | null;
+};
+
 export type OnboardingSnapshot = {
   client: ClientSummary;
   accessRole: ClientAccessRole;
   config: OnboardingConfig;
+  billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
   shareLinks: ShareLinkRecord[];
@@ -62,6 +81,7 @@ export type OnboardingSnapshot = {
 export type PublicOnboardingSnapshot = {
   client: PublicClientSummary;
   config: OnboardingConfig;
+  billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   paymentEmail: string | null;
 };
@@ -82,6 +102,7 @@ export type InitiativeEditorDraft = {
   id?: string;
   title: string;
   type: string;
+  labels: string[];
   status: InitiativeStatus;
   description: string;
   ownerClient: string;
@@ -93,6 +114,8 @@ export type InitiativeEditorDraft = {
     id?: string;
     catalogItemId: string | null;
     name: string;
+    status: InitiativeTaskStatus;
+    targetDate: string;
     unitCredits: number;
     quantity: number;
   }>;
@@ -129,6 +152,8 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
     custom_plan_credits: null,
     custom_plan_price: null,
     custom_plan_type: null,
+    custom_plan_billing_mode: "subscription",
+    custom_plan_period_months: 1,
     current_stage: "cs",
     credit_validity_days: 60,
     show_all_completed: false,
@@ -139,10 +164,38 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
   };
 }
 
+export function createDefaultBillingStatus(config: OnboardingConfig): ClientBillingStatus {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const start = new Date(`${config.start_date}T00:00:00`);
+  const anchorDay = start.getDate();
+  const cycleStart = new Date(today.getFullYear(), today.getMonth(), anchorDay);
+
+  if (today < cycleStart) {
+    cycleStart.setMonth(cycleStart.getMonth() - 1);
+  }
+
+  const cycleEnd = new Date(cycleStart);
+  cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+  cycleEnd.setDate(cycleEnd.getDate() - 1);
+
+  return {
+    current_cycle_paid: false,
+    current_cycle_start: toIsoDate(cycleStart),
+    current_cycle_end: toIsoDate(cycleEnd),
+    active_credits: 0,
+    expired_unused_credits: 0,
+    next_expiration_date: null,
+    paid_at: null,
+  };
+}
+
 export function createEmptyDraft(status: InitiativeStatus = "backlog"): InitiativeEditorDraft {
   return {
     title: "",
     type: "",
+    labels: [],
     status,
     description: "",
     ownerClient: "",
@@ -164,6 +217,33 @@ export function calculateCredits(
   );
 }
 
+export function calculateInitiativeProgress(
+  subitems: Pick<InitiativeSubItem, "quantity" | "status">[],
+) {
+  if (!subitems.length) {
+    return 0;
+  }
+
+  const totalWeight = subitems.reduce(
+    (sum, subitem) => sum + Math.max(1, safeParseNumber(subitem.quantity)),
+    0,
+  );
+
+  if (totalWeight <= 0) {
+    return 0;
+  }
+
+  const completedWeight = subitems.reduce((sum, subitem) => {
+    const quantity = Math.max(1, safeParseNumber(subitem.quantity));
+    const factor =
+      subitem.status === "completed" ? 1 : subitem.status === "in_progress" ? 0.5 : 0;
+
+    return sum + quantity * factor;
+  }, 0);
+
+  return Math.max(0, Math.min(100, Math.round((completedWeight / totalWeight) * 100)));
+}
+
 export function mapInitiative(
   initiative: Tables<"onboarding_initiatives">,
   subitems: InitiativeSubItem[],
@@ -179,12 +259,14 @@ export function mapInitiative(
     subitems: sortedSubitems,
     logs: sortedLogs,
     credits: calculateCredits(sortedSubitems),
+    progressPercent: calculateInitiativeProgress(sortedSubitems),
   };
 }
 
 export function calculateMetrics(
   config: OnboardingConfig,
   initiatives: InitiativeRecord[],
+  billing?: ClientBillingStatus,
 ): OnboardingMetrics {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -237,21 +319,23 @@ export function calculateMetrics(
     )
     .reduce((sum, initiative) => sum + initiative.credits, 0);
 
-  const planCredits = config.custom_plan_credits ?? config.base_capacity;
+  const planCredits = getMonthlyContractCredits(config);
   const activeCycles = Math.max(cycles, 1);
-  const total = planCredits * activeCycles + config.extra_capacity * 12;
-  const lost = config.lost_credits;
+  const total = billing
+    ? billing.active_credits + config.extra_capacity * 12
+    : planCredits * activeCycles + config.extra_capacity * 12;
+  const lost = config.lost_credits + (billing?.expired_unused_credits ?? 0);
 
   return {
     total,
-    available: total - reserved - consumed - lost,
+    available: Math.max(0, total - reserved - consumed - lost),
     reserved,
     consumed,
     lost,
     risk,
     cycles,
     cutoffDate: toIsoDate(nextCutoff),
-    nextExpirationDate,
+    nextExpirationDate: billing?.next_expiration_date ?? nextExpirationDate,
   };
 }
 
@@ -340,6 +424,57 @@ export function canEdit(role: ClientAccessRole) {
 
 export function suggestPlanPrice(credits: number) {
   return Math.round(credits * PLAN_PRICE_FACTOR);
+}
+
+export function normalizePlanPeriodMonths(value: number | null | undefined): PlanPeriodMonths {
+  if (value === 3 || value === 6 || value === 12) {
+    return value;
+  }
+
+  return 1;
+}
+
+export function getPlanPeriodLabel(months: number | null | undefined) {
+  const normalized = normalizePlanPeriodMonths(months);
+
+  if (normalized === 3) return "trimestre";
+  if (normalized === 6) return "semestre";
+  if (normalized === 12) return "año";
+  return "mes";
+}
+
+export function getPlanCadenceLabel(months: number | null | undefined) {
+  const normalized = normalizePlanPeriodMonths(months);
+
+  if (normalized === 3) return "trimestral";
+  if (normalized === 6) return "semestral";
+  if (normalized === 12) return "anual";
+  return "mensual";
+}
+
+export function getPlanBillingModeLabel(mode: CustomPlanBillingMode | null | undefined) {
+  return mode === "one_time" ? "paquete unico" : "membresia recurrente";
+}
+
+export function getTaskStatusLabel(status: InitiativeTaskStatus) {
+  return TASK_STATUS_META[status].label;
+}
+
+export function splitCreditsAcrossMonths(totalCredits: number, months: number | null | undefined) {
+  const normalizedMonths = normalizePlanPeriodMonths(months);
+  const safeTotal = Math.max(0, Math.round(totalCredits));
+  const base = Math.floor(safeTotal / normalizedMonths);
+  const remainder = safeTotal % normalizedMonths;
+
+  return Array.from(
+    { length: normalizedMonths },
+    (_, index) => base + (index < remainder ? 1 : 0),
+  );
+}
+
+export function getMonthlyContractCredits(config: Pick<OnboardingConfig, "base_capacity" | "custom_plan_credits" | "custom_plan_period_months">) {
+  const contractedCredits = config.custom_plan_credits ?? config.base_capacity;
+  return splitCreditsAcrossMonths(contractedCredits, config.custom_plan_period_months)[0] ?? 0;
 }
 
 export function calculateReductionPenalty(previousCredits: number, nextCredits: number) {

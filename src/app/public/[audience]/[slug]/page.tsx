@@ -3,11 +3,14 @@ import { notFound } from "next/navigation";
 import { PublicOnboardingPage } from "@/components/onboarding/public-onboarding-page";
 import { Card } from "@/components/ui/card";
 import {
+  calculateInitiativeProgress,
   type InitiativeRecord,
+  type ClientBillingStatus,
   type OnboardingConfig,
   type PublicClientSummary,
   type PublicOnboardingAudience,
   type PublicOnboardingSnapshot,
+  createDefaultBillingStatus,
 } from "@/lib/onboarding";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -21,6 +24,7 @@ type PublicSharedPageProps = {
 type PublicOnboardingRpcResponse = {
   client: PublicClientSummary;
   config: OnboardingConfig;
+  billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   payment_email: string | null;
 };
@@ -65,11 +69,20 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
   const snapshot: PublicOnboardingSnapshot = {
     client: data.client,
     config: data.config,
+    billing: data.billing ?? createDefaultBillingStatus(data.config),
     initiatives: (data.initiatives ?? []).map((initiative) => ({
       ...initiative,
+      labels: initiative.labels ?? [],
       subitems: initiative.subitems ?? [],
       logs: initiative.logs ?? [],
       credits: Number(initiative.credits ?? 0),
+      progressPercent: Number(
+        initiative.progressPercent ??
+          calculateInitiativeProgress((initiative.subitems ?? []).map((subitem) => ({
+            quantity: Number(subitem.quantity ?? 1),
+            status: subitem.status ?? "pending",
+          }))),
+      ),
     })),
     paymentEmail: data.payment_email,
   };
