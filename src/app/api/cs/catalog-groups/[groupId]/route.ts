@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
-import { formatUserError } from "@/lib/utils";
+import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type GroupRouteProps = {
   params: Promise<{ groupId: string }>;
@@ -14,6 +14,8 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
+      modalCategory?: string | null;
+      credits?: number;
       sortOrder?: number;
       isActive?: boolean;
       taskIds?: string[];
@@ -21,11 +23,23 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
+    const modalCategory = body.modalCategory?.trim() || null;
+    const credits = Math.max(0, safeParseNumber(body.credits));
     const sortOrder = Number.isFinite(body.sortOrder) ? Number(body.sortOrder) : 0;
     const isActive = body.isActive ?? true;
+    const taskIds = Array.isArray(body.taskIds)
+      ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
+      : [];
 
     if (!name) {
       return NextResponse.json({ message: "El nombre del grupo es requerido." }, { status: 400 });
+    }
+
+    if (!taskIds.length && credits <= 0) {
+      return NextResponse.json(
+        { message: "Agrega tareas al grupo o define una cantidad de creditos mayor a cero." },
+        { status: 400 },
+      );
     }
 
     const { data: currentGroup, error: currentError } = await supabase
@@ -43,6 +57,8 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .update({
         name,
         description,
+        modal_category: modalCategory,
+        credits,
         sort_order: sortOrder,
         is_active: isActive,
       })
@@ -51,11 +67,6 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .single();
 
     if (error || !data) throw error ?? new Error("No pudimos actualizar el grupo.");
-
-    const taskIds = Array.isArray(body.taskIds)
-      ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
-      : [];
-
     const { error: deleteLinksError } = await supabase
       .from("credit_catalog_group_items")
       .delete()

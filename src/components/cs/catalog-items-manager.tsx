@@ -71,6 +71,7 @@ export function CatalogItemsManager({
       const looksLikeLegacyMirror =
         !group.created_by_user_id &&
         !group.description &&
+        safeParseNumber(group.credits) === 0 &&
         allTasksMatchCategory &&
         sameCountAsCategory;
 

@@ -534,6 +534,8 @@ export type Database = {
           id: string;
           name: string;
           description: string | null;
+          modal_category: string | null;
+          credits: number;
           sort_order: number;
           is_active: boolean;
           created_by_user_id: string | null;
@@ -544,6 +546,8 @@ export type Database = {
           id?: string;
           name: string;
           description?: string | null;
+          modal_category?: string | null;
+          credits?: number;
           sort_order?: number;
           is_active?: boolean;
           created_by_user_id?: string | null;
@@ -554,6 +558,8 @@ export type Database = {
           id?: string;
           name?: string;
           description?: string | null;
+          modal_category?: string | null;
+          credits?: number;
           sort_order?: number;
           is_active?: boolean;
           created_by_user_id?: string | null;

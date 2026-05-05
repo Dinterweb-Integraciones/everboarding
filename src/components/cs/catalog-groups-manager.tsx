@@ -17,9 +17,20 @@ type CatalogGroupsManagerProps = {
   initialMemberships: CreditCatalogGroupItem[];
 };
 
-const emptyForm = {
+type CatalogGroupForm = {
+  name: string;
+  description: string;
+  modalCategory: string;
+  credits: string;
+  sortOrder: string;
+  isActive: boolean;
+};
+
+const emptyForm: CatalogGroupForm = {
   name: "",
   description: "",
+  modalCategory: "",
+  credits: "0",
   sortOrder: "0",
   isActive: true,
 };
@@ -33,7 +44,7 @@ export function CatalogGroupsManager({
   const [items] = useState(initialItems);
   const [memberships, setMemberships] = useState(initialMemberships);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<CatalogGroupForm>(emptyForm);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -79,6 +90,7 @@ export function CatalogGroupsManager({
       const looksLikeLegacyMirror =
         !group.created_by_user_id &&
         !group.description &&
+        safeParseNumber(group.credits) === 0 &&
         allTasksMatchCategory &&
         sameCountAsCategory;
 
@@ -114,6 +126,11 @@ export function CatalogGroupsManager({
     [items, selectedTaskIds],
   );
 
+  const selectedTasksCredits = useMemo(
+    () => selectedTasks.reduce((sum, task) => sum + safeParseNumber(task.credits), 0),
+    [selectedTasks],
+  );
+
   const availableTasks = useMemo(
     () => sortedItems.filter((item) => !selectedTaskIds.includes(item.id) && item.is_active),
     [selectedTaskIds, sortedItems],
@@ -133,7 +150,11 @@ export function CatalogGroupsManager({
 
         return {
           ...group,
+          modalCategory: group.modal_category ?? "",
           taskCount: groupTasks.length,
+          totalCredits: groupTasks.length
+            ? groupTasks.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
+            : safeParseNumber(group.credits),
           taskNames: groupTasks.map((item) => item.label),
           taskCategories: [...new Set(groupTasks.map((item) => item.category))],
         };
@@ -153,6 +174,8 @@ export function CatalogGroupsManager({
     setForm({
       name: group.name,
       description: group.description ?? "",
+      modalCategory: group.modal_category ?? "",
+      credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
     });
@@ -180,6 +203,17 @@ export function CatalogGroupsManager({
     setIsSaving(true);
     setFeedback(null);
 
+    const manualCredits = Math.max(0, safeParseNumber(form.credits));
+
+    if (!selectedTaskIds.length && manualCredits <= 0) {
+      setFeedback({
+        tone: "error",
+        message: "Agrega tareas al grupo o define una cantidad de creditos mayor a cero.",
+      });
+      setIsSaving(false);
+      return;
+    }
+
     try {
       const response = await fetch(
         editingId ? `/api/cs/catalog-groups/${editingId}` : "/api/cs/catalog-groups",
@@ -189,6 +223,8 @@ export function CatalogGroupsManager({
           body: JSON.stringify({
             name: form.name,
             description: form.description,
+            modalCategory: form.modalCategory,
+            credits: manualCredits,
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
             taskIds: selectedTaskIds,
@@ -237,7 +273,7 @@ export function CatalogGroupsManager({
 
   async function handleDelete(group: CreditCatalogGroup) {
     const confirmed = window.confirm(
-      `Eliminar "${group.name}" quitará solamente el grupo, pero no borrará las tareas. ¿Deseas continuar?`,
+      `Eliminar "${group.name}" quitara solamente el grupo, pero no borrara las tareas. Deseas continuar?`,
     );
     if (!confirmed) return;
 
@@ -278,34 +314,51 @@ export function CatalogGroupsManager({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                 CRUD CS
               </p>
-              <h1 className="text-2xl font-black text-slate-900">Gestión de grupos / casos de uso</h1>
+              <h1 className="text-2xl font-black text-slate-900">Gestion de grupos / casos de uso</h1>
             </div>
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Administra grupos de tareas.
+            Administra grupos de tareas o casos de uso con creditos manuales.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_220px]">
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Nombre del grupo
                 </label>
                 <Input
-                  value={form.name}
+                  value={form.name ?? ""}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, name: event.target.value }))
                   }
-                  placeholder="Kickoff de implementación"
+                  placeholder="Kickoff de implementacion"
                 />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Creditos manuales
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.credits ?? "0"}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, credits: event.target.value }))
+                  }
+                />
+                <p className="mt-2 text-xs text-slate-500">
+                  Usalos cuando el grupo no lleve tareas. Si agregas tareas, el total se calcula con ellas.
+                </p>
               </div>
 
               <div>
                 <label className="flex items-center gap-3 rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 sm:mt-7">
                   <input
                     type="checkbox"
-                    checked={form.isActive}
+                    checked={Boolean(form.isActive)}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, isActive: event.target.checked }))
                     }
@@ -318,19 +371,52 @@ export function CatalogGroupsManager({
 
             <div>
               <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                Descripción
+                Categoria visible en guía inteligente
+              </label>
+              <Input
+                value={form.modalCategory ?? ""}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, modalCategory: event.target.value }))
+                }
+                placeholder="Sales, Marketing, Service, IA..."
+              />
+              <p className="mt-2 text-xs text-slate-500">
+                Este valor define en qué pestaña del modal comercial aparecerá el grupo.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Descripcion
               </label>
               <Textarea
                 rows={3}
-                value={form.description}
+                value={form.description ?? ""}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, description: event.target.value }))
                 }
-                placeholder="Describe para qué sirve este caso de uso o conglomerado de tareas."
+                placeholder="Describe para que sirve este caso de uso o conglomerado de tareas."
               />
             </div>
 
             <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-dashed border-slate-200 bg-white px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Composicion del grupo</p>
+                  <p className="text-xs text-slate-500">
+                    Puedes dejar el grupo sin tareas y asignarle creditos manuales.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    Total actual
+                  </p>
+                  <p className="text-lg font-black text-slate-900">
+                    {selectedTaskIds.length ? selectedTasksCredits : Math.max(0, safeParseNumber(form.credits))} CR
+                  </p>
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[280px] flex-1">
                   <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -373,13 +459,13 @@ export function CatalogGroupsManager({
                         Tarea
                       </th>
                       <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Categoría
+                        Categoria
                       </th>
                       <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Créditos
+                        Creditos
                       </th>
                       <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Acción
+                        Accion
                       </th>
                     </tr>
                   </thead>
@@ -405,7 +491,7 @@ export function CatalogGroupsManager({
                     ) : (
                       <tr>
                         <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                          Este grupo aún no tiene tareas asociadas.
+                          Este grupo aun no tiene tareas asociadas.
                         </td>
                       </tr>
                     )}
@@ -447,10 +533,16 @@ export function CatalogGroupsManager({
                     Grupo
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Descripción
+                    Descripcion
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Categorías mezcladas
+                    Creditos
+                  </th>
+                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Categoria modal
+                  </th>
+                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Categorias mezcladas
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Tareas que lo componen
@@ -472,7 +564,11 @@ export function CatalogGroupsManager({
                         <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
                       </td>
                       <td className="px-4 py-4 text-slate-600">
-                        {group.description || "Sin descripción"}
+                        {group.description || "Sin descripcion"}
+                      </td>
+                      <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
+                      <td className="px-4 py-4 text-slate-600">
+                        {group.modalCategory || "Sin categoria"}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">
@@ -486,7 +582,7 @@ export function CatalogGroupsManager({
                               </span>
                             ))
                           ) : (
-                            <span className="text-slate-400">Sin categorías</span>
+                            <span className="text-slate-400">Sin categorias</span>
                           )}
                         </div>
                       </td>
@@ -533,8 +629,8 @@ export function CatalogGroupsManager({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Aún no hay grupos registrados.
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                      Aun no hay grupos registrados.
                     </td>
                   </tr>
                 )}

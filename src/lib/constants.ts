@@ -7,6 +7,13 @@ export const UPSELL_PACK_PRICE = 199;
 export const REDUCTION_PENALTY_RATE = 0.2;
 export const RISK_INACTIVE_DAYS = 45;
 
+export const SALES_PROPOSAL_BASE_CREDITS = 60;
+export const SALES_PROPOSAL_BASE_PRICE = 897;
+export const SALES_PROPOSAL_UPSELL_OPTIONS = [
+  { credits: 40, price: 598.5 },
+  { credits: 80, price: 897 },
+] as const;
+
 export const PLAN_TIER_OPTIONS = [60, 80, 100] as const;
 
 export const STATUS_META: Record<

@@ -1,4 +1,8 @@
 import {
+  SALES_PROPOSAL_BASE_CREDITS,
+  SALES_PROPOSAL_BASE_PRICE,
+} from "@/lib/constants";
+import {
   calculateCredits,
   calculateInitiativeProgress,
   formatDateRange,
@@ -95,8 +99,8 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     clientDescription: "",
     assignedCsmUserId: "",
     startDate: toIsoDate(),
-    contractedCredits: 80,
-    quotedPrice: 1197,
+    contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
+    quotedPrice: SALES_PROPOSAL_BASE_PRICE,
     currency: "usd",
     billingMode: "subscription",
     periodMonths: 1,
