@@ -267,8 +267,9 @@ export function SalesProposalWorkspace({
     });
 
     return initialGroups
-      .filter((group) => group.is_active && (group.modal_category ?? "").trim())
+      .filter((group) => group.is_active)
       .map((group) => {
+        const modalCategory = (group.modal_category ?? "").trim() || group.name.trim();
         const items = (membershipsByGroup.get(group.id) ?? [])
           .sort(
             (left, right) =>
@@ -285,7 +286,7 @@ export function SalesProposalWorkspace({
           id: group.id,
           name: group.name,
           description: group.description?.trim() || "",
-          modalCategory: (group.modal_category ?? "").trim(),
+          modalCategory,
           credits,
           sortOrder: safeParseNumber(group.sort_order),
           items,
@@ -321,7 +322,9 @@ export function SalesProposalWorkspace({
   const catalogTabs = useMemo(
     () => [
       { id: "wizard", label: "Guía de Activación" },
-      ...catalogGroupOptions.map(([category]) => ({ id: category, label: category })),
+      ...catalogGroupOptions
+        .filter(([category]) => category.trim().length > 0)
+        .map(([category]) => ({ id: category, label: category })),
     ],
     [catalogGroupOptions],
   );

@@ -15,7 +15,12 @@ export default async function NewSalesProposalPage() {
 
   try {
     const admin = createSupabaseAdminClient();
-    const [{ data: fetchedCatalog }, { data: fetchedGroups }, { data: fetchedMemberships }, { data: fetchedProfiles }] = await Promise.all([
+    const [
+      { data: fetchedCatalog, error: catalogError },
+      { data: fetchedGroups, error: groupsError },
+      { data: fetchedMemberships, error: membershipsError },
+      { data: fetchedProfiles, error: profilesError },
+    ] = await Promise.all([
       admin
         .from("credit_catalog_items")
         .select("*")
@@ -27,11 +32,28 @@ export default async function NewSalesProposalPage() {
       admin.from("profiles").select("id, email, full_name").order("full_name"),
     ]);
 
+    if (catalogError) {
+      console.error("sales_new_catalog_load_failed", catalogError);
+    }
+
+    if (groupsError) {
+      console.error("sales_new_groups_load_failed", groupsError);
+    }
+
+    if (membershipsError) {
+      console.error("sales_new_group_memberships_load_failed", membershipsError);
+    }
+
+    if (profilesError) {
+      console.error("sales_new_profiles_load_failed", profilesError);
+    }
+
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     membershipRows = fetchedMemberships ?? [];
     profileRows = fetchedProfiles ?? [];
-  } catch {
+  } catch (error) {
+    console.error("sales_new_workspace_bootstrap_failed", error);
     catalogRows = [];
     groupRows = [];
     membershipRows = [];

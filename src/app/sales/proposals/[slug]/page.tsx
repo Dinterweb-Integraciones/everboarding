@@ -26,11 +26,11 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
   try {
     const admin = createSupabaseAdminClient();
     const [
-      { data: fetchedProposal },
-      { data: fetchedCatalog },
-      { data: fetchedGroups },
-      { data: fetchedMemberships },
-      { data: fetchedProfiles },
+      { data: fetchedProposal, error: proposalError },
+      { data: fetchedCatalog, error: catalogError },
+      { data: fetchedGroups, error: groupsError },
+      { data: fetchedMemberships, error: membershipsError },
+      { data: fetchedProfiles, error: profilesError },
     ] =
       await Promise.all([
         admin.from("sales_proposals").select("*").eq("slug", slug).maybeSingle(),
@@ -45,12 +45,33 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
         admin.from("profiles").select("id, email, full_name").order("full_name"),
       ]);
 
+    if (proposalError) {
+      console.error("sales_proposal_load_failed", { slug, error: proposalError });
+    }
+
+    if (catalogError) {
+      console.error("sales_proposal_catalog_load_failed", { slug, error: catalogError });
+    }
+
+    if (groupsError) {
+      console.error("sales_proposal_groups_load_failed", { slug, error: groupsError });
+    }
+
+    if (membershipsError) {
+      console.error("sales_proposal_group_memberships_load_failed", { slug, error: membershipsError });
+    }
+
+    if (profilesError) {
+      console.error("sales_proposal_profiles_load_failed", { slug, error: profilesError });
+    }
+
     proposalRow = fetchedProposal;
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     membershipRows = fetchedMemberships ?? [];
     profileRows = fetchedProfiles ?? [];
-  } catch {
+  } catch (error) {
+    console.error("sales_proposal_workspace_bootstrap_failed", { slug, error });
     proposalRow = null;
   }
 
