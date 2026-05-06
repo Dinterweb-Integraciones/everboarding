@@ -51,6 +51,28 @@ export function safeParseNumber(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+export function isMissingSupabaseTable(error: unknown, tableName: string) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  const normalized = message.toLowerCase();
+  const normalizedTableName = tableName.toLowerCase();
+
+  return (
+    normalized.includes(normalizedTableName) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("could not find the table") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("relation")
+    )
+  );
+}
+
 export function formatUserError(
   error: unknown,
   fallback = "No pudimos completar la solicitud. Intenta de nuevo.",

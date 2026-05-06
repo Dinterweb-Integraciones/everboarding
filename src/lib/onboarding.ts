@@ -37,6 +37,7 @@ export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
 export type CreditCatalogCategory = Tables<"credit_catalog_categories">;
 export type CreditCatalogGroupItem = Tables<"credit_catalog_group_items">;
 export type CreditCatalogItem = Tables<"credit_catalog_items">;
+export type ManagedPrompt = Tables<"managed_prompts">;
 export type InitiativeSubItem = Tables<"onboarding_initiative_subitems">;
 export type InitiativeLog = Tables<"onboarding_activity_logs"> & {
   author_email?: string | null;

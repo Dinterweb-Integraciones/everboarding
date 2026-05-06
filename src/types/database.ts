@@ -651,6 +651,32 @@ export type Database = {
           updated_at?: string;
         };
       };
+      managed_prompts: {
+        Row: {
+          id: string;
+          singleton_key: string;
+          prompt_text: string;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          singleton_key?: string;
+          prompt_text: string;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          singleton_key?: string;
+          prompt_text?: string;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
     };
     Enums: {
       client_access_role: "viewer" | "editor" | "owner";

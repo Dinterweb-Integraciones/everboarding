@@ -153,6 +153,15 @@ create table if not exists public.credit_catalog_group_items (
   unique (group_id, catalog_item_id)
 );
 
+create table if not exists public.managed_prompts (
+  id uuid primary key default gen_random_uuid(),
+  singleton_key text not null default 'default',
+  prompt_text text not null check (nullif(trim(prompt_text), '') is not null),
+  created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.onboarding_configs (
   client_id uuid primary key references public.clients(id) on delete cascade,
   start_date date not null default current_date,
@@ -316,6 +325,10 @@ create index if not exists credit_catalog_group_items_group_idx
 on public.credit_catalog_group_items (group_id, sort_order);
 create index if not exists credit_catalog_group_items_item_idx
 on public.credit_catalog_group_items (catalog_item_id);
+create index if not exists managed_prompts_updated_idx
+on public.managed_prompts (updated_at desc, created_at desc);
+create unique index if not exists managed_prompts_singleton_key_idx
+on public.managed_prompts (singleton_key);
 
 drop trigger if exists set_profiles_updated_at on public.profiles;
 create trigger set_profiles_updated_at
@@ -355,6 +368,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_credit_catalog_groups_updated_at on public.credit_catalog_groups;
 create trigger set_credit_catalog_groups_updated_at
 before update on public.credit_catalog_groups
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_managed_prompts_updated_at on public.managed_prompts;
+create trigger set_managed_prompts_updated_at
+before update on public.managed_prompts
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_onboarding_configs_updated_at on public.onboarding_configs;
@@ -1338,6 +1356,7 @@ alter table public.credit_catalog_groups enable row level security;
 alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
 alter table public.credit_catalog_group_items enable row level security;
+alter table public.managed_prompts enable row level security;
 alter table public.onboarding_configs enable row level security;
 alter table public.client_billing_cycles enable row level security;
 alter table public.client_credit_grants enable row level security;
@@ -1364,6 +1383,8 @@ drop policy if exists "catalog_read_authenticated" on public.credit_catalog_item
 drop policy if exists "catalog_manage_authenticated" on public.credit_catalog_items;
 drop policy if exists "catalog_group_items_read_authenticated" on public.credit_catalog_group_items;
 drop policy if exists "catalog_group_items_manage_authenticated" on public.credit_catalog_group_items;
+drop policy if exists "managed_prompts_read_authenticated" on public.managed_prompts;
+drop policy if exists "managed_prompts_manage_authenticated" on public.managed_prompts;
 drop policy if exists "onboarding_configs_select_accessible" on public.onboarding_configs;
 drop policy if exists "onboarding_configs_manage_editors" on public.onboarding_configs;
 drop policy if exists "billing_cycles_select_accessible" on public.client_billing_cycles;
@@ -1488,6 +1509,19 @@ using (true);
 
 create policy "catalog_group_items_manage_authenticated"
 on public.credit_catalog_group_items
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "managed_prompts_read_authenticated"
+on public.managed_prompts
+for select
+to authenticated
+using (true);
+
+create policy "managed_prompts_manage_authenticated"
+on public.managed_prompts
 for all
 to authenticated
 using (true)
