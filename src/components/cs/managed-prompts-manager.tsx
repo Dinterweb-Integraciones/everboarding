@@ -116,8 +116,7 @@ export function ManagedPromptsManager({
           </div>
 
           <p className="mt-4 max-w-3xl text-sm text-slate-600">
-            Registra el prompt que quieras administrar dentro del proyecto y mantenlo disponible
-            en una tabla simple dentro de Supabase.
+            Registra el prompt que quieras administrar
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
