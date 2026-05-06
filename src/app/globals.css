@@ -38,3 +38,7 @@ textarea {
 ::selection {
   background: color-mix(in oklab, var(--accent) 24%, white);
 }
+
+.wizard-context-step > p:first-child {
+  display: none;
+}

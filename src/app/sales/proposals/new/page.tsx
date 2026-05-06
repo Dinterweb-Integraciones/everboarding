@@ -7,6 +7,9 @@ import type {
 } from "@/lib/onboarding";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function NewSalesProposalPage() {
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];

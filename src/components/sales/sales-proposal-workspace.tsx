@@ -131,88 +131,10 @@ export function SalesProposalWorkspace({
   csmOptions,
   initialProposal,
 }: SalesProposalWorkspaceProps) {
-  const wizardChallenges = {
-    Sales: [
-      {
-        id: "pipeline_visibility",
-        label: "Tener visibilidad del pipeline",
-        description: "Saber exactamente en que etapa esta cada negocio.",
-        keywords: ["pipeline", "visibilidad", "forecast"],
-      },
-      {
-        id: "followup_automation",
-        label: "Seguimiento automatizado",
-        description: "Menos tareas manuales, mas automatizacion.",
-        keywords: ["seguimiento", "tarea", "automat"],
-      },
-      {
-        id: "prospecting",
-        label: "Mejorar la prospeccion",
-        description: "Agendar y contactar prospectos de forma efectiva.",
-        keywords: ["prospe", "agenda", "meeting"],
-      },
-    ],
-    Marketing: [
-      {
-        id: "lead_capture",
-        label: "Captar mas leads",
-        description: "Formularios y conversion optimizados.",
-        keywords: ["lead", "capta", "formulario"],
-      },
-      {
-        id: "lead_nurturing",
-        label: "Nutrir leads automaticamente",
-        description: "Workflows para madurar contactos.",
-        keywords: ["nutri", "workflow", "automat"],
-      },
-      {
-        id: "segmentation",
-        label: "Segmentar la base de datos",
-        description: "Organizar leads para una comunicacion asertiva.",
-        keywords: ["segment", "clasif", "base"],
-      },
-    ],
-    Service: [
-      {
-        id: "ticket_order",
-        label: "Ordenar la atencion de tickets",
-        description: "Centralizar solicitudes en un solo lugar.",
-        keywords: ["ticket", "soporte", "inbox"],
-      },
-      {
-        id: "support_automation",
-        label: "Automatizar respuestas",
-        description: "Reducir tiempos de espera del cliente.",
-        keywords: ["automat", "respuesta", "asign"],
-      },
-      {
-        id: "self_service",
-        label: "Habilitar autoservicio",
-        description: "Crear articulos y respuestas a preguntas frecuentes.",
-        keywords: ["knowledge", "base", "articulo"],
-      },
-    ],
-    Content: [
-      {
-        id: "website_launch",
-        label: "Lanzar sitio web o landing pages",
-        description: "Publicar contenido rapidamente.",
-        keywords: ["web", "landing", "pagina"],
-      },
-      {
-        id: "seo",
-        label: "Mejorar posicionamiento SEO",
-        description: "Optimizar activos para buscadores.",
-        keywords: ["seo", "optimiz", "meta"],
-      },
-      {
-        id: "blog",
-        label: "Estructurar un blog",
-        description: "Atraer trafico organico con articulos.",
-        keywords: ["blog", "editor", "contenido"],
-      },
-    ],
-  } as const;
+  const wizardChallenges: Record<
+    string,
+    Array<{ id: string; label: string; description: string; keywords: string[] }>
+  > = {};
 
   const router = useRouter();
   const [proposal, setProposal] = useState<SalesProposalDraft>(
@@ -241,6 +163,7 @@ export function SalesProposalWorkspace({
   const [wizardHubs, setWizardHubs] = useState<string[]>([]);
   const [wizardPortalState, setWizardPortalState] = useState<"new" | "optimize">("new");
   const [wizardChallenge, setWizardChallenge] = useState<string>("");
+  const [wizardContext, setWizardContext] = useState("");
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
   const [initiativeDraft, setInitiativeDraft] = useState<SalesProposalInitiativeDraft | null>(null);
 
@@ -624,13 +547,9 @@ export function SalesProposalWorkspace({
   }
 
   function toggleWizardHub(hub: string) {
-    setWizardHubs((current) => {
-      const next = current.includes(hub) ? current.filter((value) => value !== hub) : [...current, hub];
-      if (!next.length || next[0] !== current[0]) {
-        setWizardChallenge("");
-      }
-      return next;
-    });
+    setWizardHubs((current) =>
+      current.includes(hub) ? current.filter((value) => value !== hub) : [...current, hub],
+    );
   }
 
   function findCatalogGroupsByCategory(category: string) {
@@ -642,36 +561,8 @@ export function SalesProposalWorkspace({
     );
   }
 
-  function findCatalogGroupByKeywords(category: string, keywords: readonly string[]) {
-    const normalizedKeywords = keywords.map((keyword) => normalizeCatalogText(keyword));
-    const candidates = findCatalogGroupsByCategory(category);
-
-    const scored = candidates
-      .map((group) => {
-        const haystack = normalizeCatalogText(
-          [
-            group.name,
-            group.description,
-            ...group.items.map((item) => `${item.label} ${item.category}`),
-          ].join(" "),
-        );
-        const score = normalizedKeywords.reduce(
-          (sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0),
-          0,
-        );
-
-        return { group, score };
-      })
-      .sort(
-        (left, right) =>
-          right.score - left.score || left.group.sortOrder - right.group.sortOrder,
-      );
-
-    return scored[0]?.score ? scored[0].group : candidates[0] ?? null;
-  }
-
   function applyWizardRecommendations() {
-    if (!wizardHubs.length || !wizardChallenge) {
+    if (!wizardHubs.length) {
       setFeedback({
         tone: "error",
         message: "Completa la Guia de Activacion antes de generar el plan.",
@@ -715,17 +606,6 @@ export function SalesProposalWorkspace({
     findCatalogGroupsByCategory("Fundamentales")
       .slice(0, 2)
       .forEach((group) => pushInitiativeFromGroup(group, "planned"));
-
-    const primaryHub = wizardHubs[0];
-    const primaryChallenges = wizardChallenges[primaryHub as keyof typeof wizardChallenges] ?? [];
-    const selectedChallenge = primaryChallenges.find((challenge) => challenge.id === wizardChallenge);
-
-    if (selectedChallenge) {
-      pushInitiativeFromGroup(
-        findCatalogGroupByKeywords(primaryHub, selectedChallenge.keywords),
-        "planned",
-      );
-    }
 
     wizardHubs.forEach((hub, index) => {
       const categoryGroups = findCatalogGroupsByCategory(hub);
@@ -1695,8 +1575,8 @@ export function SalesProposalWorkspace({
                     </div>
 
                     <div className="mt-10 space-y-8">
-                      <div>
-                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                      <div className="wizard-context-step">
+                        <p className="hidden">
                           1. ¿Qué áreas de HubSpot deseas activar?
                         </p>
                         <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -1731,7 +1611,7 @@ export function SalesProposalWorkspace({
                       </div>
 
                       <div>
-                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                        <p className="hidden text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
                           2. ¿Cuál es el estado actual de tu portal?
                         </p>
                         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -1783,7 +1663,22 @@ export function SalesProposalWorkspace({
                         <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
                           3. Si tuvieras que elegir un único reto principal, ¿cuál sería?
                         </p>
-                        <div className="mt-4 space-y-4">
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                          Agrega aqui cualquier contexto comercial adicional para orientar mejor la propuesta.
+                        </p>
+                        <div className="mt-4">
+                          <textarea
+                            rows={5}
+                            value={wizardContext}
+                            onChange={(event) => setWizardContext(event.target.value)}
+                            placeholder="Ejemplo: el cliente ya usa HubSpot Sales, tiene problemas con la calidad de datos, quiere ordenar su pipeline y necesita una propuesta alineada a un equipo comercial de 8 personas."
+                            className="w-full rounded-[8px] border-2 border-[#cbd6e2] bg-white px-4 py-3 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6]"
+                          />
+                          <p className="hidden mt-2 text-[11px] text-[#7c98b6]">
+                            Comparte aqui cualquier contexto adicional que le ayude al equipo a entender mejor el escenario del cliente.
+                          </p>
+                        </div>
+                        <div className="hidden">
                           {(wizardChallenges[wizardHubs[0] as keyof typeof wizardChallenges] ?? []).map((challenge) => (
                             <button
                               key={challenge.id}
@@ -1814,11 +1709,11 @@ export function SalesProposalWorkspace({
                       </div>
                     </div>
 
-                    <div className="mt-10 flex justify-center border-t border-[#eaf0f6] pt-6">
+                    <div className="mt-10 flex justify-center pt-6">
                       <button
                         type="button"
                         onClick={applyWizardRecommendations}
-                        disabled={!wizardHubs.length || !wizardChallenge}
+                        disabled={!wizardHubs.length}
                         className="inline-flex items-center gap-2 rounded-[6px] bg-[#14b8a6] px-10 py-3.5 text-[15px] font-bold text-white shadow-md transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Sparkles className="h-4 w-4" />

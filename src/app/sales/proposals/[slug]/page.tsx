@@ -15,6 +15,9 @@ type SalesProposalPageProps = {
   params: Promise<{ slug: string }>;
 };
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function SalesProposalPage({ params }: SalesProposalPageProps) {
   const { slug } = await params;
   let proposalRow: Database["public"]["Tables"]["sales_proposals"]["Row"] | null = null;
