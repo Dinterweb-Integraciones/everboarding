@@ -352,7 +352,7 @@ export async function activateSalesProposalAfterPayment(
     }
 
     const { error: configError } = await admin.from("onboarding_configs").upsert(({
-      client_id: typedInsertedClient.id,
+      client_id: activatedClientId,
       start_date: proposal.startDate || toIsoDate(),
       base_capacity: proposal.contractedCredits,
       custom_plan_credits: proposal.contractedCredits,
@@ -535,7 +535,7 @@ export async function syncSalesProposalCheckoutStatus(
   }
 
   const currentProposal = mapSalesProposalRow(typedProposalRow);
-  if (currentProposal.status !== "checkout_pending" || currentProposal.status === "board_activated") {
+  if (currentProposal.status !== "checkout_pending") {
     return currentProposal;
   }
 

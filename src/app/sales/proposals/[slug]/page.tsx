@@ -15,12 +15,14 @@ type SalesProposalPageProps = {
   params: Promise<{ slug: string }>;
 };
 
+type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function SalesProposalPage({ params }: SalesProposalPageProps) {
   const { slug } = await params;
-  let proposalRow: Database["public"]["Tables"]["sales_proposals"]["Row"] | null = null;
+  let proposalRow: SalesProposalRow | null = null;
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
   let membershipRows: CreditCatalogGroupItem[] = [];
@@ -61,7 +63,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
       console.error("sales_proposal_group_memberships_load_failed", { slug, error: membershipsError });
     }
 
-    proposalRow = fetchedProposal;
+    proposalRow = (fetchedProposal as SalesProposalRow | null) ?? null;
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     membershipRows = fetchedMemberships ?? [];
@@ -74,10 +76,11 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
     notFound();
   }
 
+  const typedProposalRow: SalesProposalRow = proposalRow;
   const initialProposal =
-    proposalRow.status === "checkout_pending"
+    typedProposalRow.status === "checkout_pending"
       ? await syncSalesProposalCheckoutStatus(slug)
-      : mapSalesProposalRow(proposalRow);
+      : mapSalesProposalRow(typedProposalRow);
 
   return (
     <SalesProposalWorkspace
