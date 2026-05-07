@@ -7,6 +7,7 @@ import {
   updateHubSpotDeal,
 } from "@/lib/hubspot";
 import {
+  getSalesProposalActivationValidation,
   mapSalesProposalRow,
   serializeSalesProposalDraft,
   type SalesProposalDraft,
@@ -44,15 +45,30 @@ function resolveCurrency(value: string | null | undefined) {
   return (value || process.env.STRIPE_CURRENCY || "usd").toLowerCase();
 }
 
+function buildActivatedClientSlug(proposal: SalesProposalRecord, proposalId: string) {
+  const baseSlug =
+    proposal.slug?.trim() ||
+    `${slugify(proposal.clientCompany || proposal.clientName || proposal.title)}-${proposalId.slice(0, 8)}`;
+
+  return baseSlug.toLowerCase();
+}
+
 export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug: string) {
   const admin = createSupabaseAdminClient();
-  const serialized = serializeSalesProposalDraft({ ...input, slug: proposalSlug });
   const existing = await admin
     .from("sales_proposals")
     .select("*")
     .eq("slug", proposalSlug)
     .maybeSingle();
   const existingRow = existing.data as SalesProposalRow | null;
+  const draftToPersist = {
+    ...input,
+    slug: proposalSlug,
+    // The seller no longer controls the CS assignment from the sales workspace.
+    // Preserve the existing assignee unless another internal flow updates it explicitly.
+    assignedCsmUserId: input.assignedCsmUserId || existingRow?.assigned_csm_user_id || "",
+  };
+  const serialized = serializeSalesProposalDraft(draftToPersist);
 
   let hubspotDealId: string | null = existingRow?.hubspot_deal_id ?? null;
 
@@ -103,12 +119,14 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
 }
 
 export async function createSalesProposalCheckout(request: Request, proposal: SalesProposalRecord) {
-  if (!proposal.assignedCsmUserId) {
-    throw new Error("Asigna un CSM antes de activar el plan.");
-  }
   const proposalId = proposal.id;
   if (!proposalId) {
     throw new Error("La propuesta debe guardarse antes de activar el checkout.");
+  }
+
+  const activationValidation = getSalesProposalActivationValidation(proposal);
+  if (!activationValidation.isValid) {
+    throw new Error(activationValidation.message || "La propuesta aun no esta lista para activarse.");
   }
 
   const admin = createSupabaseAdminClient();
@@ -214,35 +232,126 @@ export async function activateSalesProposalAfterPayment(
   if (!mappedProposalId) {
     throw new Error("La propuesta pagada no tiene un identificador valido.");
   }
+  const subscriptionId =
+    typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
+  const paymentIntentId =
+    typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null;
   let activatedClientId = proposal.activatedClientId;
 
   if (!activatedClientId) {
     if (!proposal.assignedCsmUserId) {
-      throw new Error("La propuesta pagada no tiene un CSM asignado.");
+      if (proposal.hubspotDealId) {
+        await moveHubSpotDealToWon(proposal.hubspotDealId);
+      }
+
+      const { error: paidUpdateError } = await admin
+        .from("sales_proposals")
+        .update(({
+          status: "paid",
+          paid_at: new Date().toISOString(),
+          stripe_checkout_session_id: session.id,
+          stripe_payment_intent_id: paymentIntentId,
+          stripe_subscription_id: subscriptionId,
+          hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
+          updated_at: new Date().toISOString(),
+        }) as never)
+        .eq("id", mappedProposalId);
+
+      if (paidUpdateError) {
+        throw paidUpdateError;
+      }
+
+      return;
     }
 
-    const clientSlug = `${slugify(proposal.clientCompany || proposal.clientName || proposal.title)}-${Date.now().toString(36)}`;
-    const { data: insertedClient, error: clientError } = await admin
+    const clientSlug = buildActivatedClientSlug(proposal, mappedProposalId);
+    const { data: existingClientBySlug, error: existingClientError } = await admin
       .from("clients")
-      .insert(({
-        owner_user_id: proposal.assignedCsmUserId,
-        seller_user_id: null,
-        csm_user_id: proposal.assignedCsmUserId,
-        name: proposal.clientCompany || proposal.clientName,
-        slug: clientSlug,
-        description: proposal.clientDescription || proposal.title,
-      }) as never)
       .select("*")
-      .single();
-    const typedInsertedClient = insertedClient as ClientRow | null;
+      .eq("slug", clientSlug)
+      .maybeSingle();
+    const typedExistingClient = existingClientBySlug as ClientRow | null;
 
-    if (clientError || !typedInsertedClient) {
-      throw clientError ?? new Error("No pudimos crear el cliente para Customer Success.");
+    if (existingClientError) {
+      throw existingClientError;
     }
 
-    activatedClientId = typedInsertedClient.id;
+    if (typedExistingClient) {
+      const { error: existingClientUpdateError } = await admin
+        .from("clients")
+        .update(({
+          owner_user_id: proposal.assignedCsmUserId,
+          seller_user_id: null,
+          csm_user_id: proposal.assignedCsmUserId,
+          name: proposal.clientCompany || proposal.clientName,
+          description: proposal.clientDescription || proposal.title,
+          updated_at: new Date().toISOString(),
+        }) as never)
+        .eq("id", typedExistingClient.id);
 
-    const { error: configError } = await admin.from("onboarding_configs").insert(({
+      if (existingClientUpdateError) {
+        throw existingClientUpdateError;
+      }
+
+      activatedClientId = typedExistingClient.id;
+    } else {
+      const { data: insertedClient, error: clientError } = await admin
+        .from("clients")
+        .insert(({
+          owner_user_id: proposal.assignedCsmUserId,
+          seller_user_id: null,
+          csm_user_id: proposal.assignedCsmUserId,
+          name: proposal.clientCompany || proposal.clientName,
+          slug: clientSlug,
+          description: proposal.clientDescription || proposal.title,
+        }) as never)
+        .select("*")
+        .single();
+      const typedInsertedClient = insertedClient as ClientRow | null;
+
+      if (clientError) {
+        const duplicateSlugConflict =
+          typeof clientError === "object" &&
+          clientError !== null &&
+          "code" in clientError &&
+          clientError.code === "23505";
+
+        if (!duplicateSlugConflict) {
+          throw clientError;
+        }
+
+        const { data: conflictingClient, error: conflictingClientError } = await admin
+          .from("clients")
+          .select("*")
+          .eq("slug", clientSlug)
+          .maybeSingle();
+        const typedConflictingClient = conflictingClient as ClientRow | null;
+
+        if (conflictingClientError || !typedConflictingClient) {
+          throw conflictingClientError ?? clientError;
+        }
+
+        activatedClientId = typedConflictingClient.id;
+      } else if (!typedInsertedClient) {
+        throw new Error("No pudimos crear el cliente para Customer Success.");
+      } else {
+        activatedClientId = typedInsertedClient.id;
+      }
+    }
+
+    const { error: proposalClientLinkError } = await admin
+      .from("sales_proposals")
+      .update(({
+        activated_client_id: activatedClientId,
+        updated_at: new Date().toISOString(),
+      }) as never)
+      .eq("id", mappedProposalId);
+
+    if (proposalClientLinkError) {
+      throw proposalClientLinkError;
+    }
+
+    const { error: configError } = await admin.from("onboarding_configs").upsert(({
       client_id: typedInsertedClient.id,
       start_date: proposal.startDate || toIsoDate(),
       base_capacity: proposal.contractedCredits,
@@ -255,17 +364,60 @@ export async function activateSalesProposalAfterPayment(
       credit_validity_days: 60,
       sales_cleared: true,
       updated_by_user_id: proposal.assignedCsmUserId,
-    }) as never);
+    }) as never, {
+      onConflict: "client_id",
+    });
 
     if (configError) {
       throw configError;
     }
+  }
 
+  const paymentArgs: RecordStripeCheckoutPaymentArgs = {
+    p_client_id: activatedClientId,
+    p_checkout_session_id: session.id,
+    p_payment_intent_id:
+      typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+    p_amount_cents: session.amount_total ?? 0,
+    p_currency: session.currency ?? "usd",
+    p_stripe_subscription_id:
+      typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null,
+    p_stripe_invoice_id: typeof session.invoice === "string" ? session.invoice : session.invoice?.id ?? null,
+  };
+
+  const { error: paymentError } = await admin.rpc(
+    "record_stripe_checkout_payment" as never,
+    paymentArgs as never,
+  );
+
+  if (paymentError) {
+    throw paymentError;
+  }
+
+  if (subscriptionId) {
+    await stripe.subscriptions.update(subscriptionId, {
+      metadata: {
+        client_id: activatedClientId,
+        sales_proposal_id: mappedProposalId,
+      },
+    });
+  }
+
+  const { count: existingInitiativesCount, error: existingInitiativesError } = await admin
+    .from("onboarding_initiatives")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", activatedClientId);
+
+  if (existingInitiativesError) {
+    throw existingInitiativesError;
+  }
+
+  if (proposal.assignedCsmUserId && !existingInitiativesCount) {
     for (const [initiativeIndex, initiative] of proposal.initiatives.entries()) {
       const { data: insertedInitiative, error: initiativeError } = await admin
         .from("onboarding_initiatives")
         .insert(({
-          client_id: typedInsertedClient.id,
+          client_id: activatedClientId,
           title: initiative.title,
           type: initiative.type || null,
           status: initiative.status,
@@ -317,38 +469,6 @@ export async function activateSalesProposalAfterPayment(
     }
   }
 
-  const paymentArgs: RecordStripeCheckoutPaymentArgs = {
-    p_client_id: activatedClientId,
-    p_checkout_session_id: session.id,
-    p_payment_intent_id:
-      typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
-    p_amount_cents: session.amount_total ?? 0,
-    p_currency: session.currency ?? "usd",
-    p_stripe_subscription_id:
-      typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null,
-    p_stripe_invoice_id: typeof session.invoice === "string" ? session.invoice : session.invoice?.id ?? null,
-  };
-
-  const { error: paymentError } = await admin.rpc(
-    "record_stripe_checkout_payment" as never,
-    paymentArgs as never,
-  );
-
-  if (paymentError) {
-    throw paymentError;
-  }
-
-  const subscriptionId =
-    typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
-  if (subscriptionId) {
-    await stripe.subscriptions.update(subscriptionId, {
-      metadata: {
-        client_id: activatedClientId,
-        sales_proposal_id: mappedProposalId,
-      },
-    });
-  }
-
   if (proposal.hubspotDealId) {
     await moveHubSpotDealToWon(proposal.hubspotDealId);
   }
@@ -361,8 +481,7 @@ export async function activateSalesProposalAfterPayment(
       activated_at: new Date().toISOString(),
       paid_at: new Date().toISOString(),
       stripe_checkout_session_id: session.id,
-      stripe_payment_intent_id:
-        typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+      stripe_payment_intent_id: paymentIntentId,
       stripe_subscription_id: subscriptionId,
       hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
       updated_at: new Date().toISOString(),
@@ -372,4 +491,91 @@ export async function activateSalesProposalAfterPayment(
   if (updateError) {
     throw updateError;
   }
+}
+
+export async function activatePaidSalesProposalAfterAssignment(proposalId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("id", proposalId)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta pagada.");
+  }
+
+  if (!typedProposalRow.stripe_checkout_session_id) {
+    throw new Error("La propuesta pagada no tiene una sesion de Stripe para activar el cliente.");
+  }
+
+  const stripe = getStripe();
+  const session = await stripe.checkout.sessions.retrieve(typedProposalRow.stripe_checkout_session_id, {
+    expand: ["invoice", "subscription"],
+  });
+
+  await activateSalesProposalAfterPayment(stripe, proposalId, session);
+}
+
+export async function syncSalesProposalCheckoutStatus(
+  proposalSlug: string,
+  sessionId?: string | null,
+) {
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("slug", proposalSlug)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta comercial.");
+  }
+
+  const currentProposal = mapSalesProposalRow(typedProposalRow);
+  if (currentProposal.status !== "checkout_pending" || currentProposal.status === "board_activated") {
+    return currentProposal;
+  }
+
+  const checkoutSessionId = sessionId || typedProposalRow.stripe_checkout_session_id;
+  if (!checkoutSessionId) {
+    return currentProposal;
+  }
+
+  const stripe = getStripe();
+  const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+    expand: ["invoice", "subscription"],
+  });
+  const matchesProposal =
+    session.metadata?.sales_proposal_id === currentProposal.id ||
+    session.metadata?.sales_proposal_slug === proposalSlug;
+
+  if (!matchesProposal) {
+    throw new Error("La sesion de pago no pertenece a esta propuesta.");
+  }
+
+  if (session.payment_status !== "paid") {
+    return currentProposal;
+  }
+
+  if (!currentProposal.id) {
+    throw new Error("La propuesta no tiene un identificador valido para sincronizar el pago.");
+  }
+
+  await activateSalesProposalAfterPayment(stripe, currentProposal.id, session);
+
+  const { data: refreshedRow, error: refreshedError } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("slug", proposalSlug)
+    .maybeSingle();
+  const typedRefreshedRow = refreshedRow as SalesProposalRow | null;
+
+  if (refreshedError || !typedRefreshedRow) {
+    throw refreshedError ?? new Error("No pudimos refrescar la propuesta despues del pago.");
+  }
+
+  return mapSalesProposalRow(typedRefreshedRow);
 }

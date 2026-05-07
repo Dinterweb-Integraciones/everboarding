@@ -173,6 +173,13 @@ export function normalizeSalesProposalDraft(input: Partial<SalesProposalDraft>):
 
 export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unknown>): SalesProposalRecord {
   const snapshot = normalizeSalesProposalDraft((row.snapshot as Partial<SalesProposalDraft>) ?? {});
+  const rowClientName = String(row.client_name ?? snapshot.clientName ?? "").trim();
+  const rowClientCompany = String(row.client_company ?? snapshot.clientCompany ?? "").trim();
+  const resolvedClientName =
+    rowClientName && rowClientName.toLowerCase() !== "cliente"
+      ? rowClientName
+      : rowClientCompany || rowClientName || "Cliente";
+  const resolvedClientCompany = rowClientCompany || resolvedClientName;
 
   return {
     ...snapshot,
@@ -182,9 +189,9 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     sellerName: String(row.seller_name ?? snapshot.sellerName ?? ""),
     sellerEmail: String(row.seller_email ?? snapshot.sellerEmail ?? ""),
     sellerCompany: String(row.seller_company ?? snapshot.sellerCompany ?? ""),
-    clientName: String(row.client_name ?? snapshot.clientName ?? "Cliente"),
+    clientName: resolvedClientName,
     clientEmail: String(row.client_email ?? snapshot.clientEmail ?? ""),
-    clientCompany: String(row.client_company ?? snapshot.clientCompany ?? ""),
+    clientCompany: resolvedClientCompany,
     clientPhone: String(row.client_phone ?? snapshot.clientPhone ?? ""),
     clientDescription: String(row.client_description ?? snapshot.clientDescription ?? ""),
     assignedCsmUserId: String(row.assigned_csm_user_id ?? snapshot.assignedCsmUserId ?? ""),
@@ -219,15 +226,17 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
 
 export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
   const normalized = normalizeSalesProposalDraft(draft);
+  const clientName = normalized.clientName.trim();
+  const clientCompany = normalized.clientCompany.trim() || clientName;
 
   return {
     title: normalized.title.trim() || "Propuesta comercial",
     seller_name: normalized.sellerName.trim() || null,
     seller_email: normalized.sellerEmail.trim() || null,
     seller_company: normalized.sellerCompany.trim() || null,
-    client_name: normalized.clientName.trim() || "Cliente",
+    client_name: clientName || "Cliente",
     client_email: normalized.clientEmail.trim() || null,
-    client_company: normalized.clientCompany.trim() || null,
+    client_company: clientCompany || null,
     client_phone: normalized.clientPhone.trim() || null,
     client_description: normalized.clientDescription.trim() || null,
     assigned_csm_user_id: normalized.assignedCsmUserId || null,
@@ -239,6 +248,76 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     plan_period_months: normalized.periodMonths,
     status: normalized.status,
     snapshot: normalized,
+  };
+}
+
+function isMissingClientName(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return !normalized || normalized === "cliente";
+}
+
+function formatActivationFieldList(fields: string[]) {
+  if (fields.length <= 1) {
+    return fields[0] ?? "";
+  }
+
+  if (fields.length === 2) {
+    return `${fields[0]} y ${fields[1]}`;
+  }
+
+  return `${fields.slice(0, -1).join(", ")} y ${fields[fields.length - 1]}`;
+}
+
+export function getSalesProposalActivationValidation(
+  draft: Pick<
+    SalesProposalDraft,
+    | "clientName"
+    | "clientEmail"
+    | "startDate"
+    | "contractedCredits"
+    | "quotedPrice"
+    | "initiatives"
+  >,
+) {
+  const missingFields: string[] = [];
+
+  if (isMissingClientName(draft.clientName)) {
+    missingFields.push("el nombre del cliente");
+  }
+
+  if (!draft.clientEmail.trim()) {
+    missingFields.push("el email del cliente");
+  }
+
+  if (!draft.startDate.trim()) {
+    missingFields.push("la fecha de inicio");
+  }
+
+  if (safeParseNumber(draft.contractedCredits) <= 0) {
+    missingFields.push("los creditos contratados");
+  }
+
+  if (safeParseNumber(draft.quotedPrice) <= 0) {
+    missingFields.push("la inversion");
+  }
+
+  const hasPlan = draft.initiatives.some((initiative) => initiative.subitems.length > 0);
+  const isValid = missingFields.length === 0 && hasPlan;
+  let message = "";
+
+  if (missingFields.length && !hasPlan) {
+    message = `Completa ${formatActivationFieldList(missingFields)} y agrega al menos una iniciativa antes de activar el plan.`;
+  } else if (missingFields.length) {
+    message = `Completa ${formatActivationFieldList(missingFields)} antes de activar el plan.`;
+  } else if (!hasPlan) {
+    message = "Agrega al menos una iniciativa antes de activar el plan.";
+  }
+
+  return {
+    isValid,
+    hasPlan,
+    missingFields,
+    message,
   };
 }
 

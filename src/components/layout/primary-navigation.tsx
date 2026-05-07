@@ -10,6 +10,7 @@ const catalogLinks = [
   { href: "/cs/categorias", label: "Categorias" },
   { href: "/cs/tareas", label: "Tareas" },
   { href: "/cs/grupos", label: "Grupos" },
+  { href: "/cs/ventas", label: "Ventas" },
 ];
 
 const mobileLinks = [
@@ -18,6 +19,7 @@ const mobileLinks = [
   { href: "/cs/categorias", label: "Categorias", icon: LayoutGrid },
   { href: "/cs/tareas", label: "Tareas", icon: LayoutGrid },
   { href: "/cs/grupos", label: "Grupos", icon: LayoutGrid },
+  { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
 ];
 
 function isActive(pathname: string, href: string) {

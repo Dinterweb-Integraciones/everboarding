@@ -1,8 +1,8 @@
 "use client";
 
-import { CalendarDays, Link2, PencilLine, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { CalendarDays, Link2, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -16,8 +16,8 @@ import {
   createEmptySalesInitiative,
   createEmptySalesProposalDraft,
   createLocalId,
+  getSalesProposalActivationValidation,
   generateSalesProposalSlug,
-  getAssigneeName,
   type SalesProposalDraft,
   type SalesProposalInitiativeDraft,
   type SalesProposalRecord,
@@ -27,19 +27,17 @@ import {
 } from "@/lib/sales-proposals";
 import {
   formatDateRange,
-  type AssignableUser,
   type CreditCatalogGroup,
   type CreditCatalogGroupItem,
   type CreditCatalogItem,
   type InitiativeStatus,
 } from "@/lib/onboarding";
-import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
+import { formatCurrency, formatUserError, safeParseNumber, toIsoDate } from "@/lib/utils";
 
 type SalesProposalWorkspaceProps = {
   initialCatalog: CreditCatalogItem[];
   initialGroups: CreditCatalogGroup[];
   initialGroupMemberships: CreditCatalogGroupItem[];
-  csmOptions: AssignableUser[];
   initialProposal?: SalesProposalRecord | null;
 };
 
@@ -51,6 +49,24 @@ type CatalogModalGroup = {
   credits: number;
   sortOrder: number;
   items: CreditCatalogItem[];
+};
+
+type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
+
+type WizardRecommendation = {
+  groupId: string;
+  status: WizardRecommendationStatus;
+  reason?: string;
+};
+
+type WizardRecommendationResponse = {
+  summary?: string;
+  recommendations?: Array<{
+    group_id?: string;
+    status?: string;
+    reason?: string;
+  }>;
+  message?: string;
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
@@ -68,6 +84,29 @@ function getStatusDot(status: InitiativeStatus) {
 
 function getStatusLabel(status: InitiativeStatus) {
   return STATUS_META[status].label;
+}
+
+function getStatusHeadingClass(status: InitiativeStatus) {
+  if (status === "executing") return "text-[#00bda5]";
+  if (status === "planned") return "text-[#6a78d1]";
+  if (status === "completed") return "text-[#33475b]";
+  return "text-[#516f90]";
+}
+
+function getSalesTimelineBarClass(status: InitiativeStatus) {
+  if (status === "executing") {
+    return "bg-[#14b8a6] text-white shadow-[0_6px_14px_rgba(20,184,166,0.18)]";
+  }
+
+  if (status === "planned") {
+    return "bg-[#6a78d1] text-white shadow-[0_6px_14px_rgba(106,120,209,0.18)]";
+  }
+
+  if (status === "completed") {
+    return "bg-[#33475b] text-white shadow-[0_6px_14px_rgba(51,71,91,0.16)]";
+  }
+
+  return "border border-dashed border-[#8ea2bd] bg-white text-[#5f7695] shadow-none";
 }
 
 function formatSalesHeaderDate(date: string) {
@@ -124,11 +163,95 @@ function normalizeCatalogText(value: string | null | undefined) {
     .trim();
 }
 
+function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): SalesProposalInitiativeDraft {
+  const kickoffStartDate = startDate || toIsoDate();
+  const kickoffEndDate = toIsoDate(addCalendarDays(parseCalendarDate(kickoffStartDate), 5));
+  const kickoff = createEmptySalesInitiative("executing");
+
+  kickoff.id = createLocalId("sales-initiative");
+  kickoff.title = "Sesión Kickoff";
+  kickoff.type = "Implementación";
+  kickoff.description =
+    "Alineación estratégica inicial para definir prioridades y próximos pasos.";
+  kickoff.estStartDate = kickoffStartDate;
+  kickoff.estEndDate = kickoffEndDate;
+  kickoff.sortOrder = sortOrder;
+
+  return kickoff;
+}
+
+function createNewSalesProposalDraft() {
+  const draft = createEmptySalesProposalDraft();
+
+  return {
+    ...draft,
+    initiatives: [createDefaultKickoffInitiative(draft.startDate, 0)],
+  };
+}
+
+function getSuggestedInitiativeDurationDays(initiative: SalesProposalInitiativeDraft) {
+  const creditsDuration = Math.ceil(calculateSalesInitiativeCredits(initiative) / 20);
+  const subitemsDuration = Math.max(initiative.subitems.length, 1);
+
+  return Math.max(3, Math.min(7, Math.max(creditsDuration, subitemsDuration)));
+}
+
+function scheduleRecommendedInitiatives(
+  initiatives: SalesProposalInitiativeDraft[],
+  targetInitiativeIds: string[],
+  proposalStartDate: string,
+) {
+  const nextInitiatives = initiatives.map((initiative) => createEditorDraft(initiative));
+  const targetIds = new Set(targetInitiativeIds);
+  const kickoffTitle = normalizeCatalogText("Sesión Kickoff");
+  const kickoff = nextInitiatives.find(
+    (initiative) => normalizeCatalogText(initiative.title) === kickoffTitle,
+  );
+
+  if (!kickoff) {
+    return nextInitiatives;
+  }
+
+  const kickoffStartDate = kickoff.estStartDate || proposalStartDate || toIsoDate();
+  const kickoffCurrentEnd = kickoff.estEndDate || kickoffStartDate;
+  const kickoffStart = parseCalendarDate(kickoffStartDate);
+  const kickoffEnd = parseCalendarDate(kickoffCurrentEnd);
+
+  kickoff.estStartDate = kickoffStartDate;
+  kickoff.estEndDate =
+    kickoffEnd <= kickoffStart
+      ? toIsoDate(addCalendarDays(kickoffStart, 5))
+      : kickoffCurrentEnd;
+
+  let cursorDate = addCalendarDays(parseCalendarDate(kickoff.estEndDate), 1);
+  const statusPriority: Record<InitiativeStatus, number> = {
+    executing: 0,
+    planned: 1,
+    backlog: 2,
+    completed: 3,
+  };
+
+  nextInitiatives
+    .filter((initiative) => targetIds.has(initiative.id) && initiative.id !== kickoff.id)
+    .sort((left, right) => {
+      const priorityDelta = statusPriority[left.status] - statusPriority[right.status];
+      if (priorityDelta !== 0) return priorityDelta;
+      return left.sortOrder - right.sortOrder;
+    })
+    .forEach((initiative) => {
+      const durationDays = getSuggestedInitiativeDurationDays(initiative);
+      initiative.estStartDate = toIsoDate(cursorDate);
+      initiative.estEndDate = toIsoDate(addCalendarDays(cursorDate, durationDays - 1));
+      cursorDate = addCalendarDays(cursorDate, durationDays);
+    });
+
+  return nextInitiatives;
+}
+
 export function SalesProposalWorkspace({
   initialCatalog,
   initialGroups,
   initialGroupMemberships,
-  csmOptions,
   initialProposal,
 }: SalesProposalWorkspaceProps) {
   const wizardChallenges: Record<
@@ -137,26 +260,23 @@ export function SalesProposalWorkspace({
   > = {};
 
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [proposal, setProposal] = useState<SalesProposalDraft>(
-    initialProposal ?? createEmptySalesProposalDraft(),
+    initialProposal ?? createNewSalesProposalDraft(),
   );
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
+  const [isSyncingPayment, setIsSyncingPayment] = useState(false);
+  const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
   const [upsellPackageCredits, setUpsellPackageCredits] = useState<number>(
     SALES_PROPOSAL_UPSELL_OPTIONS[0].credits,
   );
   const [upsellCartCount, setUpsellCartCount] = useState(0);
-  const [catalogSelections, setCatalogSelections] = useState<Record<InitiativeStatus, string>>({
-    backlog: "",
-    planned: "",
-    executing: "",
-    completed: "",
-  });
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
@@ -367,13 +487,6 @@ export function SalesProposalWorkspace({
     setInitiativeDraft(null);
   }
 
-  function addInitiative(status: InitiativeStatus) {
-    const next = createEmptySalesInitiative(status);
-    next.sortOrder = groupedInitiatives[status].length;
-    setEditingInitiativeId(next.id);
-    setInitiativeDraft(next);
-  }
-
   function saveInitiativeDraft() {
     if (!initiativeDraft) return;
 
@@ -409,29 +522,6 @@ export function SalesProposalWorkspace({
     if (editingInitiativeId === initiativeId) {
       closeInitiativeEditor();
     }
-  }
-
-  function quickAddCatalogItem(status: InitiativeStatus) {
-    const selectedId = catalogSelections[status];
-    if (!selectedId) return;
-
-    const item = initialCatalog.find((catalogItem) => catalogItem.id === selectedId);
-    if (!item) return;
-
-    const next = createEmptySalesInitiative(status);
-    next.id = createLocalId("sales-initiative");
-    next.title = item.label;
-    next.type = item.category;
-    next.subitems = [createProposalSubitemFromCatalog(item)];
-    next.estStartDate = proposal.startDate;
-    next.estEndDate = proposal.startDate;
-    next.sortOrder = groupedInitiatives[status].length;
-
-    setProposal((current) => ({
-      ...current,
-      initiatives: [...current.initiatives, next],
-    }));
-    setCatalogSelections((current) => ({ ...current, [status]: "" }));
   }
 
   function openCatalogModal(tab: string = "wizard") {
@@ -561,20 +651,17 @@ export function SalesProposalWorkspace({
     );
   }
 
-  function applyWizardRecommendations() {
-    if (!wizardHubs.length) {
-      setFeedback({
-        tone: "error",
-        message: "Completa la Guia de Activacion antes de generar el plan.",
-      });
-      return;
-    }
-
+  function mergeRecommendedGroups(
+    recommendations: WizardRecommendation[],
+    feedbackMessage: string,
+  ) {
     const existingTitles = new Set(
       proposal.initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
     );
     const nextInitiatives = [...proposal.initiatives];
+    const addedInitiativeIds: string[] = [];
     let nextSortOrder = proposal.initiatives.length;
+    const groupById = new Map(catalogGroups.map((group) => [group.id, group]));
 
     const pushInitiativeFromGroup = (group: CatalogModalGroup | null, status: InitiativeStatus) => {
       if (!group || existingTitles.has(normalizeCatalogText(group.name))) {
@@ -586,40 +673,31 @@ export function SalesProposalWorkspace({
       nextSortOrder += 1;
       existingTitles.add(normalizeCatalogText(group.name));
       nextInitiatives.push(initiative);
+      addedInitiativeIds.push(initiative.id);
     };
 
     if (!existingTitles.has(normalizeCatalogText("Sesión Kickoff"))) {
-      const kickoff = createEmptySalesInitiative("executing");
-      kickoff.id = createLocalId("sales-initiative");
-      kickoff.title = "Sesión Kickoff";
-      kickoff.type = "Implementación";
-      kickoff.description =
-        "Alineación estratégica inicial para definir prioridades y próximos pasos.";
-      kickoff.estStartDate = proposal.startDate;
-      kickoff.estEndDate = proposal.startDate;
-      kickoff.sortOrder = nextSortOrder;
+      const kickoff = createDefaultKickoffInitiative(proposal.startDate, nextSortOrder);
       nextSortOrder += 1;
       existingTitles.add(normalizeCatalogText(kickoff.title));
       nextInitiatives.push(kickoff);
+      addedInitiativeIds.push(kickoff.id);
     }
 
-    findCatalogGroupsByCategory("Fundamentales")
-      .slice(0, 2)
-      .forEach((group) => pushInitiativeFromGroup(group, "planned"));
-
-    wizardHubs.forEach((hub, index) => {
-      const categoryGroups = findCatalogGroupsByCategory(hub);
-      const preferredCount = wizardPortalState === "optimize" ? (index === 0 ? 3 : 2) : 2;
-
-      categoryGroups.slice(0, preferredCount).forEach((group, itemIndex) => {
-        const status: InitiativeStatus = index === 0 && itemIndex < 2 ? "planned" : "backlog";
-        pushInitiativeFromGroup(group, status);
-      });
+    recommendations.forEach((recommendation) => {
+      const group = groupById.get(recommendation.groupId) ?? null;
+      pushInitiativeFromGroup(group, recommendation.status);
     });
+
+    const scheduledInitiatives = scheduleRecommendedInitiatives(
+      nextInitiatives,
+      addedInitiativeIds,
+      proposal.startDate,
+    );
 
     setProposal((current) => ({
       ...current,
-      initiatives: nextInitiatives.map((initiative, index) => ({
+      initiatives: scheduledInitiatives.map((initiative, index) => ({
         ...initiative,
         sortOrder: index,
       })),
@@ -627,8 +705,126 @@ export function SalesProposalWorkspace({
     setIsCatalogModalOpen(false);
     setFeedback({
       tone: "success",
-      message: "Plan de trabajo generado desde la Guia de Activacion.",
+      message: feedbackMessage,
     });
+  }
+
+  function buildDefaultWizardRecommendations() {
+    const recommendations: WizardRecommendation[] = [];
+
+    findCatalogGroupsByCategory("Fundamentales")
+      .slice(0, 2)
+      .forEach((group) => {
+        recommendations.push({
+          groupId: group.id,
+          status: "planned",
+        });
+      });
+
+    wizardHubs.forEach((hub, index) => {
+      const categoryGroups = findCatalogGroupsByCategory(hub);
+      const preferredCount = wizardPortalState === "optimize" ? (index === 0 ? 3 : 2) : 2;
+
+      categoryGroups.slice(0, preferredCount).forEach((group, itemIndex) => {
+        recommendations.push({
+          groupId: group.id,
+          status: index === 0 && itemIndex < 2 ? "planned" : "backlog",
+        });
+      });
+    });
+
+    return recommendations;
+  }
+
+  function applyDefaultWizardRecommendations(message = "Plan de trabajo generado desde la Guia de Activacion.") {
+    mergeRecommendedGroups(buildDefaultWizardRecommendations(), message);
+  }
+
+  async function applyWizardRecommendations() {
+    if (!wizardHubs.length) {
+      setFeedback({
+        tone: "error",
+        message: "Completa la Guia de Activacion antes de generar el plan.",
+      });
+      return;
+    }
+
+    setFeedback(null);
+    setIsGeneratingWizardPlan(true);
+
+    try {
+      const response = await fetch("/api/sales-proposals/recommend-groups", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          startDate: proposal.startDate,
+          selectedHubs: wizardHubs,
+          portalState: wizardPortalState,
+          context: wizardContext,
+          groups: catalogGroups.map((group) => ({
+            id: group.id,
+            name: group.name,
+            description: group.description,
+            modalCategory: group.modalCategory,
+            credits: group.credits,
+            tasks: group.items.map((item) => ({
+              id: item.id,
+              label: item.label,
+              category: item.category,
+              credits: item.credits,
+            })),
+          })),
+        }),
+      });
+
+      const payload = (await response.json()) as WizardRecommendationResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos generar la recomendacion inteligente.");
+      }
+
+      const normalizedRecommendations: WizardRecommendation[] = (payload.recommendations ?? []).flatMap(
+        (recommendation) => {
+          const normalizedStatus =
+            recommendation.status === "executing" ||
+            recommendation.status === "planned" ||
+            recommendation.status === "backlog"
+              ? recommendation.status
+              : null;
+
+          return recommendation.group_id && normalizedStatus
+            ? [{
+                groupId: recommendation.group_id,
+                status: normalizedStatus,
+                reason: recommendation.reason,
+              }]
+            : [];
+        },
+      );
+
+      if (!normalizedRecommendations.length) {
+        applyDefaultWizardRecommendations(
+          "Claude no devolvio grupos validos. Aplicamos la recomendacion base del catalogo.",
+        );
+        return;
+      }
+
+      mergeRecommendedGroups(
+        normalizedRecommendations,
+        payload.summary?.trim()
+          ? `Plan generado con Claude. ${payload.summary.trim()}`
+          : "Plan de trabajo generado con recomendacion inteligente.",
+      );
+    } catch (caughtError) {
+      console.error("sales_wizard_recommendations_failed", caughtError);
+      applyDefaultWizardRecommendations(
+        `No pudimos consultar Claude. Usamos la recomendacion base. ${formatUserError(caughtError, "")}`.trim(),
+      );
+    } finally {
+      setIsGeneratingWizardPlan(false);
+    }
   }
 
   function updateInitiativeDraft<K extends keyof SalesProposalInitiativeDraft>(
@@ -699,74 +895,48 @@ export function SalesProposalWorkspace({
     });
   }
 
-  async function saveProposal() {
-    setFeedback(null);
-    setIsSaving(true);
-
-    try {
-      const slug = proposal.slug || generateSalesProposalSlug(proposal);
-      const response = await fetch(
-        proposal.slug ? `/api/sales-proposals/${proposal.slug}` : "/api/sales-proposals",
-        {
-          method: proposal.slug ? "PUT" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ ...proposal, slug }),
+  async function persistProposal() {
+    const slug = proposal.slug || generateSalesProposalSlug(proposal);
+    const response = await fetch(
+      proposal.slug ? `/api/sales-proposals/${proposal.slug}` : "/api/sales-proposals",
+      {
+        method: proposal.slug ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({ ...proposal, slug }),
+      },
+    );
 
-      const payload = (await response.json()) as SalesProposalRecord & { message?: string };
+    const payload = (await response.json()) as SalesProposalRecord & { message?: string };
 
-      if (!response.ok) {
-        throw new Error(payload.message || "No pudimos guardar la propuesta.");
-      }
-
-      setProposal(payload);
-      if (!proposal.slug) {
-        router.replace(`/sales/proposals/${payload.slug}`);
-      }
-
-      setFeedback({ tone: "success", message: "Propuesta guardada correctamente." });
-    } catch (caughtError) {
-      setFeedback({
-        tone: "error",
-        message: formatUserError(caughtError, "No pudimos guardar la propuesta comercial."),
-      });
-    } finally {
-      setIsSaving(false);
+    if (!response.ok) {
+      throw new Error(payload.message || "No pudimos guardar la propuesta.");
     }
+
+    setProposal(payload);
+    if (!proposal.slug) {
+      router.replace(`/sales/proposals/${payload.slug}`);
+    }
+
+    return payload;
   }
 
   async function activatePlan() {
+    if (!activationValidation.isValid) {
+      setFeedback({
+        tone: "error",
+        message: activationValidation.message,
+      });
+      return;
+    }
+
     setFeedback(null);
     setIsActivating(true);
 
     try {
-      let targetSlug = proposal.slug;
-
-      if (!targetSlug) {
-        const generatedSlug = generateSalesProposalSlug(proposal);
-        const createResponse = await fetch("/api/sales-proposals", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ ...proposal, slug: generatedSlug }),
-        });
-
-        const createPayload = (await createResponse.json()) as SalesProposalRecord & {
-          message?: string;
-        };
-
-        if (!createResponse.ok) {
-          throw new Error(createPayload.message || "No pudimos preparar la propuesta.");
-        }
-
-        targetSlug = createPayload.slug;
-        setProposal(createPayload);
-        router.replace(`/sales/proposals/${createPayload.slug}`);
-      }
+      const persistedProposal = await persistProposal();
+      const targetSlug = persistedProposal.slug;
 
       const response = await fetch(`/api/sales-proposals/${targetSlug}/activate`, {
         method: "POST",
@@ -791,11 +961,94 @@ export function SalesProposalWorkspace({
     }
   }
 
+  useEffect(() => {
+    const paymentStatus = searchParams.get("payment");
+    const sessionId = searchParams.get("session_id");
+
+    if (paymentStatus !== "success") {
+      if (paymentStatus === "cancelled") {
+        setFeedback({
+          tone: "error",
+          message: "El checkout se cancelo. La propuesta sigue guardada para que puedas intentarlo de nuevo.",
+        });
+        router.replace(pathname);
+      }
+      return;
+    }
+
+    if (!sessionId || !proposal.slug) {
+      setFeedback({
+        tone: "success",
+        message: "Stripe proceso el pago y la propuesta quedo guardada correctamente.",
+      });
+      router.replace(pathname);
+      return;
+    }
+
+    let isMounted = true;
+    setIsSyncingPayment(true);
+    setFeedback({
+      tone: "success",
+      message: "Confirmando pago...",
+    });
+
+    async function syncPayment() {
+      try {
+        const response = await fetch(`/api/sales-proposals/${proposal.slug}/sync-session`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sessionId,
+          }),
+        });
+        const payload = (await response.json()) as {
+          proposal?: SalesProposalRecord;
+          message?: string;
+        };
+
+        if (!response.ok || !payload.proposal) {
+          throw new Error(payload.message || "No pudimos confirmar el pago de la propuesta.");
+        }
+
+        if (!isMounted) return;
+
+        setProposal(payload.proposal);
+        setFeedback({
+          tone: "success",
+          message: "Pago confirmado. La propuesta ya no generara un checkout duplicado.",
+        });
+        router.replace(pathname);
+      } catch (caughtError) {
+        if (!isMounted) return;
+
+        setFeedback({
+          tone: "error",
+          message: formatUserError(
+            caughtError,
+            "El pago se completo, pero no pudimos actualizar la propuesta automaticamente.",
+          ),
+        });
+      } finally {
+        if (isMounted) {
+          setIsSyncingPayment(false);
+        }
+      }
+    }
+
+    void syncPayment();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname, proposal.slug, router, searchParams]);
+
   async function copyShareLink() {
     if (!proposal.slug) {
       setFeedback({
         tone: "error",
-        message: "Guarda la propuesta antes de compartirla.",
+        message: "Activa el plan primero para guardar y compartir la propuesta.",
       });
       return;
     }
@@ -805,14 +1058,6 @@ export function SalesProposalWorkspace({
     setFeedback({ tone: "success", message: "Enlace de propuesta copiado." });
   }
 
-  const proposalStatusLabel =
-    proposal.status === "board_activated"
-      ? "Board activado"
-      : proposal.status === "paid"
-        ? "Pagada"
-        : proposal.status === "checkout_pending"
-          ? "Checkout pendiente"
-          : "Borrador";
   const consumedWidth = Math.min((metrics.completed / Math.max(metrics.total, 1)) * 100, 100);
   const committedWidth = Math.min((metrics.committed / Math.max(metrics.total, 1)) * 100, 100);
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
@@ -824,6 +1069,35 @@ export function SalesProposalWorkspace({
     SALES_PROPOSAL_UPSELL_OPTIONS[0].price;
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
   const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
+  const activationValidation = getSalesProposalActivationValidation(proposal);
+  const isProposalCheckoutLocked =
+    proposal.status === "checkout_pending" ||
+    proposal.status === "paid" ||
+    proposal.status === "board_activated";
+  const defaultCatalogLibraryTab =
+    catalogTabs.find((tab) => tab.id !== "wizard")?.id ?? "wizard";
+  const activatePlanButtonLabel =
+    proposal.status === "board_activated"
+      ? "Plan Activado"
+      : proposal.status === "paid"
+        ? "Pagada"
+        : proposal.status === "checkout_pending"
+          ? "Checkout Pendiente"
+          : isActivating
+            ? "Activando..."
+            : isSyncingPayment
+              ? "Confirmando..."
+              : "Activar Plan";
+  const activationBlockedMessage =
+    proposal.status === "board_activated"
+      ? "El plan ya fue activado para este cliente."
+      : proposal.status === "paid"
+        ? "La propuesta ya fue pagada. No se puede generar otro checkout."
+        : proposal.status === "checkout_pending"
+          ? "Esta propuesta ya tiene un checkout generado. Confirma el pago antes de crear otro."
+          : activationValidation.message;
+  const isActivatePlanDisabled =
+    isActivating || isSyncingPayment || isProposalCheckoutLocked || !activationValidation.isValid;
 
   return (
     <div className="min-h-screen bg-[#fcfcfc] pb-14 text-[#33475b]">
@@ -835,7 +1109,7 @@ export function SalesProposalWorkspace({
           <div className="flex items-center gap-4 text-[12.5px] font-medium text-[#516f90]">
             <button
               type="button"
-              onClick={() => setProposal(createEmptySalesProposalDraft())}
+              onClick={() => setProposal(createNewSalesProposalDraft())}
               className="inline-flex items-center gap-1.5 transition hover:text-[#ff7a59]"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -862,7 +1136,13 @@ export function SalesProposalWorkspace({
                 <div className="min-w-[160px]">
                   <input
                     value={proposal.clientName}
-                    onChange={(event) => setProposal({ ...proposal, clientName: event.target.value })}
+                    onChange={(event) =>
+                      setProposal({
+                        ...proposal,
+                        clientName: event.target.value,
+                        clientCompany: event.target.value,
+                      })
+                    }
                     className="w-full border-0 border-b border-transparent bg-transparent p-0 text-[15px] font-bold leading-none text-[#33475b] outline-none transition focus:border-[#00bda5]"
                   />
                 </div>
@@ -871,9 +1151,6 @@ export function SalesProposalWorkspace({
                   <CalendarDays className="h-3.5 w-3.5" />
                   <span>Inicio: {formatSalesHeaderDate(proposal.startDate)}</span>
                 </div>
-                <span className="inline-flex items-center rounded-[4px] border border-[#dfe3eb] bg-[#f5f8fa] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
-                  {proposalStatusLabel}
-                </span>
               </div>
 
               <div className="flex flex-wrap items-end gap-6 text-[12px] font-medium">
@@ -924,14 +1201,20 @@ export function SalesProposalWorkspace({
                   <button
                     type="button"
                     onClick={activatePlan}
-                    disabled={isActivating}
+                    disabled={isActivatePlanDisabled}
                     className="inline-flex h-10 items-center gap-2 rounded-[4px] bg-[#ff7a59] px-5 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
                   >
-                    {isActivating ? "Activando..." : "Activar Plan"}
+                    {activatePlanButtonLabel}
                     <Sparkles className="h-3 w-3" />
                   </button>
                 </div>
               </div>
+
+              {isActivatePlanDisabled ? (
+                <p className="border-t border-[#f5c2c7] bg-[#fff5f5] px-3 py-2 text-[11px] font-medium text-[#b42318]">
+                  {activationBlockedMessage}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -956,16 +1239,8 @@ export function SalesProposalWorkspace({
             </div>
           ) : null}
 
-          <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>Empresa</span>
-              <input
-                value={proposal.clientCompany}
-                onChange={(event) => setProposal({ ...proposal, clientCompany: event.target.value })}
-                className={fieldClass}
-                placeholder="Empresa cliente"
-              />
-            </label>
+          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <div className="contents">
             <label className="space-y-2">
               <span className={fieldLabelClass}>Email cliente</span>
               <input
@@ -976,21 +1251,6 @@ export function SalesProposalWorkspace({
               />
             </label>
             <label className="space-y-2">
-              <span className={fieldLabelClass}>CSM asignado</span>
-              <select
-                value={proposal.assignedCsmUserId}
-                onChange={(event) => setProposal({ ...proposal, assignedCsmUserId: event.target.value })}
-                className={fieldClass}
-              >
-                <option value="">Selecciona un CSM</option>
-                {csmOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.full_name || option.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-2">
               <span className={fieldLabelClass}>Inicio</span>
               <input
                 type="date"
@@ -999,9 +1259,9 @@ export function SalesProposalWorkspace({
                 className={fieldClass}
               />
             </label>
-          </div>
+            </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="contents">
             <label className="space-y-2">
               <span className={fieldLabelClass}>
                 Créditos contratados
@@ -1065,30 +1325,9 @@ export function SalesProposalWorkspace({
                 <option value="one_time">Pago único</option>
               </select>
             </label>
+            </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={saveProposal}
-              disabled={isSaving}
-              className="inline-flex h-9 items-center gap-2 rounded-[3px] border border-[#cbd6e2] bg-white px-4 text-[12px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              <PencilLine className="h-3.5 w-3.5" />
-              {isSaving ? "Guardando..." : "Guardar propuesta"}
-            </button>
-            {proposal.slug ? (
-              <span className="inline-flex h-9 items-center gap-2 rounded-[3px] bg-[#f5f8fa] px-3 text-[11px] font-bold text-[#516f90]">
-                {proposal.status === "board_activated"
-                  ? "Board activado"
-                  : proposal.status === "paid"
-                    ? "Pagada"
-                    : proposal.status === "checkout_pending"
-                      ? "Checkout pendiente"
-                      : "Borrador"}
-              </span>
-            ) : null}
-          </div>
         </section>
 
         <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-6 py-6">
@@ -1104,7 +1343,6 @@ export function SalesProposalWorkspace({
                   (sum, initiative) => sum + calculateSalesInitiativeCredits(initiative),
                   0,
                 );
-                const allowsCreate = status === "backlog" || status === "planned";
 
                 if (!hasPlanningItems && status === "backlog") {
                   return (
@@ -1169,7 +1407,7 @@ export function SalesProposalWorkspace({
                     <div className="mb-2 flex items-center justify-between px-1">
                       <div className="flex items-center gap-2">
                         <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(status)}`} />
-                        <p className="text-[13px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                        <p className={`text-[13px] font-bold uppercase tracking-[0.18em] ${getStatusHeadingClass(status)}`}>
                           {getStatusLabel(status)}
                         </p>
                       </div>
@@ -1178,7 +1416,7 @@ export function SalesProposalWorkspace({
                       </span>
                     </div>
 
-                    <div className="min-h-[360px] flex-1 space-y-2 rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] p-2">
+                    <div className="min-h-[360px] flex-1 space-y-2.5 px-1 pt-1">
                       {items.map((initiative) => {
                         const credits = calculateSalesInitiativeCredits(initiative);
                         const progress = calculateSalesInitiativeProgress(initiative);
@@ -1188,97 +1426,56 @@ export function SalesProposalWorkspace({
                             key={initiative.id}
                             type="button"
                             onClick={() => openInitiativeEditor(initiative)}
-                            className="relative w-full rounded-[5px] border border-[#dfe3eb] bg-white p-3 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-md"
+                            className="w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)]"
                           >
-                            <div
-                              className={`absolute left-0 top-0 h-full w-[3px] ${
-                                status === "executing"
-                                  ? "bg-[#00bda5]"
-                                  : status === "planned"
-                                    ? "bg-[#6a78d1]"
-                                    : status === "completed"
-                                      ? "bg-[#33475b]"
-                                      : "bg-[#cbd6e2]"
-                              }`}
-                            />
-                            <div className="absolute left-[3px] right-0 top-0 h-[3px] overflow-hidden rounded-tr-[4px] bg-[#eef2f7]">
-                              <div
-                                className={`${progress >= 100 ? "bg-[#33475b]" : progress >= 60 ? "bg-[#00bda5]" : progress > 0 ? "bg-[#6a78d1]" : "bg-[#cbd6e2]"} h-full`}
-                                style={{ width: `${progress}%` }}
-                              />
-                            </div>
-                            <div className="pl-1">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <h4 className="text-[13px] font-bold text-[#33475b]">{initiative.title}</h4>
-                                    <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold text-[#516f90]">
-                                      {progress}%
-                                    </span>
-                                  </div>
-                                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[#516f90]">
-                                    {initiative.description || "Sin descripción ejecutiva."}
-                                  </p>
+                            <div className="min-w-0">
+                              <div className="min-w-0">
+                                <h4 className="pr-3 text-[12px] font-bold leading-[1.35] text-[#33475b]">{initiative.title}</h4>
+                                <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
+                                  {initiative.description || "Sin descripción ejecutiva."}
+                                </p>
+                                <div
+                                  className={`mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border px-2 text-[9px] font-bold leading-none ${
+                                    status === "executing"
+                                      ? "border-[#f8c75c] bg-[#fff7dc] text-[#d97706]"
+                                      : "border-[#c9d7e6] bg-white text-[#486b93]"
+                                  }`}
+                                >
+                                  {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                                 </div>
-                                <span className="rounded-[3px] bg-[#eaf0f6] px-1.5 py-0.5 text-[11px] font-bold text-[#33475b]">
-                                  {credits} CR
-                                </span>
                               </div>
-                              <div className="mt-3 inline-flex rounded-[3px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
-                                {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
-                              </div>
+                            </div>
+                            <div className="mt-3 flex items-center justify-between border-t border-[#eef2f7] pt-2.5">
+                              <span className="text-[10px] font-semibold text-[#9cb1c6]">
+                                {progress === 0 ? "0d inactivo" : `${progress}% avance`}
+                              </span>
+                              <span className="rounded-[3px] bg-[#eef3f8] px-2 py-0.5 text-[10px] font-bold text-[#33475b]">
+                                {credits} CR
+                              </span>
                             </div>
                           </button>
                         );
                       })}
 
-                      {allowsCreate ? (
-                        <div className="rounded-[4px] border-2 border-dashed border-[#00bda5] bg-[#f0fdfa] p-2 shadow-sm">
-                          <div className="grid grid-cols-[1fr_auto] gap-2">
-                            <select
-                              value={catalogSelections[status]}
-                              onChange={(event) =>
-                                setCatalogSelections((current) => ({
-                                  ...current,
-                                  [status]: event.target.value,
-                                }))
-                              }
-                              className="h-9 w-full rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[11px] font-medium outline-none transition focus:border-[#00bda5]"
-                            >
-                              <option value="">-- Rápido --</option>
-                              {catalogOptions.map(([category, items]) => (
-                                <optgroup key={category} label={category}>
-                                  {items.map((item) => (
-                                    <option key={item.id} value={item.id}>
-                                      {item.label} ({item.credits} CR)
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              onClick={() => quickAddCatalogItem(status)}
-                              className="rounded-[3px] border border-[#cbd6e2] bg-white px-3 text-[11px] font-bold text-[#33475b] transition hover:border-[#00bda5] hover:text-[#00bda5]"
-                            >
-                              Añadir
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => addInitiative(status)}
-                            className="mt-2 w-full rounded-[4px] px-3 py-2 text-[12px] font-bold text-[#00bda5] transition hover:bg-[#00bda5] hover:text-white"
-                          >
-                            + Añadir Caso de Uso
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
                   </div>
                 );
               })}
             </div>
           </div>
+
+          {hasPlanningItems ? (
+            <div className="mt-6 w-[664px] min-w-[664px]">
+              <button
+                type="button"
+                onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[4px] border-2 border-dashed border-[#14b8a6] bg-[#f5fffd] px-6 py-4 text-[16px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+              >
+                <Plus className="h-5 w-5" />
+                Agregar Caso de Uso
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="bg-white px-6 py-10">
@@ -1289,7 +1486,7 @@ export function SalesProposalWorkspace({
               Plan de Trabajo
             </h2>
             <p className="mt-2 text-[13px] text-[#516f90]">
-              Proyección estratégica inicial. Puedes mover las prioridades antes de activar el plan.
+              Proyección estratégica inicial. El cronograma definitivo se alineará con las prioridades exactas de tu equipo durante la sesión de Kickoff.
             </p>
           </div>
 
@@ -1298,10 +1495,10 @@ export function SalesProposalWorkspace({
               <div
                 className="grid min-w-[1120px]"
                 style={{
-                  gridTemplateColumns: `180px minmax(${timelineRows.timelineDays * timelineRows.dayWidth}px, 1fr)`,
+                  gridTemplateColumns: `0px minmax(${timelineRows.timelineDays * timelineRows.dayWidth}px, 1fr)`,
                 }}
               >
-                <div className="border-r border-[#dfe3eb] bg-white" />
+                <div className="overflow-hidden border-r-0 bg-white" />
                 <div className="overflow-hidden border-b border-[#dfe3eb] bg-[#f5f8fa]">
                   <div className="grid" style={{ gridTemplateColumns: `repeat(3, minmax(0, 1fr))` }}>
                     {timelineRows.monthSegments.map((month) => (
@@ -1344,29 +1541,8 @@ export function SalesProposalWorkspace({
                 ) : (
                   timelineRows.rows.map((row) => (
                     <Fragment key={row.initiative.id}>
-                      <button
-                        type="button"
-                        onClick={() => openInitiativeEditor(row.initiative)}
-                        className="border-r border-b border-[#eaf0f6] bg-white px-4 py-3 text-left transition hover:bg-[#fcfcfc]"
-                      >
-                        <p className="line-clamp-2 text-[12px] font-bold text-[#33475b]">
-                          {row.initiative.title}
-                        </p>
-                        <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                          {getStatusLabel(row.initiative.status)}
-                        </p>
-                        <p className="mt-2 text-[9px] font-semibold text-[#8aa0b4]">
-                          {row.rangeLabel || "Sin fechas"}
-                        </p>
-                      </button>
+                      <div className="h-[30px] w-0 overflow-hidden border-b border-transparent" />
                       <div className="relative border border-[#eaf0f6] border-l-0 border-t-0 bg-white">
-                        {timelineRows.todayOffset >= 0 &&
-                        timelineRows.todayOffset < timelineRows.timelineDays ? (
-                          <div
-                            className="pointer-events-none absolute bottom-0 top-0 z-10 w-[1px] bg-[#ff7a59]"
-                            style={{ left: `${timelineRows.todayOffset * timelineRows.dayWidth}px` }}
-                          />
-                        ) : null}
                         <div
                           className="grid"
                           style={{
@@ -1376,7 +1552,7 @@ export function SalesProposalWorkspace({
                           {timelineRows.dayMarkers.map((marker) => (
                             <div
                               key={`${row.initiative.id}-${marker.key}`}
-                              className="h-[40px] border-r border-[#eef2f7] last:border-r-0"
+                              className="h-[30px] border-r border-b border-[#eef2f7] last:border-r-0"
                             />
                           ))}
                         </div>
@@ -1384,21 +1560,15 @@ export function SalesProposalWorkspace({
                           <button
                             type="button"
                             onClick={() => openInitiativeEditor(row.initiative)}
-                            className={`absolute top-[8px] flex h-[22px] items-center rounded-[4px] px-3 text-left text-[10px] font-bold text-white shadow-sm ${
-                              row.initiative.status === "executing"
-                                ? "bg-[#00bda5]"
-                                : row.initiative.status === "planned"
-                                  ? "bg-[#6a78d1]"
-                                  : row.initiative.status === "completed"
-                                    ? "bg-[#33475b]"
-                                    : "bg-[#54779c]"
-                            }`}
+                          className={`absolute top-[4px] flex h-[22px] items-center justify-center rounded-[3px] px-2 text-center leading-none ${getSalesTimelineBarClass(
+                            row.initiative.status,
+                          )}`}
                             style={{
                               left: `${row.startOffset * timelineRows.dayWidth}px`,
-                              width: `${Math.max(row.span * timelineRows.dayWidth - 4, timelineRows.dayWidth * 2)}px`,
+                              width: `${Math.max(row.span * timelineRows.dayWidth - 4, timelineRows.dayWidth * 6)}px`,
                             }}
                           >
-                            <span className="truncate">{row.initiative.title}</span>
+                            <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
                           </button>
                         ) : (
                           <div className="absolute inset-0 grid place-items-center px-4 text-center">
@@ -1415,7 +1585,7 @@ export function SalesProposalWorkspace({
             </div>
           </div>
 
-          {timelineRows.undatedRows.length > 0 ? (
+          {false ? (
             <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
@@ -1566,7 +1736,20 @@ export function SalesProposalWorkspace({
 
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
                 {activeCatalogTab === "wizard" ? (
-                  <div className="mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
+                  <div className="relative mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
+                    {isGeneratingWizardPlan ? (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center rounded-[8px] bg-white/85 backdrop-blur-[2px]">
+                        <div className="flex flex-col items-center gap-3 rounded-[10px] border border-[#dfe3eb] bg-white px-8 py-7 text-center shadow-[0_18px_45px_rgba(15,23,42,0.1)]">
+                          <Loader2 className="h-8 w-8 animate-spin text-[#14b8a6]" />
+                          <div>
+                            <p className="text-[16px] font-extrabold text-[#33475b]">Cargando</p>
+                            <p className="mt-1 text-[12px] text-[#516f90]">
+                              Estamos preparando las recomendaciones del plan.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="text-center">
                       <h3 className="text-[24px] font-extrabold text-[#33475b]">Veamos qué activar primero</h3>
                       <p className="mt-2 text-[14px] text-[#516f90]">
@@ -1575,8 +1758,8 @@ export function SalesProposalWorkspace({
                     </div>
 
                     <div className="mt-10 space-y-8">
-                      <div className="wizard-context-step">
-                        <p className="hidden">
+                      <div>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
                           1. ¿Qué áreas de HubSpot deseas activar?
                         </p>
                         <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -1611,7 +1794,7 @@ export function SalesProposalWorkspace({
                       </div>
 
                       <div>
-                        <p className="hidden text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
                           2. ¿Cuál es el estado actual de tu portal?
                         </p>
                         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -1713,11 +1896,11 @@ export function SalesProposalWorkspace({
                       <button
                         type="button"
                         onClick={applyWizardRecommendations}
-                        disabled={!wizardHubs.length}
+                        disabled={!wizardHubs.length || isGeneratingWizardPlan}
                         className="inline-flex items-center gap-2 rounded-[6px] bg-[#14b8a6] px-10 py-3.5 text-[15px] font-bold text-white shadow-md transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Sparkles className="h-4 w-4" />
-                        Armar Plan de Trabajo
+                        {isGeneratingWizardPlan ? "Cargando..." : "Armar Plan de Trabajo"}
                       </button>
                     </div>
                   </div>
@@ -2179,9 +2362,9 @@ export function SalesProposalWorkspace({
                     </div>
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">CSM</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Asignacion CS</p>
                     <div className="mt-2 border-b border-dashed border-[#00bda5] pb-1 text-[12px] font-semibold text-[#33475b]">
-                      {getAssigneeName(csmOptions, proposal.assignedCsmUserId) || "Sin asignar"}
+                      {proposal.assignedCsmUserId ? "Asignado desde CS" : "Pendiente de asignacion en CS"}
                     </div>
                   </div>
                 </div>
