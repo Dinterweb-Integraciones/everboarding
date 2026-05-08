@@ -68,6 +68,9 @@ export type SalesProposalDraft = {
   status: SalesProposalStatus;
   hubspotDealId: string | null;
   activatedClientId: string | null;
+  appliedCouponId: string | null;
+  appliedCouponCode: string;
+  couponAppliedAt: string | null;
   initiatives: SalesProposalInitiativeDraft[];
 };
 
@@ -102,11 +105,14 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
     quotedPrice: SALES_PROPOSAL_BASE_PRICE,
     currency: "usd",
-    billingMode: "subscription",
+    billingMode: "one_time",
     periodMonths: 1,
     status: "draft",
     hubspotDealId: null,
     activatedClientId: null,
+    appliedCouponId: null,
+    appliedCouponCode: "",
+    couponAppliedAt: null,
     initiatives: [],
   };
 }
@@ -145,7 +151,11 @@ export function normalizeSalesProposalDraft(input: Partial<SalesProposalDraft>):
     ...base,
     ...input,
     currency: (input.currency || base.currency).toLowerCase(),
-    periodMonths: normalizeSalesPeriod(input.periodMonths),
+    billingMode: "one_time",
+    appliedCouponId: input.appliedCouponId || null,
+    appliedCouponCode: input.appliedCouponCode || "",
+    couponAppliedAt: input.couponAppliedAt || null,
+    periodMonths: 1,
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
     initiatives: (input.initiatives ?? []).map((initiative, initiativeIndex) => ({
@@ -203,20 +213,14 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
       (row.quoted_price as string | number | null | undefined) ?? snapshot.quotedPrice,
     ),
     currency: String(row.currency ?? snapshot.currency ?? "usd").toLowerCase(),
-    billingMode:
-      row.billing_mode === "one_time" || snapshot.billingMode === "one_time"
-        ? "one_time"
-        : "subscription",
-    periodMonths: normalizeSalesPeriod(
-      safeParseNumber(
-        (row.plan_period_months as string | number | null | undefined) ??
-          snapshot.periodMonths ??
-          1,
-      ),
-    ),
+    billingMode: "one_time",
+    periodMonths: 1,
     status: normalizeSalesStatus(row.status),
     hubspotDealId: (row.hubspot_deal_id as string | null) ?? null,
     activatedClientId: (row.activated_client_id as string | null) ?? null,
+    appliedCouponId: (row.applied_coupon_id as string | null) ?? null,
+    appliedCouponCode: String(row.applied_coupon_code ?? snapshot.appliedCouponCode ?? ""),
+    couponAppliedAt: (row.coupon_applied_at as string | null) ?? snapshot.couponAppliedAt ?? null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),
     paidAt: (row.paid_at as string | null) ?? null,
@@ -244,9 +248,12 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     contracted_credits: normalized.contractedCredits,
     quoted_price: normalized.quotedPrice,
     currency: normalized.currency.toLowerCase(),
-    billing_mode: normalized.billingMode,
-    plan_period_months: normalized.periodMonths,
+    billing_mode: "one_time",
+    plan_period_months: 1,
     status: normalized.status,
+    applied_coupon_id: normalized.appliedCouponId,
+    applied_coupon_code: normalized.appliedCouponCode.trim() || null,
+    coupon_applied_at: normalized.couponAppliedAt,
     snapshot: normalized,
   };
 }
@@ -276,10 +283,12 @@ export function getSalesProposalActivationValidation(
     | "startDate"
     | "contractedCredits"
     | "quotedPrice"
+    | "appliedCouponCode"
     | "initiatives"
   >,
 ) {
   const missingFields: string[] = [];
+  const hasAppliedCoupon = Boolean(draft.appliedCouponCode?.trim());
 
   if (isMissingClientName(draft.clientName)) {
     missingFields.push("el nombre del cliente");
@@ -297,7 +306,7 @@ export function getSalesProposalActivationValidation(
     missingFields.push("los creditos contratados");
   }
 
-  if (safeParseNumber(draft.quotedPrice) <= 0) {
+  if (safeParseNumber(draft.quotedPrice) <= 0 && !hasAppliedCoupon) {
     missingFields.push("la inversion");
   }
 
@@ -394,12 +403,4 @@ function normalizeSalesStatus(value: unknown): SalesProposalStatus {
   }
 
   return "draft";
-}
-
-function normalizeSalesPeriod(value: unknown): 1 | 3 | 6 | 12 {
-  if (value === 3 || value === 6 || value === 12) {
-    return value;
-  }
-
-  return 1;
 }

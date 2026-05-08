@@ -20,8 +20,33 @@ import type { Database } from "@/types/database";
 type RecordStripeCheckoutPaymentArgs =
   Database["public"]["Functions"]["record_stripe_checkout_payment"]["Args"];
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
+type SalesCouponRow = Database["public"]["Tables"]["sales_coupons"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type OnboardingInitiativeRow = Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
+
+type SalesProposalActivationResult =
+  | {
+      url: string;
+      proposal?: never;
+      message?: never;
+    }
+  | {
+      url?: never;
+      proposal: SalesProposalRecord;
+      message: string;
+    };
+
+type SalesProposalPaymentContext = {
+  checkoutSessionId: string | null;
+  paymentIntentId: string | null;
+  subscriptionId: string | null;
+  invoiceId: string | null;
+  amountCents: number;
+  currency: string;
+};
+
+const SALES_COUPON_GRANTED_CREDITS = 40;
+const SALES_COUPON_PRICE = 0;
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -45,12 +70,109 @@ function resolveCurrency(value: string | null | undefined) {
   return (value || process.env.STRIPE_CURRENCY || "usd").toLowerCase();
 }
 
+function normalizeSalesCouponCode(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
+  const startsAt = coupon.starts_at ? new Date(coupon.starts_at) : null;
+  const endsAt = coupon.ends_at ? new Date(coupon.ends_at) : null;
+
+  if (!coupon.is_active) {
+    return false;
+  }
+
+  if (startsAt && startsAt > now) {
+    return false;
+  }
+
+  if (endsAt && endsAt < now) {
+    return false;
+  }
+
+  return true;
+}
+
+function applyCouponTermsToProposal(proposal: SalesProposalRecord, coupon: SalesCouponRow): SalesProposalDraft {
+  return {
+    ...proposal,
+    contractedCredits: SALES_COUPON_GRANTED_CREDITS,
+    quotedPrice: SALES_COUPON_PRICE,
+    currency: resolveCurrency(proposal.currency),
+    billingMode: "one_time",
+    periodMonths: 1,
+    appliedCouponId: coupon.id,
+    appliedCouponCode: coupon.code,
+    couponAppliedAt: proposal.couponAppliedAt || new Date().toISOString(),
+  };
+}
+
 function buildActivatedClientSlug(proposal: SalesProposalRecord, proposalId: string) {
   const baseSlug =
     proposal.slug?.trim() ||
     `${slugify(proposal.clientCompany || proposal.clientName || proposal.title)}-${proposalId.slice(0, 8)}`;
 
   return baseSlug.toLowerCase();
+}
+
+export async function getActiveSalesCouponByCode(code: string) {
+  const normalizedCode = normalizeSalesCouponCode(code);
+  if (!normalizedCode) {
+    return null;
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("sales_coupons")
+    .select("*")
+    .ilike("code", normalizedCode)
+    .maybeSingle();
+  const coupon = data as SalesCouponRow | null;
+
+  if (error) {
+    throw error;
+  }
+
+  if (!coupon || !isCouponCurrentlyActive(coupon)) {
+    return null;
+  }
+
+  return coupon;
+}
+
+async function getSalesCouponForProposal(row: SalesProposalRow, requireActive = true) {
+  const admin = createSupabaseAdminClient();
+  const appliedCouponId = row.applied_coupon_id;
+  const appliedCouponCode = normalizeSalesCouponCode(row.applied_coupon_code ?? "");
+
+  if (!appliedCouponId && !appliedCouponCode) {
+    return null;
+  }
+
+  let query = admin.from("sales_coupons").select("*");
+
+  if (appliedCouponId) {
+    query = query.eq("id", appliedCouponId);
+  } else {
+    query = query.ilike("code", appliedCouponCode);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  const coupon = data as SalesCouponRow | null;
+
+  if (error) {
+    throw error;
+  }
+
+  if (!coupon) {
+    return null;
+  }
+
+  if (requireActive && !isCouponCurrentlyActive(coupon)) {
+    return null;
+  }
+
+  return coupon;
 }
 
 export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug: string) {
@@ -118,6 +240,124 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
   return mapSalesProposalRow(data as SalesProposalRow);
 }
 
+export async function applySalesCouponToProposal(proposalSlug: string, couponCode: string) {
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("slug", proposalSlug)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta comercial.");
+  }
+
+  if (
+    typedProposalRow.status === "checkout_pending" ||
+    typedProposalRow.status === "paid" ||
+    typedProposalRow.status === "board_activated"
+  ) {
+    throw new Error("El cupon solo se puede aplicar antes de iniciar el checkout.");
+  }
+
+  const coupon = await getActiveSalesCouponByCode(couponCode);
+
+  if (!coupon) {
+    throw new Error("El cupon no existe o ya no esta activo.");
+  }
+
+  const proposal = mapSalesProposalRow(typedProposalRow);
+  const nextProposal = applyCouponTermsToProposal(proposal, coupon);
+
+  return saveSalesProposal(nextProposal, proposalSlug);
+}
+
+async function activateSalesProposalFromCoupon(
+  proposal: SalesProposalRecord,
+  appliedCouponOverride?: SalesCouponRow | null,
+) {
+  const appliedCouponCode = normalizeSalesCouponCode(proposal.appliedCouponCode);
+
+  if (!appliedCouponCode && !appliedCouponOverride) {
+    throw new Error("No hay un cupon aplicado en la propuesta.");
+  }
+
+  const appliedCoupon =
+    appliedCouponOverride ?? (appliedCouponCode ? await getActiveSalesCouponByCode(appliedCouponCode) : null);
+
+  if (!appliedCoupon) {
+    throw new Error("El cupon aplicado ya no esta activo.");
+  }
+
+  if (!proposal.id) {
+    throw new Error("La propuesta debe guardarse antes de activar el cupon.");
+  }
+
+  const syncedProposal = await saveSalesProposal(
+    applyCouponTermsToProposal(proposal, appliedCoupon),
+    proposal.slug || proposal.id,
+  );
+
+  await activateSalesProposalWithPaymentContext(syncedProposal.id!, {
+    checkoutSessionId: null,
+    paymentIntentId: null,
+    subscriptionId: null,
+    invoiceId: null,
+    amountCents: 0,
+    currency: resolveCurrency(syncedProposal.currency),
+  });
+
+  if (appliedCoupon.is_active) {
+    const { error: deactivateCouponError } = await createSupabaseAdminClient()
+      .from("sales_coupons")
+      .update(({
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      }) as never)
+      .eq("id", appliedCoupon.id);
+
+    if (deactivateCouponError) {
+      throw deactivateCouponError;
+    }
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: refreshedRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("id", syncedProposal.id!)
+    .single();
+  const typedRefreshedRow = refreshedRow as SalesProposalRow | null;
+
+  if (error || !typedRefreshedRow) {
+    throw error ?? new Error("No pudimos refrescar la propuesta activada con cupon.");
+  }
+
+  return mapSalesProposalRow(typedRefreshedRow);
+}
+
+export async function activateSalesProposal(
+  request: Request,
+  proposal: SalesProposalRecord,
+): Promise<SalesProposalActivationResult> {
+  const appliedCouponCode = normalizeSalesCouponCode(proposal.appliedCouponCode);
+
+  if (!appliedCouponCode) {
+    return { url: await createSalesProposalCheckout(request, proposal) };
+  }
+
+  const refreshedProposal = await activateSalesProposalFromCoupon(proposal);
+
+  return {
+    proposal: refreshedProposal,
+    message:
+      refreshedProposal.status === "board_activated"
+        ? "Plan activado con cupon sin pasar por la pasarela de pago."
+        : "Cupon usado. La propuesta quedo en $0, se marco como pagada y espera la asignacion de CS.",
+  };
+}
+
 export async function createSalesProposalCheckout(request: Request, proposal: SalesProposalRecord) {
   const proposalId = proposal.id;
   if (!proposalId) {
@@ -140,8 +380,8 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
   }
 
   const session = await stripe.checkout.sessions.create({
-    mode: proposal.billingMode === "one_time" ? "payment" : "subscription",
-    submit_type: proposal.billingMode === "one_time" ? "pay" : "subscribe",
+    mode: "payment",
+    submit_type: "pay",
     customer_email: proposal.clientEmail || undefined,
     line_items: [
       {
@@ -149,14 +389,6 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
         price_data: {
           currency: resolveCurrency(proposal.currency),
           unit_amount: amountInCents,
-          ...(proposal.billingMode === "subscription"
-            ? {
-                recurring: {
-                  interval: "month",
-                  interval_count: proposal.periodMonths,
-                },
-              }
-            : {}),
           product_data: {
             name: `${proposal.clientCompany || proposal.clientName} · Activar plan`,
             description: `${proposal.contractedCredits} CR · ${proposal.title}`,
@@ -171,23 +403,12 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
       sales_proposal_slug: proposal.slug || "",
       sales_client_name: proposal.clientName,
     },
-    ...(proposal.billingMode === "subscription"
-      ? {
-          subscription_data: {
-            metadata: {
-              sales_proposal_id: proposal.id || "",
-              sales_proposal_slug: proposal.slug || "",
-            },
-          },
-        }
-      : {
-          payment_intent_data: {
-            metadata: {
-              sales_proposal_id: proposal.id || "",
-              sales_proposal_slug: proposal.slug || "",
-            },
-          },
-        }),
+    payment_intent_data: {
+      metadata: {
+        sales_proposal_id: proposal.id || "",
+        sales_proposal_slug: proposal.slug || "",
+      },
+    },
   });
 
   const { error } = await admin
@@ -210,10 +431,10 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
   return session.url;
 }
 
-export async function activateSalesProposalAfterPayment(
-  stripe: Stripe,
+async function activateSalesProposalWithPaymentContext(
   proposalId: string,
-  session: Stripe.Checkout.Session,
+  payment: SalesProposalPaymentContext,
+  updateSubscriptionMetadata?: (activatedClientId: string) => Promise<void>,
 ) {
   const admin = createSupabaseAdminClient();
   const { data: proposalRow, error: proposalError } = await admin
@@ -232,10 +453,8 @@ export async function activateSalesProposalAfterPayment(
   if (!mappedProposalId) {
     throw new Error("La propuesta pagada no tiene un identificador valido.");
   }
-  const subscriptionId =
-    typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
-  const paymentIntentId =
-    typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null;
+  const subscriptionId = payment.subscriptionId;
+  const paymentIntentId = payment.paymentIntentId;
   let activatedClientId = proposal.activatedClientId;
 
   if (!activatedClientId) {
@@ -249,7 +468,7 @@ export async function activateSalesProposalAfterPayment(
         .update(({
           status: "paid",
           paid_at: new Date().toISOString(),
-          stripe_checkout_session_id: session.id,
+          stripe_checkout_session_id: payment.checkoutSessionId,
           stripe_payment_intent_id: paymentIntentId,
           stripe_subscription_id: subscriptionId,
           hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
@@ -357,9 +576,9 @@ export async function activateSalesProposalAfterPayment(
       base_capacity: proposal.contractedCredits,
       custom_plan_credits: proposal.contractedCredits,
       custom_plan_price: proposal.quotedPrice,
-      custom_plan_type: proposal.billingMode === "one_time" ? "proyecto" : "mensual",
-      custom_plan_billing_mode: proposal.billingMode,
-      custom_plan_period_months: proposal.periodMonths,
+      custom_plan_type: "proyecto",
+      custom_plan_billing_mode: "one_time",
+      custom_plan_period_months: 1,
       current_stage: "cs",
       credit_validity_days: 60,
       sales_cleared: true,
@@ -375,14 +594,12 @@ export async function activateSalesProposalAfterPayment(
 
   const paymentArgs: RecordStripeCheckoutPaymentArgs = {
     p_client_id: activatedClientId,
-    p_checkout_session_id: session.id,
-    p_payment_intent_id:
-      typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
-    p_amount_cents: session.amount_total ?? 0,
-    p_currency: session.currency ?? "usd",
-    p_stripe_subscription_id:
-      typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null,
-    p_stripe_invoice_id: typeof session.invoice === "string" ? session.invoice : session.invoice?.id ?? null,
+    p_checkout_session_id: payment.checkoutSessionId,
+    p_payment_intent_id: paymentIntentId,
+    p_amount_cents: payment.amountCents,
+    p_currency: resolveCurrency(payment.currency || proposal.currency),
+    p_stripe_subscription_id: subscriptionId,
+    p_stripe_invoice_id: payment.invoiceId,
   };
 
   const { error: paymentError } = await admin.rpc(
@@ -394,13 +611,8 @@ export async function activateSalesProposalAfterPayment(
     throw paymentError;
   }
 
-  if (subscriptionId) {
-    await stripe.subscriptions.update(subscriptionId, {
-      metadata: {
-        client_id: activatedClientId,
-        sales_proposal_id: mappedProposalId,
-      },
-    });
+  if (subscriptionId && updateSubscriptionMetadata) {
+    await updateSubscriptionMetadata(activatedClientId);
   }
 
   const { count: existingInitiativesCount, error: existingInitiativesError } = await admin
@@ -480,7 +692,7 @@ export async function activateSalesProposalAfterPayment(
       activated_client_id: activatedClientId,
       activated_at: new Date().toISOString(),
       paid_at: new Date().toISOString(),
-      stripe_checkout_session_id: session.id,
+      stripe_checkout_session_id: payment.checkoutSessionId,
       stripe_payment_intent_id: paymentIntentId,
       stripe_subscription_id: subscriptionId,
       hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
@@ -491,6 +703,38 @@ export async function activateSalesProposalAfterPayment(
   if (updateError) {
     throw updateError;
   }
+}
+
+export async function activateSalesProposalAfterPayment(
+  stripe: Stripe,
+  proposalId: string,
+  session: Stripe.Checkout.Session,
+) {
+  const subscriptionId =
+    typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
+
+  await activateSalesProposalWithPaymentContext(
+    proposalId,
+    {
+      checkoutSessionId: session.id,
+      paymentIntentId:
+        typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+      subscriptionId,
+      invoiceId: typeof session.invoice === "string" ? session.invoice : session.invoice?.id ?? null,
+      amountCents: session.amount_total ?? 0,
+      currency: session.currency ?? "usd",
+    },
+    subscriptionId
+      ? async (activatedClientId) => {
+          await stripe.subscriptions.update(subscriptionId, {
+            metadata: {
+              client_id: activatedClientId,
+              sales_proposal_id: proposalId,
+            },
+          });
+        }
+      : undefined,
+  );
 }
 
 export async function activatePaidSalesProposalAfterAssignment(proposalId: string) {
@@ -504,6 +748,13 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
 
   if (error || !typedProposalRow) {
     throw error ?? new Error("No encontramos la propuesta pagada.");
+  }
+
+  const storedCoupon = await getSalesCouponForProposal(typedProposalRow, false);
+
+  if (storedCoupon) {
+    await activateSalesProposalFromCoupon(mapSalesProposalRow(typedProposalRow), storedCoupon);
+    return;
   }
 
   if (!typedProposalRow.stripe_checkout_session_id) {

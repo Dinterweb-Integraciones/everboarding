@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createSalesProposalCheckout } from "@/lib/sales-proposals-server";
+import { activateSalesProposal } from "@/lib/sales-proposals-server";
 import { mapSalesProposalRow } from "@/lib/sales-proposals";
 import { formatUserError } from "@/lib/utils";
 
@@ -26,9 +26,9 @@ export async function POST(request: Request, { params }: SalesProposalActivateRo
       );
     }
 
-    const checkoutUrl = await createSalesProposalCheckout(request, mapSalesProposalRow(proposalRow));
+    const activationResult = await activateSalesProposal(request, mapSalesProposalRow(proposalRow));
 
-    return NextResponse.json({ url: checkoutUrl });
+    return NextResponse.json(activationResult);
   } catch (caughtError) {
     return NextResponse.json(
       {
