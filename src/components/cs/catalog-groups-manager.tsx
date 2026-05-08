@@ -1,18 +1,24 @@
 "use client";
 
-import { Layers3, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Eye, Layers3, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { CreditCatalogGroup, CreditCatalogGroupItem, CreditCatalogItem } from "@/lib/onboarding";
+import type {
+  CreditCatalogGroup,
+  CreditCatalogGroupCategory,
+  CreditCatalogGroupItem,
+  CreditCatalogItem,
+} from "@/lib/onboarding";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type CatalogGroupsManagerProps = {
   initialGroups: CreditCatalogGroup[];
+  initialGroupCategories: CreditCatalogGroupCategory[];
   initialItems: CreditCatalogItem[];
   initialMemberships: CreditCatalogGroupItem[];
 };
@@ -20,7 +26,8 @@ type CatalogGroupsManagerProps = {
 type CatalogGroupForm = {
   name: string;
   description: string;
-  modalCategory: string;
+  modalCategoryId: string;
+  priorityStatus: "normal" | "prioritario";
   credits: string;
   sortOrder: string;
   isActive: boolean;
@@ -29,7 +36,8 @@ type CatalogGroupForm = {
 const emptyForm: CatalogGroupForm = {
   name: "",
   description: "",
-  modalCategory: "",
+  modalCategoryId: "",
+  priorityStatus: "normal",
   credits: "0",
   sortOrder: "0",
   isActive: true,
@@ -37,10 +45,12 @@ const emptyForm: CatalogGroupForm = {
 
 export function CatalogGroupsManager({
   initialGroups,
+  initialGroupCategories,
   initialItems,
   initialMemberships,
 }: CatalogGroupsManagerProps) {
   const [groups, setGroups] = useState(initialGroups);
+  const [groupCategories] = useState(initialGroupCategories);
   const [items] = useState(initialItems);
   const [memberships, setMemberships] = useState(initialMemberships);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -48,10 +58,30 @@ export function CatalogGroupsManager({
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [groupSearchQuery, setGroupSearchQuery] = useState("");
+  const [groupsPageSize, setGroupsPageSize] = useState(10);
+  const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
+  const [openDescriptionGroupId, setOpenDescriptionGroupId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const deferredGroupSearchQuery = useDeferredValue(groupSearchQuery);
+
+  const groupCategoriesById = useMemo(
+    () => new Map(groupCategories.map((category) => [category.id, category])),
+    [groupCategories],
+  );
+
+  const availableGroupCategories = useMemo(
+    () =>
+      [...groupCategories].sort(
+        (left, right) =>
+          safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+          || left.name.localeCompare(right.name, "es"),
+      ),
+    [groupCategories],
+  );
 
   const sortedItems = useMemo(
     () =>
@@ -150,7 +180,12 @@ export function CatalogGroupsManager({
 
         return {
           ...group,
-          modalCategory: group.modal_category ?? "",
+          modalCategoryId: group.modal_category_id ?? "",
+          modalCategoryName:
+            groupCategoriesById.get(group.modal_category_id ?? "")?.name
+            ?? group.modal_category
+            ?? "",
+          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
           taskCount: groupTasks.length,
           totalCredits: groupTasks.length
             ? groupTasks.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
@@ -159,8 +194,49 @@ export function CatalogGroupsManager({
           taskCategories: [...new Set(groupTasks.map((item) => item.category))],
         };
       }),
-    [items, memberships, sortedGroups],
+    [groupCategoriesById, items, memberships, sortedGroups],
   );
+
+  const filteredGroupsTableRows = useMemo(() => {
+    const normalizedQuery = deferredGroupSearchQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return groupsTableRows;
+    }
+
+    return groupsTableRows.filter((group) =>
+      [
+        group.name,
+        group.description ?? "",
+        group.modalCategoryName,
+        group.priorityStatus,
+        group.priorityStatus === "prioritario" ? "prioritario" : "normal",
+        group.is_active ? "activo" : "inactivo",
+        `${group.totalCredits} cr`,
+        `${group.taskCount} tareas`,
+        group.taskNames.join(" "),
+        group.taskCategories.join(" "),
+      ].some((value) => value.toLowerCase().includes(normalizedQuery)),
+    );
+  }, [deferredGroupSearchQuery, groupsTableRows]);
+
+  const totalGroupsPages = Math.max(1, Math.ceil(filteredGroupsTableRows.length / groupsPageSize));
+  const visibleGroupsPage = Math.min(currentGroupsPage, totalGroupsPages);
+
+  useEffect(() => {
+    setCurrentGroupsPage((currentPage) => Math.min(currentPage, totalGroupsPages));
+  }, [totalGroupsPages]);
+
+  const paginatedGroupsTableRows = useMemo(() => {
+    const startIndex = (visibleGroupsPage - 1) * groupsPageSize;
+    return filteredGroupsTableRows.slice(startIndex, startIndex + groupsPageSize);
+  }, [filteredGroupsTableRows, groupsPageSize, visibleGroupsPage]);
+
+  const visibleGroupsStart = filteredGroupsTableRows.length
+    ? (visibleGroupsPage - 1) * groupsPageSize + 1
+    : 0;
+  const visibleGroupsEnd = filteredGroupsTableRows.length
+    ? Math.min(visibleGroupsPage * groupsPageSize, filteredGroupsTableRows.length)
+    : 0;
 
   function resetForm() {
     setEditingId(null);
@@ -174,7 +250,8 @@ export function CatalogGroupsManager({
     setForm({
       name: group.name,
       description: group.description ?? "",
-      modalCategory: group.modal_category ?? "",
+      modalCategoryId: group.modal_category_id ?? "",
+      priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
       credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
@@ -223,7 +300,8 @@ export function CatalogGroupsManager({
           body: JSON.stringify({
             name: form.name,
             description: form.description,
-            modalCategory: form.modalCategory,
+            modalCategoryId: form.modalCategoryId || null,
+            priorityStatus: form.priorityStatus,
             credits: manualCredits,
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
@@ -292,6 +370,9 @@ export function CatalogGroupsManager({
       setMemberships((current) => current.filter((membership) => membership.group_id !== group.id));
       if (editingId === group.id) {
         resetForm();
+      }
+      if (openDescriptionGroupId === group.id) {
+        setOpenDescriptionGroupId(null);
       }
       setFeedback({ tone: "success", message: "Grupo eliminado." });
     } catch (caughtError) {
@@ -369,20 +450,49 @@ export function CatalogGroupsManager({
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                Categoria visible en guía inteligente
-              </label>
-              <Input
-                value={form.modalCategory ?? ""}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, modalCategory: event.target.value }))
-                }
-                placeholder="Sales, Marketing, Service, IA..."
-              />
-              <p className="mt-2 text-xs text-slate-500">
-                Este valor define en qué pestaña del modal comercial aparecerá el grupo.
-              </p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Categoria visible en guía inteligente
+                </label>
+                <Select
+                  value={form.modalCategoryId}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, modalCategoryId: event.target.value }))
+                  }
+                >
+                  <option value="">Sin categoria</option>
+                  {availableGroupCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="mt-2 text-xs text-slate-500">
+                  Esta categoria define en qué pestaña del modal comercial aparecerá el grupo.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Estado de prioridad
+                </label>
+                <Select
+                  value={form.priorityStatus}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      priorityStatus: event.target.value === "prioritario" ? "prioritario" : "normal",
+                    }))
+                  }
+                >
+                  <option value="normal">Normal</option>
+                  <option value="prioritario">Prioritario</option>
+                </Select>
+                <p className="mt-2 text-xs text-slate-500">
+                  Los grupos prioritarios aparecen primero en su categoría dentro del modal comercial.
+                </p>
+              </div>
             </div>
 
             <div>
@@ -521,121 +631,253 @@ export function CatalogGroupsManager({
               <h2 className="mt-1 text-xl font-black text-slate-900">Grupos registrados</h2>
             </div>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-              {groupsTableRows.length} grupos
+              {filteredGroupsTableRows.length === groupsTableRows.length
+                ? `${groupsTableRows.length} grupos`
+                : `${filteredGroupsTableRows.length} de ${groupsTableRows.length} grupos`}
             </span>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-[14px] border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Grupo
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Descripcion
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Creditos
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Categoria modal
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Categorias mezcladas
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Tareas que lo componen
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Estado
-                  </th>
-                  <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {groupsTableRows.length ? (
-                  groupsTableRows.map((group) => (
-                    <tr key={group.id}>
-                      <td className="px-4 py-4">
-                        <div className="font-semibold text-slate-900">{group.name}</div>
-                        <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
-                      </td>
-                      <td className="px-4 py-4 text-slate-600">
-                        {group.description || "Sin descripcion"}
-                      </td>
-                      <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
-                      <td className="px-4 py-4 text-slate-600">
-                        {group.modalCategory || "Sin categoria"}
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          {group.taskCategories.length ? (
-                            group.taskCategories.map((categoryName) => (
-                              <span
-                                key={`${group.id}-${categoryName}`}
-                                className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+          <div className="mt-5 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative w-full max-w-xl">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={groupSearchQuery}
+                  onChange={(event) => {
+                    setGroupSearchQuery(event.target.value);
+                    setCurrentGroupsPage(1);
+                  }}
+                  placeholder="Buscar por grupo, descripcion, categoria, tarea o estado"
+                  className="pl-9"
+                />
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                <p className="text-sm text-slate-500">
+                  Mostrando {visibleGroupsStart}-{visibleGroupsEnd} de {filteredGroupsTableRows.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Filas
+                  </span>
+                  <Select
+                    value={String(groupsPageSize)}
+                    onChange={(event) => {
+                      setGroupsPageSize(Number(event.target.value));
+                      setCurrentGroupsPage(1);
+                    }}
+                    className="w-[88px] bg-white"
+                  >
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Grupo
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Creditos
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Categoria modal
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Prioridad
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Estado
+                    </th>
+                    <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {paginatedGroupsTableRows.length ? (
+                    paginatedGroupsTableRows.map((group) => (
+                      <Fragment key={group.id}>
+                        <tr>
+                          <td className="px-4 py-4">
+                            <div className="font-semibold text-slate-900">{group.name}</div>
+                            <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
+                          </td>
+                          <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
+                          <td className="px-4 py-4 text-slate-600">
+                            {group.modalCategoryName || "Sin categoria"}
+                          </td>
+                          <td className="px-4 py-4">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                group.priorityStatus === "prioritario"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                group.is_active
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}
+                            >
+                              {group.is_active ? "Activo" : "Inactivo"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  setOpenDescriptionGroupId((current) =>
+                                    current === group.id ? null : group.id,
+                                  )
+                                }
                               >
-                                {categoryName}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-slate-400">Sin categorias</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          {group.taskNames.length ? (
-                            group.taskNames.map((taskName) => (
-                              <span
-                                key={`${group.id}-${taskName}`}
-                                className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
-                              >
-                                {taskName}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-slate-400">Sin tareas</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                            group.is_active
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-slate-200 text-slate-600"
-                          }`}
-                        >
-                          {group.is_active ? "Activo" : "Inactivo"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end gap-2">
-                          <Button type="button" variant="secondary" onClick={() => startEdit(group)}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Editar
-                          </Button>
-                          <Button type="button" variant="danger" onClick={() => handleDelete(group)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Eliminar
-                          </Button>
-                        </div>
+                                <Eye className="mr-2 h-4 w-4" />
+                                {openDescriptionGroupId === group.id ? "Ocultar" : "Ver"}
+                              </Button>
+                              <Button type="button" variant="secondary" onClick={() => startEdit(group)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Editar
+                              </Button>
+                              <Button type="button" variant="danger" onClick={() => handleDelete(group)}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Eliminar
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                        {openDescriptionGroupId === group.id ? (
+                          <tr className="bg-slate-50/80">
+                            <td colSpan={6} className="px-4 py-4">
+                              <div className="rounded-[12px] border border-slate-200 bg-white p-4">
+                                <div className="grid gap-4 lg:grid-cols-3">
+                                  <div className="lg:col-span-1">
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                      Descripcion del grupo
+                                    </p>
+                                    <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">
+                                      {group.description || "Sin descripcion"}
+                                    </p>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Estado de prioridad
+                                      </p>
+                                      <span
+                                        className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                          group.priorityStatus === "prioritario"
+                                            ? "bg-amber-50 text-amber-700"
+                                            : "bg-slate-100 text-slate-600"
+                                        }`}
+                                      >
+                                        {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                      Categorias mezcladas
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {group.taskCategories.length ? (
+                                        group.taskCategories.map((categoryName) => (
+                                          <span
+                                            key={`${group.id}-${categoryName}`}
+                                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                          >
+                                            {categoryName}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-sm text-slate-400">Sin categorias</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                      Tareas que lo componen
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {group.taskNames.length ? (
+                                        group.taskNames.map((taskName) => (
+                                          <span
+                                            key={`${group.id}-${taskName}`}
+                                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                          >
+                                            {taskName}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-sm text-slate-400">Sin tareas</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                        {groupsTableRows.length
+                          ? "No encontramos grupos con ese criterio de busqueda."
+                          : "Aun no hay grupos registrados."}
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
-                      Aun no hay grupos registrados.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-slate-500">
+              Pagina {visibleGroupsPage} de {totalGroupsPages}
+            </p>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCurrentGroupsPage((currentPage) => Math.max(1, currentPage - 1))}
+                disabled={visibleGroupsPage === 1}
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" />
+                Anterior
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  setCurrentGroupsPage((currentPage) => Math.min(totalGroupsPages, currentPage + 1))
+                }
+                disabled={visibleGroupsPage === totalGroupsPages}
+              >
+                Siguiente
+                <ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </section>
       </div>

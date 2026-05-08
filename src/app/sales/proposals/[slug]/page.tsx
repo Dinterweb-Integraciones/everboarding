@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
 import type {
   CreditCatalogGroup,
+  CreditCatalogGroupCategory,
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
@@ -25,6 +26,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
   let proposalRow: SalesProposalRow | null = null;
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
+  let groupCategoryRows: CreditCatalogGroupCategory[] = [];
   let membershipRows: CreditCatalogGroupItem[] = [];
 
   try {
@@ -33,6 +35,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
       { data: fetchedProposal, error: proposalError },
       { data: fetchedCatalog, error: catalogError },
       { data: fetchedGroups, error: groupsError },
+      { data: fetchedGroupCategories, error: groupCategoriesError },
       { data: fetchedMemberships, error: membershipsError },
     ] =
       await Promise.all([
@@ -44,6 +47,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
           .order("category")
           .order("sort_order"),
         admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
+        admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
         admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
       ]);
 
@@ -59,6 +63,10 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
       console.error("sales_proposal_groups_load_failed", { slug, error: groupsError });
     }
 
+    if (groupCategoriesError) {
+      console.error("sales_proposal_group_categories_load_failed", { slug, error: groupCategoriesError });
+    }
+
     if (membershipsError) {
       console.error("sales_proposal_group_memberships_load_failed", { slug, error: membershipsError });
     }
@@ -66,6 +74,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
     proposalRow = (fetchedProposal as SalesProposalRow | null) ?? null;
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
+    groupCategoryRows = fetchedGroupCategories ?? [];
     membershipRows = fetchedMemberships ?? [];
   } catch (error) {
     console.error("sales_proposal_workspace_bootstrap_failed", { slug, error });
@@ -86,6 +95,7 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
     <SalesProposalWorkspace
       initialCatalog={catalogRows ?? []}
       initialGroups={groupRows ?? []}
+      initialGroupCategories={groupCategoryRows ?? []}
       initialGroupMemberships={membershipRows ?? []}
       initialProposal={initialProposal}
     />

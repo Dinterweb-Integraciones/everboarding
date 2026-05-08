@@ -74,6 +74,21 @@ create table if not exists public.sales_proposals (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.sales_coupons (
+  id uuid primary key default gen_random_uuid(),
+  code text not null,
+  is_active boolean not null default true,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+alter table public.sales_proposals
+add column if not exists applied_coupon_id uuid references public.sales_coupons(id) on delete set null,
+add column if not exists applied_coupon_code text,
+add column if not exists coupon_applied_at timestamptz;
+
 alter table public.clients
 add column if not exists seller_user_id uuid references auth.users(id) on delete set null;
 
@@ -116,9 +131,20 @@ create table if not exists public.credit_catalog_groups (
   description text,
   modal_category text,
   credits integer not null default 0 check (credits >= 0),
+  priority_status text not null default 'normal' check (priority_status in ('normal', 'prioritario')),
   sort_order integer not null default 0,
   is_active boolean not null default true,
   created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.credit_catalog_group_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  description text,
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -152,6 +178,9 @@ create table if not exists public.credit_catalog_group_items (
   created_at timestamptz not null default timezone('utc', now()),
   unique (group_id, catalog_item_id)
 );
+
+alter table public.credit_catalog_groups
+add column if not exists modal_category_id uuid references public.credit_catalog_group_categories(id) on delete set null;
 
 create table if not exists public.managed_prompts (
   id uuid primary key default gen_random_uuid(),
@@ -319,6 +348,10 @@ create index if not exists onboarding_subitems_initiative_id_idx on public.onboa
 create index if not exists onboarding_logs_initiative_id_idx on public.onboarding_activity_logs (initiative_id, created_at desc);
 create index if not exists sales_proposals_status_idx on public.sales_proposals (status, updated_at desc);
 create index if not exists sales_proposals_assigned_csm_user_id_idx on public.sales_proposals (assigned_csm_user_id);
+create unique index if not exists sales_coupons_code_unique_idx on public.sales_coupons (lower(code));
+create index if not exists sales_coupons_active_idx on public.sales_coupons (is_active, starts_at, ends_at);
+create index if not exists credit_catalog_group_categories_sort_idx
+on public.credit_catalog_group_categories (sort_order, name);
 create index if not exists credit_catalog_categories_sort_idx
 on public.credit_catalog_categories (sort_order, name);
 create index if not exists credit_catalog_group_items_group_idx
@@ -345,6 +378,11 @@ create trigger set_sales_proposals_updated_at
 before update on public.sales_proposals
 for each row execute procedure public.set_current_timestamp_updated_at();
 
+drop trigger if exists set_sales_coupons_updated_at on public.sales_coupons;
+create trigger set_sales_coupons_updated_at
+before update on public.sales_coupons
+for each row execute procedure public.set_current_timestamp_updated_at();
+
 drop trigger if exists set_client_members_updated_at on public.client_members;
 create trigger set_client_members_updated_at
 before update on public.client_members
@@ -358,6 +396,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_credit_catalog_items_updated_at on public.credit_catalog_items;
 create trigger set_credit_catalog_items_updated_at
 before update on public.credit_catalog_items
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_credit_catalog_group_categories_updated_at on public.credit_catalog_group_categories;
+create trigger set_credit_catalog_group_categories_updated_at
+before update on public.credit_catalog_group_categories
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_credit_catalog_categories_updated_at on public.credit_catalog_categories;
@@ -1353,6 +1396,7 @@ alter table public.clients enable row level security;
 alter table public.client_members enable row level security;
 alter table public.client_share_links enable row level security;
 alter table public.credit_catalog_groups enable row level security;
+alter table public.credit_catalog_group_categories enable row level security;
 alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
 alter table public.credit_catalog_group_items enable row level security;
@@ -1377,6 +1421,8 @@ drop policy if exists "client_share_links_select_owner" on public.client_share_l
 drop policy if exists "client_share_links_manage_owner" on public.client_share_links;
 drop policy if exists "catalog_groups_read_authenticated" on public.credit_catalog_groups;
 drop policy if exists "catalog_groups_manage_authenticated" on public.credit_catalog_groups;
+drop policy if exists "catalog_group_categories_read_authenticated" on public.credit_catalog_group_categories;
+drop policy if exists "catalog_group_categories_manage_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_categories_read_authenticated" on public.credit_catalog_categories;
 drop policy if exists "catalog_categories_manage_authenticated" on public.credit_catalog_categories;
 drop policy if exists "catalog_read_authenticated" on public.credit_catalog_items;
@@ -1470,6 +1516,19 @@ using (true);
 
 create policy "catalog_groups_manage_authenticated"
 on public.credit_catalog_groups
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_categories_read_authenticated"
+on public.credit_catalog_group_categories
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_categories_manage_authenticated"
+on public.credit_catalog_group_categories
 for all
 to authenticated
 using (true)
@@ -1697,6 +1756,19 @@ set category = excluded.category,
     is_active = true,
     updated_at = timezone('utc', now());
 
+insert into public.credit_catalog_group_categories (name, sort_order, is_active)
+values
+  ('Fundamentales', 0, true),
+  ('Sales', 1, true),
+  ('Marketing', 2, true),
+  ('Service', 3, true),
+  ('IA', 4, true),
+  ('Content', 5, true)
+on conflict (name) do update
+set sort_order = excluded.sort_order,
+    is_active = true,
+    updated_at = timezone('utc', now());
+
 insert into public.credit_catalog_categories (name, sort_order, is_active)
 select
   category,
@@ -1709,3 +1781,18 @@ on conflict (name) do update
 set sort_order = excluded.sort_order,
     is_active = true,
     updated_at = timezone('utc', now());
+
+update public.credit_catalog_groups as groups
+set
+  modal_category_id = categories.id,
+  modal_category = categories.name,
+  updated_at = timezone('utc', now())
+from public.credit_catalog_group_categories as categories
+where nullif(trim(groups.modal_category), '') is not null
+  and (
+    case
+      when lower(trim(groups.modal_category)) in ('fundamentos', 'fundamentales') then 'fundamentales'
+      else lower(trim(groups.modal_category))
+    end
+  ) = lower(categories.name)
+  and groups.modal_category_id is distinct from categories.id;

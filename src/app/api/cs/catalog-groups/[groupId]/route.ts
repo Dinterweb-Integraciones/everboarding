@@ -14,8 +14,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
+      modalCategoryId?: string | null;
       modalCategory?: string | null;
       credits?: number;
+      priorityStatus?: string | null;
       sortOrder?: number;
       isActive?: boolean;
       taskIds?: string[];
@@ -23,8 +25,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
-    const modalCategory = body.modalCategory?.trim() || null;
+    const requestedModalCategoryId = body.modalCategoryId?.trim() || null;
+    const requestedModalCategoryName = body.modalCategory?.trim() || null;
     const credits = Math.max(0, safeParseNumber(body.credits));
+    const priorityStatus = body.priorityStatus === "prioritario" ? "prioritario" : "normal";
     const sortOrder = Number.isFinite(body.sortOrder) ? Number(body.sortOrder) : 0;
     const isActive = body.isActive ?? true;
     const taskIds = Array.isArray(body.taskIds)
@@ -42,6 +46,32 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       );
     }
 
+    let selectedCategory: { id: string; name: string } | null = null;
+
+    if (requestedModalCategoryId) {
+      const { data: categoryRow, error: categoryError } = await supabase
+        .from("credit_catalog_group_categories")
+        .select("id, name")
+        .eq("id", requestedModalCategoryId)
+        .maybeSingle();
+
+      if (categoryError) throw categoryError;
+      if (!categoryRow) {
+        return NextResponse.json({ message: "La categoria del grupo ya no existe." }, { status: 400 });
+      }
+
+      selectedCategory = categoryRow;
+    } else if (requestedModalCategoryName) {
+      const { data: categoryRow, error: categoryError } = await supabase
+        .from("credit_catalog_group_categories")
+        .select("id, name")
+        .ilike("name", requestedModalCategoryName)
+        .maybeSingle();
+
+      if (categoryError) throw categoryError;
+      selectedCategory = categoryRow;
+    }
+
     const { data: currentGroup, error: currentError } = await supabase
       .from("credit_catalog_groups")
       .select("*")
@@ -57,8 +87,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .update({
         name,
         description,
-        modal_category: modalCategory,
+        modal_category: selectedCategory?.name ?? null,
+        modal_category_id: selectedCategory?.id ?? null,
         credits,
+        priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
       })

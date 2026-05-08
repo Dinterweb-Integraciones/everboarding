@@ -28,6 +28,7 @@ import {
 import {
   formatDateRange,
   type CreditCatalogGroup,
+  type CreditCatalogGroupCategory,
   type CreditCatalogGroupItem,
   type CreditCatalogItem,
   type InitiativeStatus,
@@ -37,6 +38,7 @@ import { formatCurrency, formatUserError, safeParseNumber, toIsoDate } from "@/l
 type SalesProposalWorkspaceProps = {
   initialCatalog: CreditCatalogItem[];
   initialGroups: CreditCatalogGroup[];
+  initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupMemberships: CreditCatalogGroupItem[];
   initialProposal?: SalesProposalRecord | null;
 };
@@ -45,7 +47,9 @@ type CatalogModalGroup = {
   id: string;
   name: string;
   description: string;
+  modalCategoryId: string | null;
   modalCategory: string;
+  priorityStatus: "normal" | "prioritario";
   credits: number;
   sortOrder: number;
   items: CreditCatalogItem[];
@@ -70,10 +74,16 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
-const fieldLabelClass =
-  "text-[9px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]";
-const fieldClass =
-  "h-8 w-full rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] outline-none transition focus:border-[#00bda5]";
+const WIZARD_LOADING_MESSAGES = [
+  "Analizando el contexto brindado...",
+  "Definiendo prioridades...",
+  "Organizando Plan de Trabajo...",
+  "Afinando ultimos detalles...",
+];
+
+function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
+  return priorityStatus === "prioritario" ? 0 : 1;
+}
 
 function getStatusDot(status: InitiativeStatus) {
   if (status === "executing") return "bg-[#00bda5]";
@@ -251,6 +261,7 @@ function scheduleRecommendedInitiatives(
 export function SalesProposalWorkspace({
   initialCatalog,
   initialGroups,
+  initialGroupCategories,
   initialGroupMemberships,
   initialProposal,
 }: SalesProposalWorkspaceProps) {
@@ -272,11 +283,17 @@ export function SalesProposalWorkspace({
   const [isActivating, setIsActivating] = useState(false);
   const [isSyncingPayment, setIsSyncingPayment] = useState(false);
   const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
+  const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
   const [upsellPackageCredits, setUpsellPackageCredits] = useState<number>(
     SALES_PROPOSAL_UPSELL_OPTIONS[0].credits,
   );
   const [upsellCartCount, setUpsellCartCount] = useState(0);
+  const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
+    Boolean(initialProposal?.appliedCouponCode?.trim()),
+  );
+  const [couponCode, setCouponCode] = useState(initialProposal?.appliedCouponCode ?? "");
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
@@ -301,6 +318,7 @@ export function SalesProposalWorkspace({
 
   const catalogGroups = useMemo(() => {
     const itemById = new Map(initialCatalog.map((item) => [item.id, item]));
+    const groupCategoriesById = new Map(initialGroupCategories.map((category) => [category.id, category]));
     const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
 
     initialGroupMemberships.forEach((membership) => {
@@ -312,7 +330,10 @@ export function SalesProposalWorkspace({
     return initialGroups
       .filter((group) => group.is_active)
       .map((group) => {
-        const modalCategory = (group.modal_category ?? "").trim() || group.name.trim();
+        const selectedCategory = group.modal_category_id
+          ? groupCategoriesById.get(group.modal_category_id) ?? null
+          : null;
+        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
         const items = (membershipsByGroup.get(group.id) ?? [])
           .sort(
             (left, right) =>
@@ -329,7 +350,9 @@ export function SalesProposalWorkspace({
           id: group.id,
           name: group.name,
           description: group.description?.trim() || "",
+          modalCategoryId: selectedCategory?.id ?? null,
           modalCategory,
+          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
           credits,
           sortOrder: safeParseNumber(group.sort_order),
           items,
@@ -337,37 +360,63 @@ export function SalesProposalWorkspace({
       })
       .sort(
         (left, right) =>
-          left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
       );
-  }, [initialCatalog, initialGroups, initialGroupMemberships]);
+  }, [initialCatalog, initialGroupCategories, initialGroups, initialGroupMemberships]);
 
   const catalogGroupOptions = useMemo(() => {
-    const grouped = new Map<string, CatalogModalGroup[]>();
+    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
+    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
 
     catalogGroups.forEach((group) => {
-      const bucket = grouped.get(group.modalCategory) ?? [];
+      if (group.modalCategoryId) {
+        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
+        bucket.push(group);
+        groupedByCategoryId.set(group.modalCategoryId, bucket);
+        return;
+      }
+
+      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
       bucket.push(group);
-      grouped.set(group.modalCategory, bucket);
+      groupedLegacy.set(group.modalCategory, bucket);
     });
 
-    return Array.from(grouped.entries()).map(
-      ([category, groups]) =>
-        [
-          category,
-          [...groups].sort(
-            (left, right) =>
-              left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-          ),
-        ] as const,
-    );
-  }, [catalogGroups]);
+    const orderedCategoryTabs = initialGroupCategories
+      .filter((category) => category.is_active)
+      .map((category) => ({
+        id: category.id,
+        label: category.name,
+        sortOrder: safeParseNumber(category.sort_order),
+        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+        ),
+      }))
+      .filter((category) => category.groups.length > 0)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
+
+    const legacyTabs = Array.from(groupedLegacy.entries())
+      .map(([category, groups]) => ({
+        id: `legacy:${category}`,
+        label: category,
+        sortOrder: Number.MAX_SAFE_INTEGER,
+        groups: [...groups].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+        ),
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label, "es"));
+
+    return [...orderedCategoryTabs, ...legacyTabs];
+  }, [catalogGroups, initialGroupCategories]);
 
   const catalogTabs = useMemo(
     () => [
       { id: "wizard", label: "Guía de Activación" },
-      ...catalogGroupOptions
-        .filter(([category]) => category.trim().length > 0)
-        .map(([category]) => ({ id: category, label: category })),
+      ...catalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
     ],
     [catalogGroupOptions],
   );
@@ -477,6 +526,23 @@ export function SalesProposalWorkspace({
     };
   }, [proposal.initiatives, proposal.startDate]);
 
+  useEffect(() => {
+    if (!isGeneratingWizardPlan) {
+      setWizardLoadingMessageIndex(0);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setWizardLoadingMessageIndex((current) =>
+        current < WIZARD_LOADING_MESSAGES.length - 1 ? current + 1 : current,
+      );
+    }, 1800);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isGeneratingWizardPlan]);
+
   function openInitiativeEditor(initiative: SalesProposalInitiativeDraft) {
     setEditingInitiativeId(initiative.id);
     setInitiativeDraft(createEditorDraft(initiative));
@@ -524,8 +590,9 @@ export function SalesProposalWorkspace({
     }
   }
 
-  function openCatalogModal(tab: string = "wizard") {
-    setActiveCatalogTab(tab);
+  function openCatalogModal(tab?: string) {
+    const nextTab = tab ?? (hasPlanningItems ? defaultCatalogLibraryTab : "wizard");
+    setActiveCatalogTab(nextTab);
     setIsCatalogModalOpen(true);
   }
 
@@ -535,6 +602,14 @@ export function SalesProposalWorkspace({
   }
 
   function openUpsellModal() {
+    if (proposal.appliedCouponCode.trim()) {
+      setFeedback({
+        tone: "error",
+        message: "Quita o cambia el cupon antes de agregar creditos extra al plan.",
+      });
+      return;
+    }
+
     setUpsellPackageCredits(SALES_PROPOSAL_UPSELL_OPTIONS[0].credits);
     setUpsellCartCount(0);
     setIsUpsellModalOpen(true);
@@ -612,6 +687,43 @@ export function SalesProposalWorkspace({
     setCatalogPreviewGroup(null);
   }
 
+  function removeCatalogGroup(group: CatalogModalGroup) {
+    const normalizedGroupName = normalizeCatalogText(group.name);
+    const matchingInitiatives = proposal.initiatives.filter(
+      (initiative) => normalizeCatalogText(initiative.title) === normalizedGroupName,
+    );
+
+    if (!matchingInitiatives.length) {
+      return;
+    }
+
+    setProposal((current) => {
+      const nextInitiatives = current.initiatives
+        .filter((initiative) => normalizeCatalogText(initiative.title) !== normalizedGroupName)
+        .map((initiative, index) => ({
+          ...initiative,
+          sortOrder: index,
+        }));
+
+      return {
+        ...current,
+        initiatives: nextInitiatives,
+      };
+    });
+
+    if (
+      catalogPreviewGroup &&
+      normalizeCatalogText(catalogPreviewGroup.name) === normalizedGroupName
+    ) {
+      closeCatalogGroupPreview();
+    }
+
+    setFeedback({
+      tone: "success",
+      message: "Caso de uso removido del Plan de Trabajo.",
+    });
+  }
+
   function addCatalogPreviewGroup(status: InitiativeStatus) {
     if (!catalogPreviewGroup) return;
 
@@ -645,10 +757,44 @@ export function SalesProposalWorkspace({
   function findCatalogGroupsByCategory(category: string) {
     return (
       catalogGroupOptions.find(
-        ([entryCategory]) =>
-          normalizeCatalogText(entryCategory) === normalizeCatalogText(category),
-      )?.[1] ?? []
+        (entry) =>
+          normalizeCatalogText(entry.label) === normalizeCatalogText(category),
+      )?.groups ?? []
     );
+  }
+
+  function fitRecommendationsToCreditBudget(
+    recommendations: WizardRecommendation[],
+    creditBudget: number,
+  ) {
+    const groupsById = new Map(catalogGroups.map((group) => [group.id, group]));
+    const existingTitles = new Set(
+      proposal.initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
+    );
+    let usedCredits = 0;
+
+    return recommendations.filter((recommendation) => {
+      const group = groupsById.get(recommendation.groupId);
+      if (!group) {
+        return false;
+      }
+
+      if (existingTitles.has(normalizeCatalogText(group.name))) {
+        return false;
+      }
+
+      const groupCredits = Math.max(0, safeParseNumber(group.credits));
+      if (groupCredits === 0) {
+        return true;
+      }
+
+      if (usedCredits + groupCredits > creditBudget) {
+        return false;
+      }
+
+      usedCredits += groupCredits;
+      return true;
+    });
   }
 
   function mergeRecommendedGroups(
@@ -702,6 +848,7 @@ export function SalesProposalWorkspace({
         sortOrder: index,
       })),
     }));
+    setActiveCatalogTab(defaultCatalogLibraryTab);
     setIsCatalogModalOpen(false);
     setFeedback({
       tone: "success",
@@ -736,8 +883,18 @@ export function SalesProposalWorkspace({
     return recommendations;
   }
 
-  function applyDefaultWizardRecommendations(message = "Plan de trabajo generado desde la Guia de Activacion.") {
-    mergeRecommendedGroups(buildDefaultWizardRecommendations(), message);
+  function applyDefaultWizardRecommendations(message = "Plan agregado exitosamente.") {
+    const budgetAwareRecommendations = fitRecommendationsToCreditBudget(
+      buildDefaultWizardRecommendations(),
+      remainingRecommendationCredits,
+    );
+
+    mergeRecommendedGroups(
+      budgetAwareRecommendations,
+      budgetAwareRecommendations.length
+        ? message
+        : `${message} No agregamos casos adicionales porque superarian los creditos disponibles.`,
+    );
   }
 
   async function applyWizardRecommendations() {
@@ -763,11 +920,15 @@ export function SalesProposalWorkspace({
           selectedHubs: wizardHubs,
           portalState: wizardPortalState,
           context: wizardContext,
+          contractedCredits: proposal.contractedCredits,
+          currentPlanCredits,
+          remainingRecommendationCredits,
           groups: catalogGroups.map((group) => ({
             id: group.id,
             name: group.name,
             description: group.description,
             modalCategory: group.modalCategory,
+            priorityStatus: group.priorityStatus,
             credits: group.credits,
             tasks: group.items.map((item) => ({
               id: item.id,
@@ -804,7 +965,12 @@ export function SalesProposalWorkspace({
         },
       );
 
-      if (!normalizedRecommendations.length) {
+      const budgetAwareRecommendations = fitRecommendationsToCreditBudget(
+        normalizedRecommendations,
+        remainingRecommendationCredits,
+      );
+
+      if (!budgetAwareRecommendations.length) {
         applyDefaultWizardRecommendations(
           "Claude no devolvio grupos validos. Aplicamos la recomendacion base del catalogo.",
         );
@@ -812,10 +978,8 @@ export function SalesProposalWorkspace({
       }
 
       mergeRecommendedGroups(
-        normalizedRecommendations,
-        payload.summary?.trim()
-          ? `Plan generado con Claude. ${payload.summary.trim()}`
-          : "Plan de trabajo generado con recomendacion inteligente.",
+        budgetAwareRecommendations,
+        "Plan agregado exitosamente.",
       );
     } catch (caughtError) {
       console.error("sales_wizard_recommendations_failed", caughtError);
@@ -941,13 +1105,32 @@ export function SalesProposalWorkspace({
       const response = await fetch(`/api/sales-proposals/${targetSlug}/activate`, {
         method: "POST",
       });
-      const payload = (await response.json()) as { url?: string; message?: string };
+      const payload = (await response.json()) as {
+        url?: string;
+        proposal?: SalesProposalRecord;
+        message?: string;
+      };
 
-      if (!response.ok || !payload.url) {
+      if (!response.ok) {
         throw new Error(payload.message || "No pudimos activar el plan.");
       }
 
-      window.location.href = payload.url;
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+
+      if (!payload.proposal) {
+        throw new Error(payload.message || "No pudimos completar la activacion del plan.");
+      }
+
+      setProposal(payload.proposal);
+      setCouponCode(payload.proposal.appliedCouponCode);
+      setIsCouponPanelOpen(Boolean(payload.proposal.appliedCouponCode.trim()));
+      setFeedback({
+        tone: "success",
+        message: payload.message || "Plan activado correctamente.",
+      });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
@@ -1058,18 +1241,93 @@ export function SalesProposalWorkspace({
     setFeedback({ tone: "success", message: "Enlace de propuesta copiado." });
   }
 
+  async function handleApplyCoupon() {
+    const normalizedCode = couponCode.trim();
+
+    if (!normalizedCode) {
+      setFeedback({
+        tone: "error",
+        message: "Ingresa un cupon antes de intentar canjearlo.",
+      });
+      return;
+    }
+
+    setIsApplyingCoupon(true);
+    setFeedback(null);
+
+    try {
+      const validationResponse = await fetch("/api/sales-proposals/validate-coupon", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code: normalizedCode }),
+      });
+      const validationPayload = (await validationResponse.json()) as {
+        ok?: boolean;
+        message?: string;
+      };
+
+      if (!validationResponse.ok || !validationPayload.ok) {
+        throw new Error(validationPayload.message || "No pudimos validar el cupon.");
+      }
+
+      const persistedProposal = await persistProposal();
+      const response = await fetch(`/api/sales-proposals/${persistedProposal.slug}/apply-coupon`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code: normalizedCode }),
+      });
+      const payload = (await response.json()) as {
+        proposal?: SalesProposalRecord;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.proposal) {
+        throw new Error(payload.message || "No pudimos validar el cupon.");
+      }
+
+      setProposal(payload.proposal);
+      setCouponCode(payload.proposal.appliedCouponCode);
+      setIsCouponPanelOpen(true);
+      setFeedback({
+        tone: "success",
+        message: payload.message || "Cupon aplicado correctamente.",
+      });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos aplicar el cupon a la propuesta."),
+      });
+    } finally {
+      setIsApplyingCoupon(false);
+    }
+  }
+
+  function handleRedeemCoupon() {
+    setIsCouponPanelOpen((current) => !current);
+  }
+
   const consumedWidth = Math.min((metrics.completed / Math.max(metrics.total, 1)) * 100, 100);
   const committedWidth = Math.min((metrics.committed / Math.max(metrics.total, 1)) * 100, 100);
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
   const hasPlanningItems =
     groupedInitiatives.backlog.length > 0 || groupedInitiatives.planned.length > 0;
   const isOverCapacity = metrics.committed + metrics.completed > metrics.total;
+  const currentPlanCredits = proposal.initiatives.reduce(
+    (sum, initiative) => sum + calculateSalesInitiativeCredits(initiative),
+    0,
+  );
+  const remainingRecommendationCredits = Math.max(0, proposal.contractedCredits - currentPlanCredits);
   const upsellPackagePrice =
     SALES_PROPOSAL_UPSELL_OPTIONS.find((option) => option.credits === upsellPackageCredits)?.price ??
     SALES_PROPOSAL_UPSELL_OPTIONS[0].price;
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
   const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
   const activationValidation = getSalesProposalActivationValidation(proposal);
+  const hasAppliedCoupon = Boolean(proposal.appliedCouponCode.trim());
   const isProposalCheckoutLocked =
     proposal.status === "checkout_pending" ||
     proposal.status === "paid" ||
@@ -1088,16 +1346,11 @@ export function SalesProposalWorkspace({
             : isSyncingPayment
               ? "Confirmando..."
               : "Activar Plan";
-  const activationBlockedMessage =
-    proposal.status === "board_activated"
-      ? "El plan ya fue activado para este cliente."
-      : proposal.status === "paid"
-        ? "La propuesta ya fue pagada. No se puede generar otro checkout."
-        : proposal.status === "checkout_pending"
-          ? "Esta propuesta ya tiene un checkout generado. Confirma el pago antes de crear otro."
-          : activationValidation.message;
   const isActivatePlanDisabled =
-    isActivating || isSyncingPayment || isProposalCheckoutLocked || !activationValidation.isValid;
+    isActivating || isSyncingPayment || isProposalCheckoutLocked;
+  const isUpsellDisabled = hasAppliedCoupon || isProposalCheckoutLocked;
+  const wizardLoadingMessage =
+    WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
 
   return (
     <div className="min-h-screen bg-[#fcfcfc] pb-14 text-[#33475b]">
@@ -1133,7 +1386,7 @@ export function SalesProposalWorkspace({
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex-1 space-y-4">
               <div className="flex flex-wrap items-center gap-4">
-                <div className="min-w-[160px]">
+                <div className="min-w-[180px]">
                   <input
                     value={proposal.clientName}
                     onChange={(event) =>
@@ -1144,6 +1397,15 @@ export function SalesProposalWorkspace({
                       })
                     }
                     className="w-full border-0 border-b border-transparent bg-transparent p-0 text-[15px] font-bold leading-none text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                  />
+                </div>
+                <div className="min-w-[220px] flex-1 max-w-[320px]">
+                  <input
+                    type="email"
+                    value={proposal.clientEmail}
+                    onChange={(event) => setProposal({ ...proposal, clientEmail: event.target.value })}
+                    className="w-full border-0 border-b border-transparent bg-transparent p-0 text-[13px] font-medium leading-none text-[#516f90] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#00bda5]"
+                    placeholder="cliente@empresa.com"
                   />
                 </div>
                 <span className="hidden h-4 w-px bg-[#dfe3eb] md:block" />
@@ -1191,7 +1453,8 @@ export function SalesProposalWorkspace({
                   <button
                     type="button"
                     onClick={openUpsellModal}
-                    className="grid h-7 w-7 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white"
+                    disabled={isUpsellDisabled}
+                    className="grid h-7 w-7 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -1210,11 +1473,39 @@ export function SalesProposalWorkspace({
                 </div>
               </div>
 
-              {isActivatePlanDisabled ? (
-                <p className="border-t border-[#f5c2c7] bg-[#fff5f5] px-3 py-2 text-[11px] font-medium text-[#b42318]">
-                  {activationBlockedMessage}
-                </p>
-              ) : null}
+              <div className="border-t border-[#dfe3eb] px-3 py-3">
+                <div className="flex flex-col items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={hasAppliedCoupon ? undefined : handleRedeemCoupon}
+                    className="inline-flex h-10 w-full items-center justify-center rounded-[4px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[12px] font-bold text-[#00bda5] transition hover:border-[#00bda5] hover:bg-[#d7fff7] hover:text-[#009c88]"
+                  >
+                    {hasAppliedCoupon ? `Cupon aplicado: ${proposal.appliedCouponCode}` : "Canjear cupon"}
+                  </button>
+
+                  {!hasAppliedCoupon && isCouponPanelOpen ? (
+                    <div className="w-full rounded-[4px] border border-[#d7efe8] bg-[#f7fffc] p-2.5">
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          type="text"
+                          value={couponCode}
+                          onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+                          placeholder="Ingresa el cupon"
+                          className="h-10 flex-1 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-medium text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#00bda5]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyCoupon}
+                          disabled={isApplyingCoupon}
+                          className="inline-flex h-10 items-center justify-center rounded-[4px] bg-[#00bda5] px-4 text-[12px] font-bold text-white transition hover:bg-[#009c88] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isApplyingCoupon ? "Aplicando..." : "Aplicar cupon"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1232,101 +1523,15 @@ export function SalesProposalWorkspace({
               <button
                 type="button"
                 onClick={openUpsellModal}
-                className="inline-flex h-8 items-center justify-center rounded-[3px] bg-[#ff7a59] px-3 text-[11px] font-bold text-white transition hover:bg-[#dc6548]"
+                disabled={isUpsellDisabled}
+                className="inline-flex h-8 items-center justify-center rounded-[3px] bg-[#ff7a59] px-3 text-[11px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Anadir creditos
               </button>
             </div>
           ) : null}
 
-          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            <div className="contents">
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>Email cliente</span>
-              <input
-                value={proposal.clientEmail}
-                onChange={(event) => setProposal({ ...proposal, clientEmail: event.target.value })}
-                className={fieldClass}
-                placeholder="cliente@empresa.com"
-              />
-            </label>
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>Inicio</span>
-              <input
-                type="date"
-                value={proposal.startDate}
-                onChange={(event) => setProposal({ ...proposal, startDate: event.target.value })}
-                className={fieldClass}
-              />
-            </label>
-            </div>
-
-            <div className="contents">
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>
-                Créditos contratados
-              </span>
-              <input
-                type="number"
-                min={0}
-                value={proposal.contractedCredits}
-                onChange={(event) =>
-                  setProposal({ ...proposal, contractedCredits: Math.max(0, safeParseNumber(event.target.value)) })
-                }
-                className={fieldClass}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>
-                Inversión
-              </span>
-              <input
-                type="number"
-                min={0}
-                value={proposal.quotedPrice}
-                onChange={(event) =>
-                  setProposal({ ...proposal, quotedPrice: Math.max(0, safeParseNumber(event.target.value)) })
-                }
-                className={fieldClass}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>
-                Periodo
-              </span>
-              <select
-                value={proposal.periodMonths}
-                onChange={(event) =>
-                  setProposal({ ...proposal, periodMonths: Number(event.target.value) as 1 | 3 | 6 | 12 })
-                }
-                className={fieldClass}
-              >
-                <option value={1}>Mensual</option>
-                <option value={3}>Trimestral</option>
-                <option value={6}>Semestral</option>
-                <option value={12}>Anual</option>
-              </select>
-            </label>
-            <label className="space-y-2">
-              <span className={fieldLabelClass}>
-                Cobro
-              </span>
-              <select
-                value={proposal.billingMode}
-                onChange={(event) =>
-                  setProposal({
-                    ...proposal,
-                    billingMode: event.target.value === "one_time" ? "one_time" : "subscription",
-                  })
-                }
-                className={fieldClass}
-              >
-                <option value="subscription">Membresía</option>
-                <option value="one_time">Pago único</option>
-              </select>
-            </label>
-            </div>
-          </div>
+          
 
         </section>
 
@@ -1468,7 +1673,7 @@ export function SalesProposalWorkspace({
             <div className="mt-6 w-[664px] min-w-[664px]">
               <button
                 type="button"
-                onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
+                onClick={() => openCatalogModal()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[4px] border-2 border-dashed border-[#14b8a6] bg-[#f5fffd] px-6 py-4 text-[16px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
               >
                 <Plus className="h-5 w-5" />
@@ -1680,6 +1885,56 @@ export function SalesProposalWorkspace({
         </section>
       </main>
 
+      {isGeneratingWizardPlan ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#33475b]/72 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-[520px] rounded-[16px] border border-white/60 bg-white px-8 py-9 text-center shadow-[0_24px_70px_rgba(15,23,42,0.28)]">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#ecfffb] text-[#14b8a6] shadow-[0_10px_30px_rgba(20,184,166,0.18)]">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+
+            <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.22em] text-[#8aa0b4]">
+              Guia de Activacion
+            </p>
+            <h3 className="mt-2 text-[24px] font-extrabold tracking-[-0.02em] text-[#33475b]">
+              Armando tu Plan de Trabajo
+            </h3>
+            <p className="mt-3 text-[15px] font-semibold text-[#14b8a6]">
+              {wizardLoadingMessage}
+            </p>
+            <p className="mt-2 text-[12px] leading-6 text-[#516f90]">
+              Estamos organizando una recomendacion alineada al contexto y a los creditos disponibles.
+            </p>
+
+            <div className="mt-6 grid gap-2 text-left">
+              {WIZARD_LOADING_MESSAGES.map((message, index) => {
+                const isActive = index === wizardLoadingMessageIndex;
+                const isCompleted = index < wizardLoadingMessageIndex;
+
+                return (
+                  <div
+                    key={message}
+                    className={`flex items-center gap-3 rounded-[10px] px-4 py-3 transition ${
+                      isActive
+                        ? "bg-[#ecfffb] text-[#0f766e]"
+                        : isCompleted
+                          ? "bg-[#f5f8fa] text-[#516f90]"
+                          : "bg-[#fbfcfe] text-[#9cb1c6]"
+                    }`}
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        isActive ? "bg-[#14b8a6]" : isCompleted ? "bg-[#7dd3c7]" : "bg-[#d8e2ec]"
+                      }`}
+                    />
+                    <span className="text-[12px] font-bold">{message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isCatalogModalOpen ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm md:p-8">
           <div className="flex h-[90vh] w-full max-w-[1380px] flex-col overflow-hidden rounded-[8px] bg-white shadow-2xl">
@@ -1737,19 +1992,6 @@ export function SalesProposalWorkspace({
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
                 {activeCatalogTab === "wizard" ? (
                   <div className="relative mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
-                    {isGeneratingWizardPlan ? (
-                      <div className="absolute inset-0 z-20 flex items-center justify-center rounded-[8px] bg-white/85 backdrop-blur-[2px]">
-                        <div className="flex flex-col items-center gap-3 rounded-[10px] border border-[#dfe3eb] bg-white px-8 py-7 text-center shadow-[0_18px_45px_rgba(15,23,42,0.1)]">
-                          <Loader2 className="h-8 w-8 animate-spin text-[#14b8a6]" />
-                          <div>
-                            <p className="text-[16px] font-extrabold text-[#33475b]">Cargando</p>
-                            <p className="mt-1 text-[12px] text-[#516f90]">
-                              Estamos preparando las recomendaciones del plan.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
                     <div className="text-center">
                       <h3 className="text-[24px] font-extrabold text-[#33475b]">Veamos qué activar primero</h3>
                       <p className="mt-2 text-[14px] text-[#516f90]">
@@ -1906,20 +2148,17 @@ export function SalesProposalWorkspace({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {(catalogGroupOptions.find(([category]) => category === activeCatalogTab)?.[1] ?? []).map((group) => {
+                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
                       const alreadyAdded = proposal.initiatives.some(
                         (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
                       );
 
                       return (
-                        <button
+                        <div
                           key={group.id}
-                          type="button"
-                          onClick={() => openCatalogGroupPreview(group)}
-                          disabled={alreadyAdded}
                           className={`flex flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
-                              ? "cursor-not-allowed border-[#eaf0f6] bg-[#f8fafc] opacity-60"
+                              ? "border-[#eaf0f6] bg-[#f8fafc]"
                               : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
@@ -1937,11 +2176,30 @@ export function SalesProposalWorkspace({
                           </p>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
                             <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
-                            <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                              {alreadyAdded ? "Ya agregado" : "Ver detalles"}
-                            </span>
+                            <div className="flex items-center gap-3">
+                              <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
+                                {alreadyAdded ? "Ya agregado" : "Disponible"}
+                              </span>
+                              {alreadyAdded ? (
+                                <button
+                                  type="button"
+                                  onClick={() => removeCatalogGroup(group)}
+                                  className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5]"
+                                >
+                                  Quitar
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => openCatalogGroupPreview(group)}
+                                  className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                                >
+                                  Ver detalles
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

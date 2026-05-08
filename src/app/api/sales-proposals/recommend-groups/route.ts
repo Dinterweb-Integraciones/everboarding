@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { formatUserError, isMissingSupabaseTable } from "@/lib/utils";
+import { formatUserError, isMissingSupabaseTable, safeParseNumber } from "@/lib/utils";
 
 type RecommendationGroup = {
   id: string;
   name: string;
   description?: string;
   modalCategory: string;
+  priorityStatus?: string;
   credits: number;
   tasks: Array<{
     id: string;
@@ -23,7 +24,16 @@ type RecommendationRequestBody = {
   selectedHubs?: string[];
   portalState?: "new" | "optimize";
   context?: string;
+  contractedCredits?: number;
+  currentPlanCredits?: number;
+  remainingRecommendationCredits?: number;
   groups?: RecommendationGroup[];
+};
+
+type ClaudeRecommendation = {
+  group_id?: string;
+  status?: string;
+  reason?: string;
 };
 
 function resolveClaudeMessagesUrl() {
@@ -39,12 +49,40 @@ function extractJsonPayload(text: string) {
 
   return JSON.parse(candidate.trim()) as {
     summary?: string;
-    recommendations?: Array<{
-      group_id?: string;
-      status?: string;
-      reason?: string;
-    }>;
+    recommendations?: ClaudeRecommendation[];
   };
+}
+
+function fitRecommendationsToCreditBudget(
+  recommendations: ClaudeRecommendation[],
+  groups: RecommendationGroup[],
+  creditBudget: number,
+) {
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  let usedCredits = 0;
+
+  return recommendations.filter((recommendation) => {
+    if (!recommendation.group_id) {
+      return false;
+    }
+
+    const group = groupsById.get(recommendation.group_id);
+    if (!group) {
+      return false;
+    }
+
+    const groupCredits = Math.max(0, safeParseNumber(group.credits));
+    if (groupCredits === 0) {
+      return true;
+    }
+
+    if (usedCredits + groupCredits > creditBudget) {
+      return false;
+    }
+
+    usedCredits += groupCredits;
+    return true;
+  });
 }
 
 export async function POST(request: Request) {
@@ -79,6 +117,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    const contractedCredits = Math.max(0, safeParseNumber(body.contractedCredits));
+    const currentPlanCredits = Math.max(0, safeParseNumber(body.currentPlanCredits));
+    const remainingRecommendationCredits = Math.max(
+      0,
+      safeParseNumber(body.remainingRecommendationCredits || contractedCredits - currentPlanCredits),
+    );
 
     const admin = createSupabaseAdminClient();
     const { data, error: promptError } = await admin
@@ -119,6 +164,10 @@ export async function POST(request: Request) {
       "- Solo puedes recomendar group_id que existan en el catalogo recibido.",
       "- No inventes ids, categorias ni tareas.",
       "- Prioriza grupos de Fundamentos/Fundamentales cuando sean necesarios para que el plan sea viable.",
+      "- Ajusta la recomendacion al presupuesto de creditos recibido.",
+      "- La suma de credits de las recomendaciones nuevas no debe superar remaining_recommendation_credits.",
+      "- Si no hay presupuesto suficiente para agregar nuevos grupos, devuelve recommendations como un arreglo vacio.",
+      "- Prefiere menos grupos bien priorizados antes que exceder el limite de creditos.",
       "- Devuelve entre 1 y 6 recomendaciones utiles.",
       "- Usa status planned para lo inmediato, backlog para lo posterior y executing solo si tiene sentido arrancar de inmediato.",
     ].join("\n");
@@ -127,12 +176,16 @@ export async function POST(request: Request) {
       start_date: body.startDate ?? null,
       portal_state: body.portalState ?? "new",
       selected_hubs: selectedHubs,
+      total_contracted_credits: contractedCredits,
+      current_plan_credits: currentPlanCredits,
+      remaining_recommendation_credits: remainingRecommendationCredits,
       commercial_context: body.context?.trim() || "",
       available_groups: groups.map((group) => ({
         id: group.id,
         name: group.name,
         description: group.description ?? "",
         modal_category: group.modalCategory,
+        priority_status: group.priorityStatus ?? "normal",
         credits: group.credits,
         tasks: group.tasks.map((task) => ({
           id: task.id,
@@ -188,7 +241,7 @@ export async function POST(request: Request) {
 
     const parsed = extractJsonPayload(responseText);
     const knownGroupIds = new Set(groups.map((group) => group.id));
-    const recommendations = (parsed.recommendations ?? []).filter(
+    const recommendations = fitRecommendationsToCreditBudget((parsed.recommendations ?? []).filter(
       (recommendation) =>
         recommendation.group_id &&
         knownGroupIds.has(recommendation.group_id) &&
@@ -197,7 +250,7 @@ export async function POST(request: Request) {
           recommendation.status === "backlog" ||
           recommendation.status === "executing"
         ),
-    );
+    ), groups, remainingRecommendationCredits);
 
     return NextResponse.json({
       summary: parsed.summary ?? "",

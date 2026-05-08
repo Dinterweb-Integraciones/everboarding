@@ -1,6 +1,7 @@
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
 import type {
   CreditCatalogGroup,
+  CreditCatalogGroupCategory,
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
@@ -12,6 +13,7 @@ export const revalidate = 0;
 export default async function NewSalesProposalPage() {
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
+  let groupCategoryRows: CreditCatalogGroupCategory[] = [];
   let membershipRows: CreditCatalogGroupItem[] = [];
 
   try {
@@ -19,6 +21,7 @@ export default async function NewSalesProposalPage() {
     const [
       { data: fetchedCatalog, error: catalogError },
       { data: fetchedGroups, error: groupsError },
+      { data: fetchedGroupCategories, error: groupCategoriesError },
       { data: fetchedMemberships, error: membershipsError },
     ] = await Promise.all([
       admin
@@ -28,6 +31,7 @@ export default async function NewSalesProposalPage() {
         .order("category")
         .order("sort_order"),
       admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
+      admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
       admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
     ]);
 
@@ -39,17 +43,23 @@ export default async function NewSalesProposalPage() {
       console.error("sales_new_groups_load_failed", groupsError);
     }
 
+    if (groupCategoriesError) {
+      console.error("sales_new_group_categories_load_failed", groupCategoriesError);
+    }
+
     if (membershipsError) {
       console.error("sales_new_group_memberships_load_failed", membershipsError);
     }
 
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
+    groupCategoryRows = fetchedGroupCategories ?? [];
     membershipRows = fetchedMemberships ?? [];
   } catch (error) {
     console.error("sales_new_workspace_bootstrap_failed", error);
     catalogRows = [];
     groupRows = [];
+    groupCategoryRows = [];
     membershipRows = [];
   }
 
@@ -57,6 +67,7 @@ export default async function NewSalesProposalPage() {
     <SalesProposalWorkspace
       initialCatalog={catalogRows}
       initialGroups={groupRows}
+      initialGroupCategories={groupCategoryRows}
       initialGroupMemberships={membershipRows}
       initialProposal={null}
     />

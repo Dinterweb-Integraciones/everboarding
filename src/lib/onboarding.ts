@@ -34,6 +34,7 @@ export type AssignableUser = {
 };
 
 export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
+export type CreditCatalogGroupCategory = Tables<"credit_catalog_group_categories">;
 export type CreditCatalogCategory = Tables<"credit_catalog_categories">;
 export type CreditCatalogGroupItem = Tables<"credit_catalog_group_items">;
 export type CreditCatalogItem = Tables<"credit_catalog_items">;
