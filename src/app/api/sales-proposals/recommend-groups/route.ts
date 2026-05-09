@@ -355,7 +355,19 @@ export async function POST(request: Request) {
       throw new Error("Claude no devolvio contenido util.");
     }
 
-    const parsed = extractJsonPayload(responseText);
+    let parsed: ClaudeParsedPayload;
+
+    try {
+      parsed = extractJsonPayload(responseText);
+    } catch (parseError) {
+      console.error("sales_wizard_claude_payload_invalid", {
+        error: parseError instanceof Error ? parseError.message : String(parseError),
+        responseTextPreview: responseText.slice(0, 2000),
+        rawClaudeBodyPreview: rawClaudeBody.slice(0, 2000),
+      });
+      throw parseError;
+    }
+
     const knownGroupIds = new Set(groups.map((group) => group.id));
     const recommendations = fitRecommendationsToCreditBudget(normalizeClaudeRecommendations(parsed, groups).filter(
       (recommendation) =>

@@ -81,6 +81,23 @@ const WIZARD_LOADING_MESSAGES = [
   "Afinando ultimos detalles...",
 ];
 
+async function parseJsonResponse<T>(response: Response) {
+  const rawText = await response.text();
+  const trimmed = rawText.trim();
+
+  if (!trimmed) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    throw new Error(
+      `La API devolvio JSON invalido (${response.status}). Respuesta inicial: ${trimmed.slice(0, 400)}`,
+    );
+  }
+}
+
 function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
   return priorityStatus === "prioritario" ? 0 : 1;
 }
@@ -940,7 +957,7 @@ export function SalesProposalWorkspace({
         }),
       });
 
-      const payload = (await response.json()) as WizardRecommendationResponse;
+      const payload = await parseJsonResponse<WizardRecommendationResponse>(response);
 
       if (!response.ok) {
         throw new Error(payload.message || "No pudimos generar la recomendacion inteligente.");
