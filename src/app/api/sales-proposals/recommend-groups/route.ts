@@ -36,6 +36,24 @@ type ClaudeRecommendation = {
   reason?: string;
 };
 
+type ClaudeLegacyGroup = {
+  id?: string;
+  group_id?: string;
+  nombre?: string;
+  name?: string;
+  descripcion?: string;
+  description?: string;
+  reason?: string;
+};
+
+type ClaudeParsedPayload = {
+  summary?: string;
+  recommendations?: ClaudeRecommendation[];
+  planificado?: ClaudeLegacyGroup[];
+  en_evaluacion?: ClaudeLegacyGroup[];
+  error?: string | null;
+};
+
 function resolveClaudeMessagesUrl() {
   const rawBaseUrl = process.env.CLAUDE_API_BASE_URL?.trim() || "https://api.claudeapi.com";
   const normalized = rawBaseUrl.replace(/\/$/, "");
@@ -44,13 +62,118 @@ function resolveClaudeMessagesUrl() {
 }
 
 function extractJsonPayload(text: string) {
-  const fencedMatch = text.match(/```json\s*([\s\S]*?)```/i) ?? text.match(/```\s*([\s\S]*?)```/i);
-  const candidate = fencedMatch?.[1] ?? text;
+  const normalizedText = text.replace(/^\uFEFF/, "").trim();
+  const fencedMatch =
+    normalizedText.match(/```json\s*([\s\S]*?)```/i) ??
+    normalizedText.match(/```\s*([\s\S]*?)```/i);
+  const candidate = (fencedMatch?.[1] ?? normalizedText).trim();
 
-  return JSON.parse(candidate.trim()) as {
-    summary?: string;
-    recommendations?: ClaudeRecommendation[];
-  };
+  try {
+    return JSON.parse(candidate) as ClaudeParsedPayload;
+  } catch {
+    const objectMatch = candidate.match(/\{[\s\S]*\}/);
+    if (!objectMatch) {
+      throw new Error("Claude no devolvio un objeto JSON reconocible.");
+    }
+
+    return JSON.parse(objectMatch[0]) as ClaudeParsedPayload;
+  }
+}
+
+function extractClaudeTextPayload(rawBody: string) {
+  const trimmedBody = rawBody.trim();
+  if (!trimmedBody) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedBody) as {
+      content?: Array<{ type?: string; text?: string }>;
+    };
+
+    if (Array.isArray(parsed.content)) {
+      return parsed.content
+        .filter((entry) => entry.type === "text" && entry.text)
+        .map((entry) => entry.text)
+        .join("\n")
+        .trim();
+    }
+  } catch {
+    return trimmedBody;
+  }
+
+  return trimmedBody;
+}
+
+function extractClaudeErrorMessage(rawBody: string) {
+  const trimmedBody = rawBody.trim();
+  if (!trimmedBody) {
+    return "Claude no pudo procesar la recomendacion.";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedBody) as {
+      error?: { message?: string };
+      message?: string;
+    };
+
+    return parsed.error?.message || parsed.message || trimmedBody;
+  } catch {
+    return trimmedBody;
+  }
+}
+
+function normalizeGroupLookupName(name: string) {
+  return name.trim().toLocaleLowerCase("es");
+}
+
+function mapLegacyGroupsToRecommendations(
+  entries: ClaudeLegacyGroup[] | undefined,
+  status: "planned" | "backlog",
+  groups: RecommendationGroup[],
+) {
+  if (!Array.isArray(entries)) {
+    return [] as ClaudeRecommendation[];
+  }
+
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const groupsByName = new Map(groups.map((group) => [normalizeGroupLookupName(group.name), group]));
+
+  return entries.flatMap((entry) => {
+    const groupId = entry.group_id || entry.id;
+    const namedGroup = entry.nombre || entry.name;
+
+    if (groupId && groupsById.has(groupId)) {
+      return [{ group_id: groupId, status, reason: entry.reason }];
+    }
+
+    if (namedGroup) {
+      const matchedGroup = groupsByName.get(normalizeGroupLookupName(namedGroup));
+      if (matchedGroup) {
+        return [{ group_id: matchedGroup.id, status, reason: entry.reason }];
+      }
+    }
+
+    return [];
+  });
+}
+
+function normalizeClaudeRecommendations(parsed: ClaudeParsedPayload, groups: RecommendationGroup[]) {
+  const directRecommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
+  const plannedRecommendations = mapLegacyGroupsToRecommendations(parsed.planificado, "planned", groups);
+  const backlogRecommendations = mapLegacyGroupsToRecommendations(parsed.en_evaluacion, "backlog", groups);
+  const seenGroupIds = new Set<string>();
+
+  return [...directRecommendations, ...plannedRecommendations, ...backlogRecommendations].filter(
+    (recommendation) => {
+      if (!recommendation.group_id || seenGroupIds.has(recommendation.group_id)) {
+        return false;
+      }
+
+      seenGroupIds.add(recommendation.group_id);
+      return true;
+    },
+  );
 }
 
 function fitRecommendationsToCreditBudget(
@@ -220,20 +343,13 @@ export async function POST(request: Request) {
 
     clearTimeout(timeout);
 
-    const rawResponse = (await claudeResponse.json()) as {
-      error?: { message?: string };
-      content?: Array<{ type?: string; text?: string }>;
-    };
+    const rawClaudeBody = await claudeResponse.text();
 
     if (!claudeResponse.ok) {
-      throw new Error(rawResponse.error?.message || "Claude no pudo procesar la recomendacion.");
+      throw new Error(extractClaudeErrorMessage(rawClaudeBody));
     }
 
-    const responseText = (rawResponse.content ?? [])
-      .filter((entry) => entry.type === "text" && entry.text)
-      .map((entry) => entry.text)
-      .join("\n")
-      .trim();
+    const responseText = extractClaudeTextPayload(rawClaudeBody);
 
     if (!responseText) {
       throw new Error("Claude no devolvio contenido util.");
@@ -241,7 +357,7 @@ export async function POST(request: Request) {
 
     const parsed = extractJsonPayload(responseText);
     const knownGroupIds = new Set(groups.map((group) => group.id));
-    const recommendations = fitRecommendationsToCreditBudget((parsed.recommendations ?? []).filter(
+    const recommendations = fitRecommendationsToCreditBudget(normalizeClaudeRecommendations(parsed, groups).filter(
       (recommendation) =>
         recommendation.group_id &&
         knownGroupIds.has(recommendation.group_id) &&
