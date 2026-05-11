@@ -931,6 +931,7 @@ set search_path = public
 as $$
 declare
   cycle_window record;
+  target_config public.onboarding_configs;
   paid_cycle public.client_billing_cycles;
   active_credits integer;
   expired_unused_credits integer;
@@ -941,6 +942,12 @@ begin
   end if;
 
   perform public.expire_unused_client_credits(p_client_id);
+
+  select *
+  into target_config
+  from public.onboarding_configs
+  where client_id = p_client_id
+  limit 1;
 
   select *
   into cycle_window
@@ -955,6 +962,16 @@ begin
     and status = 'paid'
   order by paid_at desc nulls last
   limit 1;
+
+  if paid_cycle.id is null and coalesce(target_config.custom_plan_billing_mode, 'subscription') = 'one_time' then
+    select *
+    into paid_cycle
+    from public.client_billing_cycles
+    where client_id = p_client_id
+      and status = 'paid'
+    order by paid_at desc nulls last, created_at desc
+    limit 1;
+  end if;
 
   select coalesce(sum(granted_credits), 0)
   into active_credits
@@ -1236,6 +1253,26 @@ begin
     ),
     'billing',
     public.get_client_billing_status(target_client.id),
+    'catalog',
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', item.id,
+            'category', item.category,
+            'label', item.label,
+            'credits', item.credits,
+            'sort_order', item.sort_order,
+            'created_at', item.created_at,
+            'updated_at', item.updated_at
+          )
+          order by item.category, item.sort_order, item.label
+        )
+        from public.credit_catalog_items item
+        where item.is_active = true
+      ),
+      '[]'::jsonb
+    ),
     'payment_email',
     payment_email,
     'initiatives',
@@ -1308,10 +1345,12 @@ begin
 end;
 $$;
 
+drop function if exists public.create_public_backlog_initiative(text, text, text);
 create or replace function public.create_public_backlog_initiative(
   p_slug text,
   p_title text,
-  p_description text default null
+  p_description text default null,
+  p_catalog_item_ids uuid[] default null
 )
 returns public.onboarding_initiatives
 language plpgsql
@@ -1322,6 +1361,8 @@ declare
   target_client_id uuid;
   created_initiative public.onboarding_initiatives;
   next_sort_order integer;
+  selected_item record;
+  next_item_order integer := 0;
 begin
   target_client_id := public.resolve_public_client_id(p_slug);
 
@@ -1331,6 +1372,10 @@ begin
 
   if nullif(trim(coalesce(p_title, '')), '') is null then
     raise exception 'Title is required';
+  end if;
+
+  if coalesce(array_length(p_catalog_item_ids, 1), 0) = 0 then
+    raise exception 'At least one catalog item is required';
   end if;
 
   select coalesce(max(i.sort_order) + 1, 0)
@@ -1375,6 +1420,37 @@ begin
   )
   returning *
   into created_initiative;
+
+  for selected_item in
+    select item.*
+    from public.credit_catalog_items item
+    where item.id = any(p_catalog_item_ids)
+      and item.is_active = true
+    order by item.category, item.sort_order, item.label
+  loop
+    insert into public.onboarding_initiative_subitems (
+      initiative_id,
+      catalog_item_id,
+      name,
+      status,
+      target_date,
+      unit_credits,
+      quantity,
+      sort_order
+    )
+    values (
+      created_initiative.id,
+      selected_item.id,
+      selected_item.label,
+      'pending',
+      null,
+      selected_item.credits,
+      1,
+      next_item_order
+    );
+
+    next_item_order := next_item_order + 1;
+  end loop;
 
   insert into public.onboarding_activity_logs (
     initiative_id,
@@ -1720,7 +1796,7 @@ grant execute on function public.get_client_billing_status(uuid) to authenticate
 revoke execute on function public.record_stripe_checkout_payment(uuid, text, text, integer, text, text, text) from public, anon, authenticated;
 grant execute on function public.record_stripe_checkout_payment(uuid, text, text, integer, text, text, text) to service_role;
 grant execute on function public.get_public_onboarding_snapshot(text) to anon, authenticated;
-grant execute on function public.create_public_backlog_initiative(text, text, text) to anon, authenticated;
+grant execute on function public.create_public_backlog_initiative(text, text, text, uuid[]) to anon, authenticated;
 
 insert into public.credit_catalog_items (category, label, credits, sort_order)
 values

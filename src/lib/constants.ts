@@ -4,6 +4,7 @@ export const APP_NAME = "Everboarding";
 export const PLAN_PRICE_FACTOR = 14.96;
 export const UPSELL_PACK_CREDITS = 12;
 export const UPSELL_PACK_PRICE = 199;
+export const CS_UPSELL_CREDIT_OPTIONS = [40, 60, 80] as const;
 export const REDUCTION_PENALTY_RATE = 0.2;
 export const RISK_INACTIVE_DAYS = 45;
 

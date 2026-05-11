@@ -24,6 +24,7 @@ export async function POST(request: Request, context: RouteContext) {
     const body = (await request.json()) as {
       title?: string;
       description?: string;
+      catalogItemIds?: string[];
     };
 
     if (!body.title?.trim()) {
@@ -33,11 +34,19 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    if (!body.catalogItemIds?.length) {
+      return NextResponse.json(
+        { message: "Selecciona al menos una tarea de la biblioteca." },
+        { status: 400 },
+      );
+    }
+
     const supabase = await createSupabaseServerClient();
     const { data, error } = await supabase.rpc("create_public_backlog_initiative", {
       p_slug: slug,
       p_title: body.title.trim(),
       p_description: body.description?.trim() || null,
+      p_catalog_item_ids: body.catalogItemIds,
     });
 
     if (error || !data) {
@@ -59,6 +68,7 @@ export async function POST(request: Request, context: RouteContext) {
       logs: [],
       credits: 0,
       progressPercent: 0,
+      selected_catalog_item_ids: body.catalogItemIds,
     });
   } catch (caughtError) {
     return NextResponse.json(

@@ -76,6 +76,9 @@ export type OnboardingSnapshot = {
   billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
+  catalogGroups: CreditCatalogGroup[];
+  catalogGroupCategories: CreditCatalogGroupCategory[];
+  catalogGroupMemberships: CreditCatalogGroupItem[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
 };
@@ -85,6 +88,7 @@ export type PublicOnboardingSnapshot = {
   config: OnboardingConfig;
   billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
+  catalog: CreditCatalogItem[];
   paymentEmail: string | null;
 };
 
@@ -164,6 +168,18 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
     updated_at: new Date().toISOString(),
     updated_by_user_id: null,
   };
+}
+
+export function getExtraCapacityCredits(config: Pick<OnboardingConfig, "extra_capacity">) {
+  const extraCapacity = Math.max(0, safeParseNumber(config.extra_capacity));
+
+  // Compatibilidad con registros antiguos donde extra_capacity representaba
+  // la cantidad de paquetes legacy de 12 creditos.
+  if (extraCapacity > 0 && extraCapacity <= 10) {
+    return extraCapacity * 12;
+  }
+
+  return extraCapacity;
 }
 
 export function createDefaultBillingStatus(config: OnboardingConfig): ClientBillingStatus {
@@ -323,9 +339,10 @@ export function calculateMetrics(
 
   const planCredits = getMonthlyContractCredits(config);
   const activeCycles = Math.max(cycles, 1);
+  const extraCapacityCredits = getExtraCapacityCredits(config);
   const total = billing
-    ? billing.active_credits + config.extra_capacity * 12
-    : planCredits * activeCycles + config.extra_capacity * 12;
+    ? billing.active_credits + extraCapacityCredits
+    : planCredits * activeCycles + extraCapacityCredits;
   const lost = config.lost_credits + (billing?.expired_unused_credits ?? 0);
 
   return {

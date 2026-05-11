@@ -105,6 +105,16 @@ export default async function ClientDetailPage({
       .order("sort_order", { ascending: true }),
   ]);
 
+  const [
+    { data: catalogGroupRows },
+    { data: catalogGroupCategoryRows },
+    { data: catalogGroupMembershipRows },
+  ] = await Promise.all([
+    supabase.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
+    supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
+    supabase.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
+  ]);
+
   const subitemRecords = (subitemRows ?? []) as Tables<"onboarding_initiative_subitems">[];
   const logRecords = (logRows ?? []) as Tables<"onboarding_activity_logs">[];
 
@@ -185,6 +195,9 @@ export default async function ClientDetailPage({
         billing: billingRow ?? createDefaultBillingStatus(configRecord),
         initiatives,
         catalog: catalogRows ?? [],
+        catalogGroups: catalogGroupRows ?? [],
+        catalogGroupCategories: catalogGroupCategoryRows ?? [],
+        catalogGroupMemberships: catalogGroupMembershipRows ?? [],
         shareLinks,
         members,
       }}

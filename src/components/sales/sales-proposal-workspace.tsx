@@ -61,6 +61,8 @@ type WizardRecommendation = {
   groupId: string;
   status: WizardRecommendationStatus;
   reason?: string;
+  startDate?: string;
+  endDate?: string;
 };
 
 type WizardRecommendationResponse = {
@@ -69,6 +71,8 @@ type WizardRecommendationResponse = {
     group_id?: string;
     status?: string;
     reason?: string;
+    start_date?: string;
+    end_date?: string;
   }>;
   message?: string;
 };
@@ -259,7 +263,20 @@ function scheduleRecommendedInitiatives(
   };
 
   nextInitiatives
-    .filter((initiative) => targetIds.has(initiative.id) && initiative.id !== kickoff.id)
+    .filter((initiative) => targetIds.has(initiative.id) && initiative.status === "backlog")
+    .forEach((initiative) => {
+      initiative.estStartDate = "";
+      initiative.estEndDate = "";
+    });
+
+  nextInitiatives
+    .filter(
+      (initiative) =>
+        targetIds.has(initiative.id) &&
+        initiative.id !== kickoff.id &&
+        initiative.status !== "backlog" &&
+        (!initiative.estStartDate || !initiative.estEndDate),
+    )
     .sort((left, right) => {
       const priorityDelta = statusPriority[left.status] - statusPriority[right.status];
       if (priorityDelta !== 0) return priorityDelta;
@@ -669,6 +686,7 @@ export function SalesProposalWorkspace({
     group: CatalogModalGroup,
     status: InitiativeStatus,
     sortOrder: number,
+    schedule?: { startDate?: string; endDate?: string },
   ) {
     const next = createEmptySalesInitiative(status);
     next.id = createLocalId("sales-initiative");
@@ -689,8 +707,8 @@ export function SalesProposalWorkspace({
             quantity: 1,
           },
         ];
-    next.estStartDate = proposal.startDate;
-    next.estEndDate = proposal.startDate;
+    next.estStartDate = status === "backlog" ? "" : (schedule?.startDate || proposal.startDate);
+    next.estEndDate = status === "backlog" ? "" : (schedule?.endDate || schedule?.startDate || proposal.startDate);
     next.sortOrder = sortOrder;
 
     return next;
@@ -826,12 +844,23 @@ export function SalesProposalWorkspace({
     let nextSortOrder = proposal.initiatives.length;
     const groupById = new Map(catalogGroups.map((group) => [group.id, group]));
 
-    const pushInitiativeFromGroup = (group: CatalogModalGroup | null, status: InitiativeStatus) => {
+    const pushInitiativeFromGroup = (
+      group: CatalogModalGroup | null,
+      recommendation: WizardRecommendation,
+    ) => {
       if (!group || existingTitles.has(normalizeCatalogText(group.name))) {
         return;
       }
 
-      const initiative = createInitiativeFromGroup(group, status, nextSortOrder);
+      const initiative = createInitiativeFromGroup(
+        group,
+        recommendation.status,
+        nextSortOrder,
+        {
+          startDate: recommendation.startDate,
+          endDate: recommendation.endDate,
+        },
+      );
 
       nextSortOrder += 1;
       existingTitles.add(normalizeCatalogText(group.name));
@@ -849,7 +878,7 @@ export function SalesProposalWorkspace({
 
     recommendations.forEach((recommendation) => {
       const group = groupById.get(recommendation.groupId) ?? null;
-      pushInitiativeFromGroup(group, recommendation.status);
+      pushInitiativeFromGroup(group, recommendation);
     });
 
     const scheduledInitiatives = scheduleRecommendedInitiatives(
@@ -973,21 +1002,18 @@ export function SalesProposalWorkspace({
               : null;
 
           return recommendation.group_id && normalizedStatus
-            ? [{
-                groupId: recommendation.group_id,
-                status: normalizedStatus,
-                reason: recommendation.reason,
-              }]
-            : [];
+              ? [{
+                  groupId: recommendation.group_id,
+                  status: normalizedStatus,
+                  reason: recommendation.reason,
+                  startDate: recommendation.start_date,
+                  endDate: recommendation.end_date,
+                }]
+              : [];
         },
       );
 
-      const budgetAwareRecommendations = fitRecommendationsToCreditBudget(
-        normalizedRecommendations,
-        remainingRecommendationCredits,
-      );
-
-      if (!budgetAwareRecommendations.length) {
+      if (!normalizedRecommendations.length) {
         applyDefaultWizardRecommendations(
           "Claude no devolvio grupos validos. Aplicamos la recomendacion base del catalogo.",
         );
@@ -995,7 +1021,7 @@ export function SalesProposalWorkspace({
       }
 
       mergeRecommendedGroups(
-        budgetAwareRecommendations,
+        normalizedRecommendations,
         "Plan agregado exitosamente.",
       );
     } catch (caughtError) {

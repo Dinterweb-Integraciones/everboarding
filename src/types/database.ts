@@ -803,9 +803,10 @@ export type Database = {
       };
       create_public_backlog_initiative: {
         Args: {
+          p_catalog_item_ids?: string[] | null;
+          p_description: string | null;
           p_slug: string;
           p_title: string;
-          p_description: string | null;
         };
         Returns: Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
       };

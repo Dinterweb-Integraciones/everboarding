@@ -5,8 +5,8 @@ import {
   CalendarDays,
   Copy,
   Download,
-  PencilLine,
   Link2,
+  Loader2,
   Plus,
   ShieldCheck,
   Sparkles,
@@ -22,12 +22,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  PLAN_TIER_OPTIONS,
+  CS_UPSELL_CREDIT_OPTIONS,
   RISK_INACTIVE_DAYS,
   STAGE_META,
   STATUS_META,
   TASK_STATUS_META,
-  UPSELL_PACK_CREDITS,
 } from "@/lib/constants";
 import {
   calculateCredits,
@@ -37,12 +36,15 @@ import {
   canEdit,
   createEmptyDraft,
   formatDateRange,
+  getExtraCapacityCredits,
   getEstimatedStatus,
   getMonthlyContractCredits,
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
   suggestPlanPrice,
+  type CreditCatalogGroupItem,
+  type CreditCatalogItem,
   type CustomPlanBillingMode,
   type PlanPeriodMonths,
   type InitiativeEditorDraft,
@@ -61,9 +63,66 @@ type OnboardingClientPageProps = {
   userId: string;
 };
 
+type CatalogModalGroup = {
+  id: string;
+  name: string;
+  description: string;
+  modalCategoryId: string | null;
+  modalCategory: string;
+  priorityStatus: "normal" | "prioritario";
+  credits: number;
+  sortOrder: number;
+  items: CreditCatalogItem[];
+};
+
+type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
+
+type WizardRecommendation = {
+  groupId: string;
+  status: WizardRecommendationStatus;
+  reason?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+type WizardRecommendationResponse = {
+  summary?: string;
+  recommendations?: Array<{
+    group_id?: string;
+    status?: string;
+    reason?: string;
+    start_date?: string;
+    end_date?: string;
+  }>;
+  message?: string;
+};
+
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
 const taskStatusSequence: InitiativeTaskStatus[] = ["pending", "in_progress", "blocked", "completed"];
+const WIZARD_LOADING_MESSAGES = [
+  "Analizando el contexto brindado...",
+  "Definiendo prioridades...",
+  "Organizando Plan de Trabajo...",
+  "Afinando ultimos detalles...",
+];
+
+async function parseJsonResponse<T>(response: Response) {
+  const rawText = await response.text();
+  const trimmed = rawText.trim();
+
+  if (!trimmed) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    throw new Error(
+      `La API devolvio JSON invalido (${response.status}). Respuesta inicial: ${trimmed.slice(0, 400)}`,
+    );
+  }
+}
 
 function isReservedStatus(status: InitiativeStatus) {
   return status === "planned" || status === "executing";
@@ -74,6 +133,34 @@ function getStatusDot(status: InitiativeStatus) {
   if (status === "planned") return "bg-indigo-500";
   if (status === "completed") return "bg-slate-700";
   return "bg-slate-300";
+}
+
+function normalizeCatalogText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
+  return priorityStatus === "prioritario" ? 0 : 1;
+}
+
+function getCustomerSuccessTimelineBarClass(status: InitiativeStatus) {
+  if (status === "executing") {
+    return "bg-[#14b8a6] text-white shadow-[0_6px_14px_rgba(20,184,166,0.18)]";
+  }
+
+  if (status === "planned") {
+    return "bg-[#6a78d1] text-white shadow-[0_6px_14px_rgba(106,120,209,0.18)]";
+  }
+
+  if (status === "completed") {
+    return "bg-[#33475b] text-white shadow-[0_6px_14px_rgba(51,71,91,0.16)]";
+  }
+
+  return "border border-dashed border-[#8ea2bd] bg-white text-[#5f7695] shadow-none";
 }
 
 function getPanelStatusBadgeClass(status: InitiativeStatus) {
@@ -257,6 +344,18 @@ export function OnboardingClientPage({
   const [isClearingBoard, setIsClearingBoard] = useState(false);
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
+  const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
+  const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
+  const [selectedUpsellCredits, setSelectedUpsellCredits] = useState<number>(CS_UPSELL_CREDIT_OPTIONS[0]);
+  const [customUpsellCredits, setCustomUpsellCredits] = useState("");
+  const [upsellQuantity, setUpsellQuantity] = useState(0);
+  const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+  const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
+  const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
+  const [wizardHubs, setWizardHubs] = useState<string[]>([]);
+  const [wizardPortalState, setWizardPortalState] = useState<"new" | "optimize">("new");
+  const [wizardContext, setWizardContext] = useState("");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const [offerDraft, setOfferDraft] = useState<{
     credits: number;
@@ -313,7 +412,6 @@ export function OnboardingClientPage({
   }, [initiatives]);
 
   const negotiatedPlanCredits = config.custom_plan_credits ?? config.base_capacity;
-  const negotiatedMonthlyCredits = getMonthlyContractCredits(config);
   const negotiatedPlanPeriodMonths = (config.custom_plan_period_months ?? 1) as PlanPeriodMonths;
   const negotiatedPlanPrice = Number(config.custom_plan_price ?? suggestPlanPrice(negotiatedPlanCredits));
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
@@ -321,7 +419,6 @@ export function OnboardingClientPage({
     negotiatedPlanBillingMode === "subscription"
       ? getPlanCadenceLabel(negotiatedPlanPeriodMonths)
       : getPlanBillingModeLabel(negotiatedPlanBillingMode);
-  const negotiatedPlanPeriodLabel = getPlanPeriodLabel(negotiatedPlanPeriodMonths);
 
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, typeof initialData.catalog>();
@@ -334,6 +431,109 @@ export function OnboardingClientPage({
 
     return Array.from(grouped.entries());
   }, [initialData]);
+  const currentExtraCapacityCredits = useMemo(() => getExtraCapacityCredits(config), [config]);
+
+  const catalogGroups = useMemo(() => {
+    const itemById = new Map(initialData.catalog.map((item) => [item.id, item]));
+    const groupCategoriesById = new Map(
+      initialData.catalogGroupCategories.map((category) => [category.id, category] as const),
+    );
+    const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
+
+    initialData.catalogGroupMemberships.forEach((membership) => {
+      const bucket = membershipsByGroup.get(membership.group_id) ?? [];
+      bucket.push(membership);
+      membershipsByGroup.set(membership.group_id, bucket);
+    });
+
+    return initialData.catalogGroups
+      .filter((group) => group.is_active)
+      .map((group) => {
+        const selectedCategory = group.modal_category_id
+          ? groupCategoriesById.get(group.modal_category_id) ?? null
+          : null;
+        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
+        const items = (membershipsByGroup.get(group.id) ?? [])
+          .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
+          .map((membership) => itemById.get(membership.catalog_item_id))
+          .filter((item): item is CreditCatalogItem => Boolean(item));
+        const credits = items.length
+          ? items.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
+          : Math.max(0, safeParseNumber(group.credits));
+
+        return {
+          id: group.id,
+          name: group.name,
+          description: group.description?.trim() || "",
+          modalCategoryId: selectedCategory?.id ?? null,
+          modalCategory,
+          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
+          credits,
+          sortOrder: safeParseNumber(group.sort_order),
+          items,
+        } satisfies CatalogModalGroup;
+      })
+      .sort(
+        (left, right) =>
+          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+      );
+  }, [initialData]);
+
+  const catalogGroupOptions = useMemo(() => {
+    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
+    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
+
+    catalogGroups.forEach((group) => {
+      if (group.modalCategoryId) {
+        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
+        bucket.push(group);
+        groupedByCategoryId.set(group.modalCategoryId, bucket);
+        return;
+      }
+
+      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
+      bucket.push(group);
+      groupedLegacy.set(group.modalCategory, bucket);
+    });
+
+    const orderedCategoryTabs = initialData.catalogGroupCategories
+      .filter((category) => category.is_active)
+      .map((category) => ({
+        id: category.id,
+        label: category.name,
+        sortOrder: safeParseNumber(category.sort_order),
+        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+        ),
+      }))
+      .filter((category) => category.groups.length > 0)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
+
+    const legacyTabs = Array.from(groupedLegacy.entries())
+      .map(([category, groups]) => ({
+        id: `legacy:${category}`,
+        label: category,
+        sortOrder: Number.MAX_SAFE_INTEGER,
+        groups: [...groups].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+        ),
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label, "es"));
+
+    return [...orderedCategoryTabs, ...legacyTabs];
+  }, [catalogGroups, initialData]);
+  const catalogTabs = useMemo(
+    () => [
+      { id: "wizard", label: "Guía de Activación" },
+      ...catalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
+    ],
+    [catalogGroupOptions],
+  );
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
@@ -460,6 +660,13 @@ export function OnboardingClientPage({
       available: (Math.max(metrics.available, 0) / total) * 100,
     };
   }, [metrics.available, metrics.consumed, metrics.lost, metrics.reserved, metrics.total]);
+  const hasPlanningItems = groupedInitiatives.backlog.length > 0 || groupedInitiatives.planned.length > 0;
+  const defaultCatalogLibraryTab =
+    catalogTabs.find((tab) => tab.id !== "wizard")?.id ?? "wizard";
+  const currentPlanCredits = metrics.reserved + metrics.consumed;
+  const remainingRecommendationCredits = Math.max(0, metrics.available);
+  const wizardLoadingMessage =
+    WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
 
   useEffect(() => {
     if (!ganttDrag) return;
@@ -511,6 +718,23 @@ export function OnboardingClientPage({
     };
   }, [ganttDrag, ganttTimeline.dayWidth, initiatives]);
 
+  useEffect(() => {
+    if (!isGeneratingWizardPlan) {
+      setWizardLoadingMessageIndex(0);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setWizardLoadingMessageIndex((current) =>
+        current < WIZARD_LOADING_MESSAGES.length - 1 ? current + 1 : current,
+      );
+    }, 1800);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isGeneratingWizardPlan]);
+
   function showError(message: string | null) {
     setFeedback(
       message
@@ -551,6 +775,13 @@ export function OnboardingClientPage({
     setIsOfferModalOpen(true);
   }
 
+  function openUpsellModal() {
+    setSelectedUpsellCredits(CS_UPSELL_CREDIT_OPTIONS[0]);
+    setCustomUpsellCredits("");
+    setUpsellQuantity(0);
+    setIsUpsellModalOpen(true);
+  }
+
   function applyOfferDraft() {
     setConfig((current) => ({
       ...current,
@@ -568,6 +799,129 @@ export function OnboardingClientPage({
     }));
     setIsOfferModalOpen(false);
     showSuccess("Oferta configurada. Recuerda guardar los ajustes.");
+  }
+
+  function closeUpsellModal() {
+    setIsUpsellModalOpen(false);
+  }
+
+  function getResolvedUpsellCredits() {
+    if (selectedUpsellCredits === -1) {
+      return Math.max(0, safeParseNumber(customUpsellCredits));
+    }
+
+    return selectedUpsellCredits;
+  }
+
+  function confirmUpsellCredits() {
+    const resolvedCredits = getResolvedUpsellCredits();
+    if (!upsellQuantity || resolvedCredits <= 0) {
+      closeUpsellModal();
+      return;
+    }
+
+    const creditsToAdd = resolvedCredits * upsellQuantity;
+    setConfig((current) => ({
+      ...current,
+      extra_capacity: getExtraCapacityCredits(current) + creditsToAdd,
+    }));
+    showSuccess(`Capacidad incrementada en ${creditsToAdd} creditos. Recuerda guardar los ajustes.`);
+    closeUpsellModal();
+  }
+
+  function toggleWizardHub(hub: string) {
+    setWizardHubs((current) =>
+      current.includes(hub) ? current.filter((value) => value !== hub) : [...current, hub],
+    );
+  }
+
+  function openCatalogModal(tab?: string) {
+    const nextTab = tab ?? (hasPlanningItems ? defaultCatalogLibraryTab : "wizard");
+    setActiveCatalogTab(nextTab);
+    setCatalogPreviewGroup(null);
+    setIsCatalogModalOpen(true);
+  }
+
+  function closeCatalogModal() {
+    setIsCatalogModalOpen(false);
+    setCatalogPreviewGroup(null);
+  }
+
+  function openCatalogGroupPreview(group: CatalogModalGroup) {
+    setCatalogPreviewGroup(group);
+  }
+
+  function closeCatalogGroupPreview() {
+    setCatalogPreviewGroup(null);
+  }
+
+  function findCatalogGroupsByCategory(category: string) {
+    return (
+      catalogGroupOptions.find(
+        (entry) => normalizeCatalogText(entry.label) === normalizeCatalogText(category),
+      )?.groups ?? []
+    );
+  }
+
+  function fitRecommendationsToCreditBudget(
+    recommendations: WizardRecommendation[],
+    creditBudget: number,
+  ) {
+    const groupsById = new Map(catalogGroups.map((group) => [group.id, group]));
+    const existingTitles = new Set(
+      initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
+    );
+    let usedCredits = 0;
+
+    return recommendations.filter((recommendation) => {
+      const group = groupsById.get(recommendation.groupId);
+      if (!group) {
+        return false;
+      }
+
+      if (existingTitles.has(normalizeCatalogText(group.name))) {
+        return false;
+      }
+
+      const groupCredits = Math.max(0, safeParseNumber(group.credits));
+      if (groupCredits === 0 || recommendation.status === "backlog") {
+        return true;
+      }
+
+      if (usedCredits + groupCredits > creditBudget) {
+        return false;
+      }
+
+      usedCredits += groupCredits;
+      return true;
+    });
+  }
+
+  function buildDefaultWizardRecommendations() {
+    const recommendations: WizardRecommendation[] = [];
+
+    findCatalogGroupsByCategory("Fundamentales")
+      .slice(0, 2)
+      .forEach((group) => {
+        recommendations.push({
+          groupId: group.id,
+          status: "planned",
+        });
+      });
+
+    wizardHubs.forEach((hub, index) => {
+      const categoryGroups = findCatalogGroupsByCategory(hub);
+      const preferredCount = wizardPortalState === "optimize" ? (index === 0 ? 3 : 2) : 2;
+
+      categoryGroups.slice(0, preferredCount).forEach((group, itemIndex) => {
+        recommendations.push({
+          groupId: group.id,
+          status: index === 0 && itemIndex < 2 ? "planned" : "backlog",
+        });
+      });
+    });
+
+    return recommendations;
   }
 
   async function persistConfig(nextConfig: typeof config, successMessage?: string) {
@@ -774,6 +1128,305 @@ export function OnboardingClientPage({
       ...draft,
       subitems: draft.subitems.filter((_, itemIndex) => itemIndex !== index),
     });
+  }
+
+  async function insertCatalogGroupInitiative(
+    group: CatalogModalGroup,
+    status: InitiativeStatus,
+    options?: {
+      estStartDate?: string | null;
+      estEndDate?: string | null;
+      logEntry?: string;
+      sortOrder?: number;
+    },
+  ) {
+    const nowDate = toIsoDate();
+    const { data: insertedInitiative, error: insertError } = await supabase
+      .from("onboarding_initiatives")
+      .insert({
+        client_id: client.id,
+        title: group.name,
+        type: group.modalCategory || group.name,
+        status,
+        description: group.description || null,
+        owner_client: null,
+        owner_csm: null,
+        est_start_date: options?.estStartDate ?? null,
+        est_end_date: options?.estEndDate ?? null,
+        date_planned: nowDate,
+        last_activity: nowDate,
+        is_blocked: false,
+        sort_order: options?.sortOrder ?? groupedInitiatives[status].length,
+        created_by_user_id: userId,
+        updated_by_user_id: userId,
+      })
+      .select("*")
+      .single();
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    const subitemsPayload = (group.items.length
+      ? group.items.map((item, index) => ({
+          initiative_id: insertedInitiative.id,
+          catalog_item_id: item.id,
+          name: item.label,
+          status: "pending" as const,
+          target_date: null,
+          unit_credits: item.credits,
+          quantity: 1,
+          sort_order: index,
+        }))
+      : [{
+          initiative_id: insertedInitiative.id,
+          catalog_item_id: null,
+          name: group.name,
+          status: "pending" as const,
+          target_date: null,
+          unit_credits: Math.max(1, safeParseNumber(group.credits)),
+          quantity: 1,
+          sort_order: 0,
+        }]);
+
+    const { data: insertedSubitems, error: subitemsError } = await supabase
+      .from("onboarding_initiative_subitems")
+      .insert(subitemsPayload)
+      .select("*");
+
+    if (subitemsError) {
+      throw subitemsError;
+    }
+
+    const { data: insertedLogs, error: logsError } = await supabase
+      .from("onboarding_activity_logs")
+      .insert({
+        initiative_id: insertedInitiative.id,
+        entry: options?.logEntry ?? "Grupo agregado desde catalogo.",
+        created_by_user_id: userId,
+      })
+      .select("*");
+
+    if (logsError) {
+      throw logsError;
+    }
+
+    return {
+      ...insertedInitiative,
+      subitems: (insertedSubitems ?? []).sort(
+        (left: { sort_order: number }, right: { sort_order: number }) =>
+          left.sort_order - right.sort_order,
+      ),
+      logs: insertedLogs ?? [],
+      credits: calculateCredits(insertedSubitems ?? []),
+      progressPercent: calculateInitiativeProgress(insertedSubitems ?? []),
+    };
+  }
+
+  async function persistWizardRecommendations(
+    recommendations: WizardRecommendation[],
+    feedbackMessage: string,
+  ) {
+    const groupById = new Map(catalogGroups.map((group) => [group.id, group]));
+    const existingTitles = new Set(
+      initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
+    );
+    const sortOrderByStatus = {
+      backlog: groupedInitiatives.backlog.length,
+      planned: groupedInitiatives.planned.length,
+      executing: groupedInitiatives.executing.length,
+      completed: groupedInitiatives.completed.length,
+    } satisfies Record<InitiativeStatus, number>;
+    const insertedInitiatives: InitiativeRecord[] = [];
+    let remainingCredits = metrics.available;
+
+    for (const recommendation of recommendations) {
+      const group = groupById.get(recommendation.groupId);
+      if (!group) continue;
+
+      const normalizedTitle = normalizeCatalogText(group.name);
+      if (existingTitles.has(normalizedTitle)) {
+        continue;
+      }
+
+      const groupCredits = Math.max(0, safeParseNumber(group.credits));
+      let nextStatus: InitiativeStatus = recommendation.status;
+
+      if (nextStatus !== "backlog" && !canUseReservedStage(nextStatus)) {
+        nextStatus = "backlog";
+      }
+
+      if (nextStatus !== "backlog" && nextStatus !== "completed") {
+        if (groupCredits > remainingCredits) {
+          nextStatus = "backlog";
+        } else {
+          remainingCredits -= groupCredits;
+        }
+      }
+
+      const initiative = await insertCatalogGroupInitiative(group, nextStatus, {
+        estStartDate: nextStatus === "backlog" ? null : recommendation.startDate ?? null,
+        estEndDate: nextStatus === "backlog" ? null : recommendation.endDate ?? null,
+        logEntry: recommendation.reason
+          ? `Grupo agregado desde guia inteligente. ${recommendation.reason}`
+          : "Grupo agregado desde guia inteligente.",
+        sortOrder: sortOrderByStatus[nextStatus],
+      });
+
+      sortOrderByStatus[nextStatus] += 1;
+      existingTitles.add(normalizedTitle);
+      insertedInitiatives.push(initiative);
+    }
+
+    if (!insertedInitiatives.length) {
+      showError("No encontramos grupos nuevos para agregar con la guia inteligente.");
+      return;
+    }
+
+    setInitiatives((current) => [...current, ...insertedInitiatives]);
+    setActiveCatalogTab(defaultCatalogLibraryTab);
+    setCatalogPreviewGroup(null);
+    setIsCatalogModalOpen(false);
+    showSuccess(feedbackMessage);
+  }
+
+  async function applyDefaultWizardRecommendations(message = "Plan agregado exitosamente.") {
+    const budgetAwareRecommendations = fitRecommendationsToCreditBudget(
+      buildDefaultWizardRecommendations(),
+      remainingRecommendationCredits,
+    );
+
+    await persistWizardRecommendations(
+      budgetAwareRecommendations,
+      budgetAwareRecommendations.length
+        ? message
+        : `${message} No agregamos casos adicionales porque superarian los creditos disponibles.`,
+    );
+  }
+
+  async function applyWizardRecommendations() {
+    if (!wizardHubs.length) {
+      showError("Completa la Guia de Activacion antes de generar el plan.");
+      return;
+    }
+
+    setFeedback(null);
+    setIsGeneratingWizardPlan(true);
+
+    try {
+      const response = await fetch("/api/sales-proposals/recommend-groups", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          startDate: config.start_date,
+          selectedHubs: wizardHubs,
+          portalState: wizardPortalState,
+          context: wizardContext,
+          contractedCredits: metrics.total,
+          currentPlanCredits,
+          remainingRecommendationCredits,
+          groups: catalogGroups.map((group) => ({
+            id: group.id,
+            name: group.name,
+            description: group.description,
+            modalCategory: group.modalCategory,
+            priorityStatus: group.priorityStatus,
+            credits: group.credits,
+            tasks: group.items.map((item) => ({
+              id: item.id,
+              label: item.label,
+              category: item.category,
+              credits: item.credits,
+            })),
+          })),
+        }),
+      });
+
+      const payload = await parseJsonResponse<WizardRecommendationResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos generar la recomendacion inteligente.");
+      }
+
+      const normalizedRecommendations: WizardRecommendation[] = (payload.recommendations ?? []).flatMap(
+        (recommendation) => {
+          const normalizedStatus =
+            recommendation.status === "executing" ||
+            recommendation.status === "planned" ||
+            recommendation.status === "backlog"
+              ? recommendation.status
+              : null;
+
+          return recommendation.group_id && normalizedStatus
+            ? [{
+                groupId: recommendation.group_id,
+                status: normalizedStatus,
+                reason: recommendation.reason,
+                startDate: recommendation.start_date,
+                endDate: recommendation.end_date,
+              }]
+            : [];
+        },
+      );
+
+      if (!normalizedRecommendations.length) {
+        await applyDefaultWizardRecommendations(
+          "Claude no devolvio grupos validos. Aplicamos la recomendacion base del catalogo.",
+        );
+        return;
+      }
+
+      await persistWizardRecommendations(normalizedRecommendations, "Plan agregado exitosamente.");
+    } catch (caughtError) {
+      console.error("customer_success_wizard_recommendations_failed", caughtError);
+      await applyDefaultWizardRecommendations(
+        `No pudimos consultar Claude. Usamos la recomendacion base. ${formatUserError(caughtError, "")}`.trim(),
+      );
+    } finally {
+      setIsGeneratingWizardPlan(false);
+    }
+  }
+
+  async function addCatalogGroupInitiative(group: CatalogModalGroup, status: InitiativeStatus) {
+    if (!writable) return;
+
+    if (!canUseReservedStage(status)) {
+      showPaymentRequiredMessage();
+      return;
+    }
+
+    if (
+      status !== "backlog" &&
+      status !== "completed" &&
+      Math.max(0, safeParseNumber(group.credits)) > metrics.available
+    ) {
+      showError(`Capacidad insuficiente. Faltan ${group.credits - metrics.available} creditos.`);
+      return;
+    }
+
+    if (initiatives.some((initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name))) {
+      showError("Ese grupo ya existe en el plan de trabajo.");
+      return;
+    }
+
+    setFeedback(null);
+    setIsSavingInitiative(true);
+
+    try {
+      const insertedInitiative = await insertCatalogGroupInitiative(group, status);
+
+      setInitiatives((current) => [...current, insertedInitiative]);
+      closeCatalogModal();
+      showSuccess("Grupo agregado al plan de trabajo.");
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error ? caughtError.message : "No fue posible agregar el grupo.",
+      );
+    } finally {
+      setIsSavingInitiative(false);
+    }
   }
 
   async function quickAddInitiative(status: InitiativeStatus) {
@@ -1551,130 +2204,156 @@ export function OnboardingClientPage({
                 </span>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-end gap-6 text-[11px] font-medium">
-                <div className="flex items-baseline gap-1.5">
+              <div className="mt-3 grid grid-cols-5 gap-3 text-[10px] font-medium sm:gap-4 sm:text-[11px] lg:gap-5">
+                <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Disponibles</span>
-                  <span className="text-[16px] font-bold text-[#00bda5]">{metrics.available} créditos</span>
+                  <span className="ml-1.5 text-[14px] font-bold text-[#00bda5] sm:text-[15px] xl:text-[16px]">
+                    {metrics.available} créditos
+                  </span>
                 </div>
-                <div className="flex items-baseline gap-1.5">
+                <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Comprometidos</span>
-                  <span className="text-[16px] font-bold text-[#6a78d1]">{metrics.reserved} créditos</span>
+                  <span className="ml-1.5 text-[14px] font-bold text-[#6a78d1] sm:text-[15px] xl:text-[16px]">
+                    {metrics.reserved} créditos
+                  </span>
                 </div>
-                <div className="flex items-baseline gap-1.5">
+                <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Completados</span>
-                  <span className="text-[16px] font-bold text-[#33475b]">{metrics.consumed} créditos</span>
+                  <span className="ml-1.5 text-[14px] font-bold text-[#33475b] sm:text-[15px] xl:text-[16px]">
+                    {metrics.consumed} créditos
+                  </span>
                 </div>
-                <div className="flex items-baseline gap-1.5">
+                <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Aprovechamiento</span>
-                  <span className="text-[16px] font-bold text-[#6a78d1]">
+                  <span className="ml-1.5 text-[14px] font-bold text-[#6a78d1] sm:text-[15px] xl:text-[16px]">
                     {metrics.total ? Math.round(((metrics.reserved + metrics.consumed) / metrics.total) * 100) : 0}%
                   </span>
                 </div>
-                <div className="flex items-baseline gap-1.5">
+                <div className="min-w-0 whitespace-nowrap text-right">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Deducidos</span>
-                  <span className="text-[16px] font-bold text-[#94a3b8]">{metrics.lost} créditos</span>
+                  <span className="ml-1.5 text-[14px] font-bold text-[#94a3b8] sm:text-[15px] xl:text-[16px]">
+                    {metrics.lost} créditos
+                  </span>
                 </div>
               </div>
 
             </div>
 
             {writable ? (
-              <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
-                {ownerCanShare ? (
-                  <>
+              activeStage === "cs" ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold text-[#516f90]">
+                  <div className="flex items-center gap-3">
+                    {ownerCanShare ? (
+                      <Button
+                        variant="secondary"
+                        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+                        onClick={() => copyPublicOnboardingLink("client")}
+                      >
+                        <Link2 className="mr-2 h-3.5 w-3.5" />
+                        Copiar link para cliente
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
                     <Button
-                      variant="secondary"
-                      className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
-                      onClick={() => copyPublicOnboardingLink("client")}
+                      className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
+                      onClick={saveConfig}
+                      disabled={isSavingConfig}
                     >
-                      <Link2 className="mr-2 h-3.5 w-3.5" />
-                      Copiar link para cliente
+                      {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
                     </Button>
                     <Button
-                      variant="secondary"
-                      className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#ffb49f] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
-                      onClick={() => copyPublicOnboardingLink("prospect")}
+                      className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
+                      onClick={saveClientMeta}
+                      disabled={isSavingMeta}
                     >
-                      <Link2 className="mr-2 h-3.5 w-3.5" />
-                      Copiar link para prospecto
+                      {isSavingMeta ? "Guardando..." : "Guardar cliente"}
                     </Button>
-                    <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => setIsClearModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 transition hover:text-[#ef4444]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Limpiar
-                </button>
-                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <div className="flex items-center gap-2">
-                  <span>Oferta:</span>
-                  <span className="text-[#33475b]">
-                    {negotiatedPlanCredits} CR por {negotiatedPlanPeriodLabel} ·{" "}
-                    {negotiatedMonthlyCredits} CR/mes · {formatCurrency(negotiatedPlanPrice)}
-                  </span>
-                  {false ? (
-                  <Select
-                    value={String(config.base_capacity)}
-                    onChange={(event) =>
-                      setConfig((current) => ({
-                        ...current,
-                        base_capacity: safeParseNumber(event.target.value),
-                      }))
-                    }
-                    className="h-9 min-w-[176px] rounded-[3px] border-[#cbd6e2] bg-transparent px-3 py-1 text-[11px] font-bold"
-                  >
-                    {PLAN_TIER_OPTIONS.map((plan) => (
-                      <option key={plan} value={plan}>
-                        {plan} créditos
-                      </option>
-                    ))}
-                  </Select>
-                  ) : null}
+                  </div>
                 </div>
-                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <button
-                  type="button"
-                  onClick={openOfferModal}
-                  className="inline-flex items-center gap-1.5 transition hover:text-[#33475b]"
-                >
-                  <PencilLine className="h-3.5 w-3.5" />
-                  Configurar oferta
-                </button>
-                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setConfig((current) => ({
-                      ...current,
-                      extra_capacity: current.extra_capacity + 1,
-                    }))
-                  }
-                  className="inline-flex items-center gap-1.5 text-[#ff7a59] transition hover:text-[#dc6548]"
-                >
-                  <span className="text-[14px] leading-none">+</span>
-                  Añadir +{UPSELL_PACK_CREDITS} créditos
-                </button>
-                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <Button
-                  className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
-                  onClick={saveConfig}
-                  disabled={isSavingConfig}
-                >
-                  {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
-                </Button>
-                <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <Button
-                  className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
-                  onClick={saveClientMeta}
-                  disabled={isSavingMeta}
-                >
-                  {isSavingMeta ? "Guardando..." : "Guardar cliente"}
-                </Button>
-              </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
+                  {ownerCanShare ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+                        onClick={() => copyPublicOnboardingLink("client")}
+                      >
+                        <Link2 className="mr-2 h-3.5 w-3.5" />
+                        Copiar link para cliente
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#ffb49f] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
+                        onClick={() => copyPublicOnboardingLink("prospect")}
+                      >
+                        <Link2 className="mr-2 h-3.5 w-3.5" />
+                        Copiar link para prospecto
+                      </Button>
+                      <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setIsClearModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 transition hover:text-[#ef4444]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Limpiar
+                  </button>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <div className="flex items-center gap-2">
+                    <span>Oferta:</span>
+                    <span className="text-[#33475b]">
+                      {negotiatedPlanCredits} CR · {formatCurrency(negotiatedPlanPrice)}
+                    </span>
+                  </div>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={openOfferModal}
+                    className="inline-flex items-center gap-1.5 transition hover:text-[#33475b]"
+                  >
+                    Configurar oferta
+                  </button>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={openUpsellModal}
+                    className="inline-flex items-center gap-1.5 text-[#ff7a59] transition hover:text-[#dc6548]"
+                  >
+                    <span className="text-[14px] leading-none">+</span>
+                    Añadir paquetes de créditos
+                  </button>
+                  <span className="text-[#9cb1c6]">{currentExtraCapacityCredits} CR extra</span>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
+                    className="inline-flex items-center gap-1.5 transition hover:text-[#33475b]"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Agregar grupo
+                  </button>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <Button
+                    className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
+                    onClick={saveConfig}
+                    disabled={isSavingConfig}
+                  >
+                    {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
+                  </Button>
+                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
+                  <Button
+                    className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
+                    onClick={saveClientMeta}
+                    disabled={isSavingMeta}
+                  >
+                    {isSavingMeta ? "Guardando..." : "Guardar cliente"}
+                  </Button>
+                </div>
+              )
             ) : (
               <div className="flex items-center justify-end">
                 <span className="rounded-[3px] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90]">
@@ -1706,6 +2385,7 @@ export function OnboardingClientPage({
             </div>
           </div>
 
+          {activeStage === "cs" ? null : (
           <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr]">
             <label className="space-y-2 xl:col-span-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">
@@ -1769,6 +2449,7 @@ export function OnboardingClientPage({
               </div>
             </label>
           </div>
+          )}
         </div>
       </div>
 
@@ -1819,6 +2500,35 @@ export function OnboardingClientPage({
       ) : null}
 
       <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
+        {activeStage === "cs" && writable ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-[#dfe3eb] bg-white px-4 py-3 shadow-sm">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
+                Acciones del plan
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[11px] font-bold text-[#516f90]">
+                {currentExtraCapacityCredits} CR extra
+              </span>
+              <Button
+                variant="secondary"
+                className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+                onClick={openUpsellModal}
+              >
+                <Plus className="mr-2 h-3.5 w-3.5" />
+                Añadir paquetes de créditos
+              </Button>
+              <Button
+                className="h-10 rounded-[8px] bg-[#14b8a6] px-4 text-[12px] font-semibold text-white hover:bg-[#0ea899]"
+                onClick={() => openCatalogModal("wizard")}
+              >
+                <Sparkles className="mr-2 h-3.5 w-3.5" />
+                Guía inteligente
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <div className="overflow-x-auto overflow-y-hidden">
           <div className="flex min-h-[270px] min-w-max gap-4">
             {boardStatuses.map((status) => {
@@ -2088,14 +2798,14 @@ export function OnboardingClientPage({
       </section>
 
       <section className="bg-white px-6 py-10">
-        <div className="mx-auto max-w-[1050px]">
-          <div className="flex flex-col gap-4 border-b border-[#dfe3eb] pb-5 md:flex-row md:items-end md:justify-between">
+        <div className="mx-auto max-w-[1400px]">
+          <div className="flex flex-col gap-4 border-b border-[#dfe3eb] pb-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <div className="flex items-center gap-2 text-[18px] font-bold text-[#33475b]">
-                <CalendarDays className="h-4 w-4 text-[#00bda5]" />
+              <h2 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-[#33475b]">
+                <CalendarDays className="h-5 w-5 text-[#00bda5]" />
                 <span>Plan de Trabajo</span>
-              </div>
-              <p className="mt-2 text-[12px] text-[#516f90]">
+              </h2>
+              <p className="mt-2 text-[13px] text-[#516f90]">
                 Proyeccion estrategica inicial. Puedes mover las iniciativas en el gantt y las fechas se sincronizan con su tarjeta.
               </p>
             </div>
@@ -2110,21 +2820,21 @@ export function OnboardingClientPage({
             </Button>
           </div>
 
-          <div className="mt-8 rounded-[10px] border border-[#dfe3eb] bg-white px-4 py-5 shadow-[0_12px_28px_rgba(51,71,91,0.06)]">
-            <div className="overflow-x-auto">
+          <div className="mt-6 overflow-x-auto pb-2">
+            <div className="min-w-[1160px] overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
               <div
                 className="grid min-w-[1120px]"
                 style={{
-                  gridTemplateColumns: `170px minmax(${ganttTimeline.timelineDays * ganttTimeline.dayWidth}px, 1fr)`,
+                  gridTemplateColumns: `0px minmax(${ganttTimeline.timelineDays * ganttTimeline.dayWidth}px, 1fr)`,
                 }}
               >
-                <div className="border-r border-[#dfe3eb] bg-white pr-3" />
-                <div className="rounded-tr-[8px] border border-[#dfe3eb] border-b-0 bg-[#f5f8fa]">
+                <div className="overflow-hidden border-r-0 bg-white" />
+                <div className="overflow-hidden border-b border-[#dfe3eb] bg-[#f5f8fa]">
                   <div className="grid" style={{ gridTemplateColumns: `repeat(3, minmax(0, 1fr))` }}>
                     {ganttTimeline.monthSegments.map((segment) => (
                       <div
                         key={segment.key}
-                        className="border-r border-[#dfe3eb] px-2 py-2 text-[11px] font-bold text-[#516f90] last:border-r-0"
+                        className="border-r border-[#dfe3eb] px-3 py-2 text-[11px] font-bold capitalize text-[#516f90] last:border-r-0"
                       >
                         {segment.label}
                       </div>
@@ -2137,7 +2847,7 @@ export function OnboardingClientPage({
                     {ganttTimeline.dayMarkers.map((marker) => (
                       <div
                         key={marker.key}
-                        className="grid h-[22px] place-items-center border-r border-[#eef2f7] text-[8px] font-medium text-[#8aa0b4] last:border-r-0"
+                        className="grid h-[24px] place-items-center border-r border-[#eef2f7] text-[8px] font-medium text-[#8aa0b4] last:border-r-0"
                       >
                         {marker.label}
                       </div>
@@ -2171,8 +2881,6 @@ export function OnboardingClientPage({
                               return candidate < baseStartDate ? baseStartDate : candidate;
                             })()
                           : addCalendarDays(baseEndDate, dragDelta);
-                    const previewStart = toIsoDate(previewStartDate);
-                    const previewEnd = toIsoDate(previewEndDate);
                     const previewStartOffset = Math.max(
                       diffCalendarDays(ganttTimeline.windowStart, previewStartDate),
                       0,
@@ -2181,35 +2889,11 @@ export function OnboardingClientPage({
                       diffCalendarDays(previewStartDate, previewEndDate) + 1,
                       1,
                     );
-                    const barTone =
-                      row.initiative.status === "executing"
-                        ? "bg-[#00bda5]"
-                        : row.initiative.status === "planned"
-                          ? "bg-[#6a78d1]"
-                          : row.initiative.status === "completed"
-                            ? "bg-[#33475b]"
-                            : "bg-[#54779c]";
 
                     return (
                       <Fragment key={row.initiative.id}>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(row.initiative)}
-                          className="border-r border-[#dfe3eb] px-2 py-2 text-left transition hover:bg-[#fafcff]"
-                        >
-                          <p className="truncate text-[11px] font-bold text-[#33475b]">{row.initiative.title}</p>
-                          <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8aa0b4]">
-                            {STATUS_META[row.initiative.status].label}
-                          </p>
-                        </button>
-
-                        <div className="relative border border-[#dfe3eb] border-l-0 border-t-0 bg-white">
-                          {ganttTimeline.todayOffset >= 0 && ganttTimeline.todayOffset < ganttTimeline.timelineDays ? (
-                            <div
-                              className="pointer-events-none absolute bottom-0 top-0 z-10 w-[2px] bg-[#ff7a59]/70"
-                              style={{ left: `${ganttTimeline.todayOffset * ganttTimeline.dayWidth}px` }}
-                            />
-                          ) : null}
+                        <div className="h-[30px] w-0 overflow-hidden border-b border-transparent" />
+                        <div className="relative border border-[#eaf0f6] border-l-0 border-t-0 bg-white">
                           <div
                             className="grid"
                             style={{
@@ -2219,16 +2903,18 @@ export function OnboardingClientPage({
                             {ganttTimeline.dayMarkers.map((marker) => (
                               <div
                                 key={`${row.initiative.id}-${marker.key}`}
-                                className="h-[38px] border-r border-[#eef2f7] last:border-r-0"
+                                className="h-[30px] border-r border-b border-[#eef2f7] last:border-r-0"
                               />
                             ))}
                           </div>
                           {!row.isOutsideRange ? (
                             <div
-                              className={`absolute top-[6px] h-[24px] rounded-[4px] text-white shadow-[0_8px_18px_rgba(51,71,91,0.16)] ${barTone}`}
+                              className={`absolute top-[4px] h-[22px] rounded-[3px] ${getCustomerSuccessTimelineBarClass(
+                                row.initiative.status,
+                              )}`}
                               style={{
                                 left: `${previewStartOffset * ganttTimeline.dayWidth}px`,
-                                width: `${Math.max(previewSpan * ganttTimeline.dayWidth - 4, ganttTimeline.dayWidth * 2)}px`,
+                                width: `${Math.max(previewSpan * ganttTimeline.dayWidth - 4, ganttTimeline.dayWidth * 6)}px`,
                                 opacity: ganttDrag?.initiativeId === row.initiative.id ? 0.92 : 1,
                               }}
                             >
@@ -2246,10 +2932,10 @@ export function OnboardingClientPage({
                                   });
                                 }}
                                 onDoubleClick={() => openEditModal(row.initiative)}
-                                className="absolute inset-y-0 left-4 right-4 z-0 flex cursor-grab items-center rounded-[4px] px-1 active:cursor-grabbing"
+                                className="absolute inset-y-0 left-3 right-3 z-0 flex cursor-grab items-center justify-center rounded-[3px] px-1 text-center active:cursor-grabbing"
                                 title={writable ? "Arrastra para mover fechas. Doble clic para editar." : "Doble clic para ver detalle."}
                               >
-                                <span className="truncate text-[10px] font-bold">{row.initiative.title}</span>
+                                <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
                               </div>
                               {writable ? (
                                 <button
@@ -2272,10 +2958,10 @@ export function OnboardingClientPage({
                                       mode: "resize-start",
                                     });
                                   }}
-                                  className="absolute left-0 top-0 z-20 h-full w-4 cursor-ew-resize rounded-l-[4px] bg-transparent"
+                                  className="absolute left-0 top-0 z-20 h-full w-3 cursor-ew-resize rounded-l-[3px] bg-transparent"
                                   title="Arrastra para cambiar el inicio"
                                 >
-                                  <span className="absolute left-1 top-1/2 h-4 w-1.5 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                                  <span className="absolute left-1 top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
                                 </button>
                               ) : null}
                               {writable ? (
@@ -2299,10 +2985,10 @@ export function OnboardingClientPage({
                                       mode: "resize-end",
                                     });
                                   }}
-                                  className="absolute right-0 top-0 z-20 h-full w-4 cursor-ew-resize rounded-r-[4px] bg-transparent"
+                                  className="absolute right-0 top-0 z-20 h-full w-3 cursor-ew-resize rounded-r-[3px] bg-transparent"
                                   title="Arrastra para cambiar el fin"
                                 >
-                                  <span className="absolute right-1 top-1/2 h-4 w-1.5 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                                  <span className="absolute right-1 top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
                                 </button>
                               ) : null}
                             </div>
@@ -2313,21 +2999,16 @@ export function OnboardingClientPage({
                               </p>
                             </div>
                           )}
-                          <div className="pointer-events-none absolute bottom-[4px] left-2 text-[8px] font-semibold text-[#8aa0b4]">
-                            {ganttDrag?.initiativeId === row.initiative.id
-                              ? formatDateRange(previewStart, previewEnd)
-                              : formatDateRange(baseStart, baseEnd)}
-                          </div>
                         </div>
                       </Fragment>
                     );
                   })
                 ) : (
                   <>
-                    <div className="border-r border-[#dfe3eb] px-2 py-3 text-[11px] text-[#9cb1c6]">
-                      Sin fechas
+                    <div className="border-r border-[#dfe3eb] px-3 py-4 text-[11px] text-[#9cb1c6]">
+                      Sin rango
                     </div>
-                    <div className="grid place-items-center border border-[#dfe3eb] border-l-0 px-4 py-6 text-center">
+                    <div className="grid place-items-center border border-[#dfe3eb] border-l-0 px-4 py-10 text-center">
                       <p className="text-[12px] font-semibold text-[#516f90]">
                         Agrega fechas estimadas a las iniciativas para ver el gantt.
                       </p>
@@ -2338,29 +3019,27 @@ export function OnboardingClientPage({
             </div>
 
             {ganttTimeline.undatedRows.length ? (
-              <div className="mt-5 rounded-[10px] border border-dashed border-[#dfe3eb] bg-white px-4 py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                      Iniciativas sin rango
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#8aa0b4]">
-                      Aun no entran al calendario porque les falta fecha de inicio o fin.
-                    </p>
-                  </div>
+              <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Iniciativas sin rango
+                  </h3>
                   <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
                     {ganttTimeline.undatedRows.length} pendientes
                   </span>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
+                <p className="mt-2 text-[12px] text-[#8aa0b4]">
+                  Aun no entran al calendario porque les falta fecha de inicio o fin.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
                   {ganttTimeline.undatedRows.map((initiative) => (
                     <button
                       key={initiative.id}
                       type="button"
                       onClick={() => openEditModal(initiative)}
-                      className="rounded-full border border-[#dfe3eb] bg-[#f8fbff] px-3 py-2 text-[11px] font-semibold text-[#33475b] transition hover:border-[#bfd3e6] hover:bg-white"
+                      className="rounded-full border border-[#d7e0ea] bg-white px-4 py-2 text-[11px] text-[#33475b] shadow-[0_1px_2px_rgba(51,71,91,0.05)]"
                     >
-                      {initiative.title}
+                      <span className="font-bold">{initiative.title}</span>
                     </button>
                   ))}
                 </div>
@@ -2770,6 +3449,532 @@ export function OnboardingClientPage({
           </div>
         </div>
       </div>
+
+      {isGeneratingWizardPlan ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#33475b]/72 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-[520px] rounded-[16px] border border-white/60 bg-white px-8 py-9 text-center shadow-[0_24px_70px_rgba(15,23,42,0.28)]">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#ecfffb] text-[#14b8a6] shadow-[0_10px_30px_rgba(20,184,166,0.18)]">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+
+            <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.22em] text-[#8aa0b4]">
+              Guía de Activación
+            </p>
+            <h3 className="mt-2 text-[24px] font-extrabold tracking-[-0.02em] text-[#33475b]">
+              Armando tu Plan de Trabajo
+            </h3>
+            <p className="mt-3 text-[15px] font-semibold text-[#14b8a6]">
+              {wizardLoadingMessage}
+            </p>
+            <p className="mt-2 text-[12px] leading-6 text-[#516f90]">
+              Estamos organizando una recomendación alineada al contexto y a los créditos disponibles.
+            </p>
+
+            <div className="mt-6 grid gap-2 text-left">
+              {WIZARD_LOADING_MESSAGES.map((message, index) => {
+                const isActive = index === wizardLoadingMessageIndex;
+                const isCompleted = index < wizardLoadingMessageIndex;
+
+                return (
+                  <div
+                    key={message}
+                    className={`flex items-center gap-3 rounded-[10px] px-4 py-3 transition ${
+                      isActive
+                        ? "bg-[#ecfffb] text-[#0f766e]"
+                        : isCompleted
+                          ? "bg-[#f5f8fa] text-[#516f90]"
+                          : "bg-[#fbfcfe] text-[#9cb1c6]"
+                    }`}
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        isActive ? "bg-[#14b8a6]" : isCompleted ? "bg-[#7dd3c7]" : "bg-[#d8e2ec]"
+                      }`}
+                    />
+                    <span className="text-[12px] font-bold">{message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isUpsellModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[640px] rounded-[6px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
+            <div className="text-center">
+              <h3 className="text-[18px] font-bold text-[#33475b]">Incremento de Capacidad</h3>
+              <p className="mt-2 text-[13px] text-[#516f90]">
+                Añade paquetes adicionales de créditos a tu plan actual.
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                <div className="flex-1">
+                  <select
+                    value={String(selectedUpsellCredits)}
+                    onChange={(event) => setSelectedUpsellCredits(safeParseNumber(event.target.value))}
+                    className="h-9 w-full rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                  >
+                    {CS_UPSELL_CREDIT_OPTIONS.map((option) => (
+                      <option key={`cs-upsell-${option}`} value={option}>
+                        {option} créditos
+                      </option>
+                    ))}
+                    <option value={-1}>Personalizado</option>
+                  </select>
+                  {selectedUpsellCredits === -1 ? (
+                    <Input
+                      type="number"
+                      min="1"
+                      value={customUpsellCredits}
+                      onChange={(event) => setCustomUpsellCredits(event.target.value)}
+                      className="mt-3 h-9 rounded-[2px] border-[#cbd6e2] bg-white px-3 text-[13px] font-bold"
+                      placeholder="Créditos personalizados"
+                    />
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUpsellQuantity((current) => current + 1)}
+                  className="inline-flex h-9 items-center justify-center rounded-[4px] bg-[#14b8a6] px-5 text-[13px] font-bold text-white transition hover:bg-[#0ea899]"
+                >
+                  + Añadir
+                </button>
+              </div>
+              <p className="text-[12px] text-[#516f90]">
+                Opciones disponibles para CS: 40, 60, 80 o un valor personalizado.
+              </p>
+            </div>
+
+            <div className="mt-5 rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00bda5]">
+                Resumen de capacidad
+              </p>
+
+              <div className="mt-4 space-y-3 text-[13px] text-[#33475b]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="font-bold">Capacidad actual:</span>
+                  <span className="font-bold">{metrics.total} CR</span>
+                </div>
+
+                {upsellQuantity > 0 ? (
+                  <div className="flex items-center justify-between gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setUpsellQuantity((current) => Math.max(0, current - 1))}
+                      className="mr-1 text-[16px] font-bold text-[#9cb1c6] transition hover:text-[#ef4444]"
+                    >
+                      ×
+                    </button>
+                    <span className="flex-1">
+                      {upsellQuantity}x Paquete {getResolvedUpsellCredits()} CR
+                    </span>
+                    <span className="font-bold">{getResolvedUpsellCredits() * upsellQuantity} CR</span>
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-[#516f90]">
+                    Aún no has agregado paquetes a este incremento.
+                  </p>
+                )}
+
+                <div className="border-t border-[#99f6e4] pt-3">
+                  <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">
+                    <span>Créditos extra acumulados:</span>
+                    <span>{currentExtraCapacityCredits + getResolvedUpsellCredits() * upsellQuantity} CR</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-[#99f6e4] pt-3">
+                  <div className="flex items-center justify-between gap-4 text-[15px] font-extrabold">
+                    <span className="text-[#33475b]">Capacidad total resultante:</span>
+                    <span className="text-[#ff7a59]">
+                      {metrics.total + getResolvedUpsellCredits() * upsellQuantity} CR
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={closeUpsellModal}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white px-4 text-[13px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmUpsellCredits}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] bg-[#14b8a6] px-4 text-[13px] font-bold text-white transition hover:bg-[#0ea899]"
+              >
+                Aplicar paquetes
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isCatalogModalOpen ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm md:p-8">
+          <div className="flex h-[90vh] w-full max-w-[1380px] flex-col overflow-hidden rounded-[8px] bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#dfe3eb] bg-[#f5f8fa] px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded bg-[#00bda5]/10 text-[#00bda5]">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-[18px] font-bold text-[#33475b]">Catálogo de Casos de Uso</h2>
+                  <p className="text-[12px] text-[#516f90]">
+                    Haz clic en un caso para ver los detalles y definir su inclusión en tu estrategia.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeCatalogModal}
+                className="rounded-[4px] bg-[#33475b] px-5 py-2 text-[13px] font-bold text-white transition hover:bg-[#243444]"
+              >
+                Terminar y Cerrar
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <aside className="w-[250px] shrink-0 overflow-y-auto border-r border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                <div className="space-y-1.5">
+                  {catalogTabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveCatalogTab(tab.id)}
+                      className={`flex w-full items-center gap-2 rounded-[6px] px-4 py-3 text-left text-[13px] font-bold transition ${
+                        activeCatalogTab === tab.id
+                          ? "bg-[#14b8a6] text-white shadow-sm"
+                          : "text-[#516f90] hover:bg-white"
+                      }`}
+                    >
+                      {tab.id === "wizard" ? (
+                        <Sparkles className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                            activeCatalogTab === tab.id ? "bg-white" : "bg-current opacity-45"
+                          }`}
+                        />
+                      )}
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
+                {activeCatalogTab === "wizard" ? (
+                  <div className="relative mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
+                    <div className="text-center">
+                      <h3 className="text-[24px] font-extrabold text-[#33475b]">Veamos qué activar primero</h3>
+                      <p className="mt-2 text-[14px] text-[#516f90]">
+                        Responde 3 preguntas y armamos contigo los casos de uso para empezar.
+                      </p>
+                    </div>
+
+                    <div className="mt-10 space-y-8">
+                      <div>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                          1. ¿Qué áreas de HubSpot deseas activar?
+                        </p>
+                        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+                          {["Sales", "Marketing", "Service", "Content"].map((hub) => {
+                            const selectedIndex = wizardHubs.indexOf(hub);
+                            const isSelected = selectedIndex !== -1;
+
+                            return (
+                              <button
+                                key={hub}
+                                type="button"
+                                onClick={() => toggleWizardHub(hub)}
+                                className={`relative rounded-[8px] border-2 px-4 py-5 text-[14px] font-bold transition ${
+                                  isSelected
+                                    ? "border-[#14b8a6] bg-[#ecfffb] text-[#14b8a6]"
+                                    : "border-[#cbd6e2] bg-white text-[#516f90] hover:border-[#9cb1c6]"
+                                }`}
+                              >
+                                {isSelected ? (
+                                  <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-[#14b8a6] text-[11px] font-extrabold text-white">
+                                    {selectedIndex + 1}
+                                  </span>
+                                ) : null}
+                                {hub}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                          2. ¿Cuál es la situación actual del portal?
+                        </p>
+                        <div className="mt-4 grid gap-4 md:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={() => setWizardPortalState("new")}
+                            className={`rounded-[8px] border-2 p-5 text-left transition ${
+                              wizardPortalState === "new"
+                                ? "border-[#14b8a6] bg-[#ecfffb]"
+                                : "border-[#cbd6e2] bg-white hover:border-[#9cb1c6]"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <span className={`mt-1 h-4 w-4 rounded-full ${wizardPortalState === "new" ? "bg-[#14b8a6]" : "bg-[#d5e0eb]"}`} />
+                              <div>
+                                <p className="text-[13px] font-bold text-[#33475b]">
+                                  Estamos arrancando desde cero
+                                </p>
+                                <p className="mt-1 text-[11px] text-[#516f90]">
+                                  Necesitamos fundamentos, estructura y un primer plan de activación.
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setWizardPortalState("optimize")}
+                            className={`rounded-[8px] border-2 p-5 text-left transition ${
+                              wizardPortalState === "optimize"
+                                ? "border-[#14b8a6] bg-[#ecfffb]"
+                                : "border-[#cbd6e2] bg-white hover:border-[#9cb1c6]"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <span className={`mt-1 h-4 w-4 rounded-full ${wizardPortalState === "optimize" ? "bg-[#14b8a6]" : "bg-[#d5e0eb]"}`} />
+                              <div>
+                                <p className="text-[13px] font-bold text-[#33475b]">
+                                  Ya usamos HubSpot pero necesitamos ordenarlo
+                                </p>
+                                <p className="mt-1 text-[11px] text-[#516f90]">
+                                  Tenemos datos, pero buscamos mejores prácticas.
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                          3. Comparte el contexto comercial o de operación
+                        </p>
+                        <div className="mt-4">
+                          <textarea
+                            rows={5}
+                            value={wizardContext}
+                            onChange={(event) => setWizardContext(event.target.value)}
+                            placeholder="Ejemplo: el cliente ya usa HubSpot Sales, quiere ordenar su pipeline, priorizar marketing y distribuir mejor los créditos del ciclo."
+                            className="w-full rounded-[8px] border-2 border-[#cbd6e2] bg-white px-4 py-3 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-10 flex justify-center pt-6">
+                      <button
+                        type="button"
+                        onClick={() => void applyWizardRecommendations()}
+                        disabled={!wizardHubs.length || isGeneratingWizardPlan}
+                        className="inline-flex items-center gap-2 rounded-[6px] bg-[#14b8a6] px-10 py-3.5 text-[15px] font-bold text-white shadow-md transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        {isGeneratingWizardPlan ? "Cargando..." : "Armar Plan de Trabajo"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
+                      const alreadyAdded = initiatives.some(
+                        (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+                      );
+
+                      return (
+                        <div
+                          key={group.id}
+                          className={`flex flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                            alreadyAdded
+                              ? "border-[#eaf0f6] bg-[#f8fafc]"
+                              : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                          }`}
+                        >
+                          <div className="mb-3 flex flex-wrap gap-1.5">
+                            <span className="rounded-[2px] border border-[#00bda5]/20 bg-[#f0fdfa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#00bda5]">
+                              {group.modalCategory}
+                            </span>
+                            <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                              {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
+                            </span>
+                          </div>
+                          <h4 className="text-[14px] font-bold leading-snug text-[#33475b]">{group.name}</h4>
+                          <p className="mt-2 text-[11px] leading-relaxed text-[#516f90]">
+                            {group.description || "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo."}
+                          </p>
+                          <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
+                            <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
+                            <div className="flex items-center gap-3">
+                              <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
+                                {alreadyAdded ? "Ya agregado" : "Disponible"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openCatalogGroupPreview(group)}
+                                disabled={alreadyAdded}
+                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:bg-[#f8fafc] disabled:text-[#9cb1c6]"
+                              >
+                                Ver detalles
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {catalogPreviewGroup ? (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <button
+            type="button"
+            className="flex-1 bg-transparent"
+            onClick={closeCatalogGroupPreview}
+            aria-label="Cerrar detalle del grupo"
+          />
+          <aside className="relative flex h-full w-full max-w-[500px] flex-col border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+            <div className="border-b border-[#dfe3eb] bg-white px-6 py-6">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="inline-flex rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#00bda5]">
+                    {catalogPreviewGroup.modalCategory}
+                  </span>
+                  <h3 className="mt-4 text-[22px] font-extrabold leading-[1.1] text-[#33475b]">
+                    {catalogPreviewGroup.name}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeCatalogGroupPreview}
+                  className="rounded-[2px] p-1 text-[#9cb1c6] hover:bg-white hover:text-[#33475b]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Alcance y descripción detallada
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                  <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#33475b]">
+                    {catalogPreviewGroup.description || "Este grupo no tiene descripción detallada todavía."}
+                  </p>
+                </div>
+              </section>
+
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Tareas incluidas
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  {catalogPreviewGroup.items.length ? (
+                    <ul className="space-y-2">
+                      {catalogPreviewGroup.items.map((item) => (
+                        <li key={`preview-${catalogPreviewGroup.id}-${item.id}`} className="rounded-[4px] border border-[#eaf0f6] bg-white px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[12px] font-bold leading-snug text-[#33475b]">
+                                {item.label}
+                              </p>
+                              <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[#516f90]">
+                                {item.category}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-[11px] font-bold text-[#ff7a59]">
+                              {item.credits} CR
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[12px] text-[#516f90]">
+                      Este grupo no tiene tareas asociadas; usa una carga manual de créditos.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-[6px] border border-[#99f6e4] bg-[#f0fdfa] px-5 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
+                    Consumo de créditos:
+                  </p>
+                  <p className="text-[28px] font-extrabold text-[#00bda5]">
+                    {catalogPreviewGroup.credits} CR
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            <div className="border-t border-[#dfe3eb] bg-white px-5 py-5">
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => void addCatalogGroupInitiative(catalogPreviewGroup, "planned")}
+                  disabled={isSavingInitiative}
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#14b8a6] px-5 py-4 text-white shadow-md transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="text-[14px] font-extrabold">Incluir en Planificación</span>
+                  <span className="mt-1 text-[11px] font-medium opacity-90">
+                    Consumirá {catalogPreviewGroup.credits} CR
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void addCatalogGroupInitiative(catalogPreviewGroup, "backlog")}
+                  disabled={isSavingInitiative}
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#5f7ea2] px-5 py-4 text-white shadow-md transition hover:bg-[#4f6f92] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="text-[14px] font-extrabold">Dejar en Evaluación</span>
+                  <span className="mt-1 text-[11px] font-medium opacity-90">
+                    No consumirá créditos por ahora
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void addCatalogGroupInitiative(catalogPreviewGroup, "executing")}
+                  disabled={isSavingInitiative}
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#33475b] px-5 py-4 text-white shadow-md transition hover:bg-[#243444] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="text-[14px] font-extrabold">Agregar como Ejecutando</span>
+                  <span className="mt-1 text-[11px] font-medium opacity-90">
+                    Lo moveremos directo a trabajo en curso
+                  </span>
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       {isOfferModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">

@@ -4,6 +4,8 @@ import { PublicOnboardingPage } from "@/components/onboarding/public-onboarding-
 import { Card } from "@/components/ui/card";
 import {
   calculateInitiativeProgress,
+  type CreditCatalogItem,
+  type InitiativeTaskStatus,
   type InitiativeRecord,
   type ClientBillingStatus,
   type OnboardingConfig,
@@ -26,11 +28,20 @@ type PublicOnboardingRpcResponse = {
   config: OnboardingConfig;
   billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
+  catalog: CreditCatalogItem[];
   payment_email: string | null;
 };
 
 function isPublicAudience(value: string): value is PublicOnboardingAudience {
   return value === "client" || value === "prospect";
+}
+
+function normalizeTaskStatus(value: string | null | undefined): InitiativeTaskStatus {
+  if (value === "in_progress" || value === "blocked" || value === "completed") {
+    return value;
+  }
+
+  return "pending";
 }
 
 export default async function PublicSharedPage({ params }: PublicSharedPageProps) {
@@ -72,17 +83,34 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     billing: data.billing ?? createDefaultBillingStatus(data.config),
     initiatives: (data.initiatives ?? []).map((initiative) => ({
       ...initiative,
+      status:
+        initiative.status === "planned" ||
+        initiative.status === "executing" ||
+        initiative.status === "completed"
+          ? initiative.status
+          : "backlog",
       labels: initiative.labels ?? [],
-      subitems: initiative.subitems ?? [],
+      subitems: (initiative.subitems ?? []).map((subitem) => ({
+        ...subitem,
+        status: normalizeTaskStatus(subitem.status),
+        quantity: Number(subitem.quantity ?? 1),
+        unit_credits: Number(subitem.unit_credits ?? 0),
+        target_date: subitem.target_date ?? null,
+      })),
       logs: initiative.logs ?? [],
       credits: Number(initiative.credits ?? 0),
       progressPercent: Number(
         initiative.progressPercent ??
           calculateInitiativeProgress((initiative.subitems ?? []).map((subitem) => ({
             quantity: Number(subitem.quantity ?? 1),
-            status: subitem.status ?? "pending",
+            status: normalizeTaskStatus(subitem.status),
           }))),
       ),
+    })),
+    catalog: (data.catalog ?? []).map((item) => ({
+      ...item,
+      credits: Number(item.credits ?? 0),
+      sort_order: Number(item.sort_order ?? 0),
     })),
     paymentEmail: data.payment_email,
   };
