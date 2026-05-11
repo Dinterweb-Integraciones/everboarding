@@ -1256,7 +1256,7 @@ export function OnboardingClientPage({
         nextStatus = "backlog";
       }
 
-      if (nextStatus !== "backlog" && nextStatus !== "completed") {
+      if (nextStatus !== "backlog") {
         if (groupCredits > remainingCredits) {
           nextStatus = "backlog";
         } else {

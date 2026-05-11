@@ -592,7 +592,7 @@ function buildFinalRecommendations(
   const plannedGroupIds = new Set(plannedRecommendations.map((recommendation) => recommendation.group_id));
   const datesByGroupId = schedulePlannedRecommendations(plannedRecommendations, groups, startDate);
 
-  return rankedRecommendations.flatMap((recommendation) => {
+  return rankedRecommendations.flatMap<FinalRecommendation>((recommendation): FinalRecommendation[] => {
     const group = groupsById.get(recommendation.group_id);
     if (!group) {
       return [];
