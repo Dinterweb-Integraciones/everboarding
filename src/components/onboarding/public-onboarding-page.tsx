@@ -171,16 +171,32 @@ export function PublicOnboardingPage({
       grouped.set(item.category, bucket);
     });
 
-    return Array.from(grouped.entries())
-      .map(([category, items]) => ({
+    const orderedCategoryNames = initialData.catalogCategories
+      .filter((category) => category.is_active)
+      .sort(
+        (left, right) =>
+          left.sort_order - right.sort_order || left.name.localeCompare(right.name, "es"),
+      )
+      .map((category) => category.name)
+      .filter((categoryName) => grouped.has(categoryName));
+    const orderedCategorySet = new Set(orderedCategoryNames);
+    const remainingCategoryNames = Array.from(grouped.keys()).filter(
+      (categoryName) => !orderedCategorySet.has(categoryName),
+    );
+
+    return [...orderedCategoryNames, ...remainingCategoryNames.sort((left, right) => left.localeCompare(right, "es"))]
+      .map((category) => ({
         category,
-        items: [...items].sort((left, right) => left.sort_order - right.sort_order || left.label.localeCompare(right.label, "es")),
+        items: [...(grouped.get(category) ?? [])].sort(
+          (left, right) =>
+            left.sort_order - right.sort_order || left.label.localeCompare(right.label, "es"),
+        ),
       }))
-      .sort((left, right) => left.category.localeCompare(right.category, "es"));
+      .filter((entry) => entry.items.length > 0);
   }, [initialData]);
   const catalogItemMap = useMemo(
     () => new Map(initialData.catalog.map((item) => [item.id, item])),
-    [initialData],
+    [initialData.catalog],
   );
   const selectedCatalogItems = useMemo(
     () =>

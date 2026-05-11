@@ -1273,6 +1273,26 @@ begin
       ),
       '[]'::jsonb
     ),
+    'catalog_categories',
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', category.id,
+            'name', category.name,
+            'description', category.description,
+            'sort_order', category.sort_order,
+            'is_active', category.is_active,
+            'created_at', category.created_at,
+            'updated_at', category.updated_at
+          )
+          order by category.sort_order, category.name
+        )
+        from public.credit_catalog_categories category
+        where category.is_active = true
+      ),
+      '[]'::jsonb
+    ),
     'payment_email',
     payment_email,
     'initiatives',

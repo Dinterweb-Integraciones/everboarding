@@ -89,6 +89,7 @@ export type PublicOnboardingSnapshot = {
   billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
+  catalogCategories: CreditCatalogCategory[];
   paymentEmail: string | null;
 };
 

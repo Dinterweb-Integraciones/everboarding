@@ -4,6 +4,7 @@ import { PublicOnboardingPage } from "@/components/onboarding/public-onboarding-
 import { Card } from "@/components/ui/card";
 import {
   calculateInitiativeProgress,
+  type CreditCatalogCategory,
   type CreditCatalogItem,
   type InitiativeTaskStatus,
   type InitiativeRecord,
@@ -29,6 +30,7 @@ type PublicOnboardingRpcResponse = {
   billing: ClientBillingStatus;
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
+  catalog_categories: CreditCatalogCategory[];
   payment_email: string | null;
 };
 
@@ -111,6 +113,10 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       ...item,
       credits: Number(item.credits ?? 0),
       sort_order: Number(item.sort_order ?? 0),
+    })),
+    catalogCategories: (data.catalog_categories ?? []).map((category) => ({
+      ...category,
+      sort_order: Number(category.sort_order ?? 0),
     })),
     paymentEmail: data.payment_email,
   };
