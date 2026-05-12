@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
+import {
+  isExtraCreditPackagePurchase,
+  recordExtraCreditPackagePayment,
+} from "@/lib/client-extra-credit-payments";
 import { activateSalesProposalAfterPayment } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
@@ -84,6 +88,18 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       { message: "La sesion de pago no tiene cliente asociado." },
       { status: 400 },
     );
+  }
+
+  if (isExtraCreditPackagePurchase(session.metadata)) {
+    await recordExtraCreditPackagePayment({
+      clientId,
+      checkoutSessionId: session.id,
+      paymentIntentId: getObjectId(session.payment_intent),
+      amountCents: session.amount_total ?? 0,
+      currency: session.currency ?? "usd",
+    });
+
+    return NextResponse.json({ received: true });
   }
 
   const { error } = await recordPayment({

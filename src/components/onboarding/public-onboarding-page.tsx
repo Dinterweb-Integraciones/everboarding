@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { STATUS_META, STAGE_META } from "@/lib/constants";
+import { PUBLIC_EXTRA_CREDIT_PACKAGE, STATUS_META, STAGE_META } from "@/lib/constants";
 import {
   calculateMetrics,
   formatDateRange,
@@ -360,6 +360,7 @@ export function PublicOnboardingPage({
     initialData.config.custom_plan_price ??
       suggestPlanPrice(initialData.config.custom_plan_credits ?? initialData.config.base_capacity),
   );
+  const isRecurringPlan = initialData.config.custom_plan_billing_mode !== "one_time";
   const usesStripeMembership = initialData.config.custom_plan_billing_mode !== "one_time";
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
@@ -380,7 +381,7 @@ export function PublicOnboardingPage({
   const hasPaidCycleAccess =
     billing.current_cycle_paid ||
     Boolean(billing.paid_at) ||
-    billing.active_credits > 0 ||
+    (!usesStripeMembership && billing.active_credits > 0) ||
     hasActivatedWork;
   const shouldShowPaymentCta = audience === "client" && paymentAmount > 0 && !hasPaidCycleAccess;
   const shouldPromptPayment = shouldShowPaymentCta;
@@ -538,10 +539,11 @@ export function PublicOnboardingPage({
           }),
         });
 
-        const payload = (await response.json()) as {
-          billing?: ClientBillingStatus;
-          message?: string;
-        };
+      const payload = (await response.json()) as {
+        billing?: ClientBillingStatus;
+        purchaseKind?: "plan" | "extra_capacity_package";
+        message?: string;
+      };
 
         if (!response.ok || !payload.billing) {
           throw new Error(payload.message || "No pudimos confirmar el pago.");
@@ -552,7 +554,10 @@ export function PublicOnboardingPage({
         setBilling(payload.billing);
         setFeedback({
           tone: "success",
-          message: "Pago confirmado. El ciclo quedo activo.",
+          message:
+            payload.purchaseKind === "extra_capacity_package"
+              ? `Pago confirmado. Ya habilitamos ${PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos extra.`
+              : "Pago confirmado. El ciclo quedo activo.",
         });
         params.delete("payment");
         params.delete("session_id");
@@ -719,7 +724,7 @@ export function PublicOnboardingPage({
     await createPublicRequest(requestDraft);
   }
 
-  async function startStripeCheckout() {
+  async function startStripeCheckout(purchaseKind: "plan" | "extra_package" = "plan") {
     setFeedback(null);
     setIsStartingPayment(true);
 
@@ -732,6 +737,7 @@ export function PublicOnboardingPage({
         body: JSON.stringify({
           audience,
           slug: publicSlug,
+          purchaseKind,
         }),
       });
 
@@ -785,6 +791,41 @@ export function PublicOnboardingPage({
 
   function closeGroupedBuilder() {
     setIsGroupBuilderOpen(false);
+  }
+
+  function openGroupedBuilder(targetStatus: PublicDraftTargetStatus = "backlog") {
+    const selectedItem = initialData.catalog.find((item) => item.id === catalogSelection);
+
+    setFeedback(null);
+    setRequestTargetStatus(targetStatus);
+    setRequestDraft({
+      title: selectedItem?.label ?? "",
+      description: "",
+      selectedCatalogItemIds: selectedItem ? [selectedItem.id] : [],
+    });
+    setCatalogSelection("");
+    setIsGroupBuilderOpen(true);
+  }
+
+  async function quickAddCatalogItemRequest(targetStatus: PublicDraftTargetStatus = "backlog") {
+    const selectedItem = initialData.catalog.find((item) => item.id === catalogSelection);
+
+    if (!selectedItem) {
+      setFeedback({
+        tone: "error",
+        message: "Selecciona una tarea antes de añadirla.",
+      });
+      return;
+    }
+
+    await createPublicRequest(
+      {
+        title: selectedItem.label,
+        description: "",
+        selectedCatalogItemIds: [selectedItem.id],
+      },
+      targetStatus,
+    );
   }
 
   function openCatalogModal(targetStatus: PublicDraftTargetStatus = "backlog") {
@@ -880,7 +921,7 @@ export function PublicOnboardingPage({
                 ) : null}
               </div>
               <Button
-                onClick={startStripeCheckout}
+                onClick={() => void startStripeCheckout("plan")}
                 disabled={isStartingPayment || isSyncingPayment || paymentAmount <= 0}
                 className="rounded-[10px] bg-[#ea580c] px-5 text-white hover:bg-[#c2410c]"
               >
@@ -907,9 +948,14 @@ export function PublicOnboardingPage({
                     <CalendarDays className="h-3.5 w-3.5" />
                     <span>{formatLongDate(initialData.config.start_date)}</span>
                   </div>
-                  <Badge className="bg-[#f5f8fa] text-[#516f90]">
-                    {cycleDaysRemaining ?? 0} d restantes del ciclo
+                  <Badge className="bg-[#e6fffb] text-[#00a88f]">
+                    {isRecurringPlan ? "Recurrente" : "Paquete de créditos"}
                   </Badge>
+                  {isRecurringPlan ? (
+                    <Badge className="bg-[#f5f8fa] text-[#516f90]">
+                      {cycleDaysRemaining ?? 0} d restantes del ciclo
+                    </Badge>
+                  ) : null}
                   <Badge className="bg-[#e6fffb] text-[#00a88f]">Vista {stageMeta.shortLabel}</Badge>
                 </div>
                 <p className="mt-4 max-w-4xl text-sm text-[#516f90]">
@@ -917,10 +963,38 @@ export function PublicOnboardingPage({
                 </p>
               </div>
 
-              <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
-                {audience === "client"
-                  ? "Puedes proponer nuevas iniciativas solo en En evaluacion."
-                  : "Vista publica de solo lectura para presentar alcance y roadmap."}
+              <div className="flex w-full max-w-[360px] flex-col gap-3">
+                <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
+                  {audience === "client"
+                    ? "Puedes proponer nuevas iniciativas solo en En evaluacion."
+                    : "Vista publica de solo lectura para presentar alcance y roadmap."}
+                </div>
+                {audience === "client" ? (
+                  <div className="rounded-[14px] border border-[#99f6e4] bg-[#effdfa] px-4 py-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#00a88f]">
+                      Paquete adicional
+                    </p>
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div>
+                        <p className="text-[22px] font-extrabold text-[#00bda5]">
+                          {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos
+                        </p>
+                        <p className="mt-1 text-[12px] text-[#516f90]">
+                          {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)} para ampliar capacidad.
+                        </p>
+                      </div>
+                      <Button
+                        variant="primary"
+                        className="rounded-[10px] bg-[#00bda5] px-4 text-white hover:bg-[#00a894]"
+                        onClick={() => void startStripeCheckout("extra_package")}
+                        disabled={isStartingPayment || isSyncingPayment}
+                      >
+                        <CreditCard className="mr-2 h-4 w-4" />
+                        Pagar
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -955,8 +1029,10 @@ export function PublicOnboardingPage({
             {boardStatuses.map((status) => {
               const items = groupedInitiatives[status];
               const totalCredits = items.reduce((sum, initiative) => sum + initiative.credits, 0);
+              const allowsCustomBuilder =
+                audience === "client" && catalogOptions.length > 0 && status === "backlog";
               const allowsCatalogAdd =
-                audience === "client" && catalogGroupOptions.length > 0 && (status === "backlog" || status === "planned");
+                audience === "client" && catalogGroupOptions.length > 0 && status === "backlog";
 
               return (
                 <div key={status} className="flex min-h-[270px] flex-col">
@@ -1073,15 +1149,56 @@ export function PublicOnboardingPage({
                       </div>
                     ) : null}
 
-                    {allowsCatalogAdd ? (
-                      <Button
-                        variant="secondary"
-                        className="mt-3 w-full rounded-[4px] border-2 border-dashed border-[#00bda5] bg-[#f3fffd] px-3 py-5 text-[11px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                        onClick={() => openCatalogModal(status === "planned" ? "planned" : "backlog")}
-                      >
-                        <Plus className="mr-1.5 h-3.5 w-3.5" />
-                        Agregar Caso de Uso
-                      </Button>
+                    {allowsCustomBuilder || allowsCatalogAdd ? (
+                      <div className="mt-3 space-y-2">
+                        {allowsCustomBuilder ? (
+                          <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white p-1.5 shadow-sm">
+                            <select
+                              value={catalogSelection}
+                              onChange={(event) => setCatalogSelection(event.target.value)}
+                              className="h-10 w-full appearance-none rounded-[12px] border border-[#e5e7eb] bg-white px-4 text-[10px] font-medium leading-4 text-[#33475b] outline-none"
+                            >
+                              <option value="">-- Rápido --</option>
+                              {catalogOptions.map((entry) => (
+                                <optgroup key={entry.category} label={entry.category}>
+                                  {entry.items.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.label} ({item.credits} CR)
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                            <div className="mt-1.5 flex gap-1.5">
+                              <Button
+                                variant="secondary"
+                                className="h-7 flex-1 rounded-[999px] border-[#e5e7eb] bg-white px-2 py-1 text-[10px] font-bold text-[#7b8794]"
+                                onClick={() => void quickAddCatalogItemRequest("backlog")}
+                                disabled={isSubmitting || !catalogSelection}
+                              >
+                                Añadir
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                className="h-7 rounded-[999px] border-[#e5e7eb] bg-white px-4 py-1 text-[10px] font-bold text-[#33475b]"
+                                onClick={() => openGroupedBuilder("backlog")}
+                              >
+                                Agrupar
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {allowsCatalogAdd ? (
+                          <Button
+                            variant="primary"
+                            className="w-full !rounded-[4px] !border-2 !border-dashed !border-[#00bda5] !bg-[#effdfa] px-3 py-5 !text-[11px] !font-bold !text-[#00bda5] !shadow-none transition hover:!border-[#00a894] hover:!bg-[#e6fcf8] hover:!text-[#00a894]"
+                            onClick={() => openCatalogModal("backlog")}
+                          >
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                            Agregar Caso de Uso
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 </div>
@@ -1508,7 +1625,7 @@ export function PublicOnboardingPage({
                   type="button"
                   onClick={() => void quickAddCatalogGroup(catalogPreviewGroup)}
                   disabled={isSubmitting}
-                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#5f7ea2] px-5 py-4 text-white shadow-md transition hover:bg-[#4f6f92] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#14b8a6] px-5 py-4 text-white shadow-md transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span className="text-[14px] font-extrabold">
                     {`Crear en ${getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}`}

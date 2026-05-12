@@ -14,6 +14,8 @@ export const SALES_PROPOSAL_UPSELL_OPTIONS = [
   /*{ credits: 40, price: 598.5 },*/
   { credits: 80, price: 897 },
 ] as const;
+export const PUBLIC_EXTRA_CREDIT_PACKAGE = SALES_PROPOSAL_UPSELL_OPTIONS[0];
+export const EXTRA_CREDIT_PACKAGE_PURCHASE_KIND = "extra_capacity_package";
 
 export const PLAN_TIER_OPTIONS = [60, 80, 100] as const;
 

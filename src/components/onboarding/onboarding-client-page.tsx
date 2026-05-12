@@ -415,8 +415,9 @@ export function OnboardingClientPage({
   const negotiatedPlanPeriodMonths = (config.custom_plan_period_months ?? 1) as PlanPeriodMonths;
   const negotiatedPlanPrice = Number(config.custom_plan_price ?? suggestPlanPrice(negotiatedPlanCredits));
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
+  const isRecurringPlan = negotiatedPlanBillingMode === "subscription";
   const negotiatedPlanCadence =
-    negotiatedPlanBillingMode === "subscription"
+    isRecurringPlan
       ? getPlanCadenceLabel(negotiatedPlanPeriodMonths)
       : getPlanBillingModeLabel(negotiatedPlanBillingMode);
 
@@ -775,13 +776,6 @@ export function OnboardingClientPage({
     setIsOfferModalOpen(true);
   }
 
-  function openUpsellModal() {
-    setSelectedUpsellCredits(CS_UPSELL_CREDIT_OPTIONS[0]);
-    setCustomUpsellCredits("");
-    setUpsellQuantity(0);
-    setIsUpsellModalOpen(true);
-  }
-
   function applyOfferDraft() {
     setConfig((current) => ({
       ...current,
@@ -944,10 +938,7 @@ export function OnboardingClientPage({
     return data;
   }
 
-  async function saveClientMeta() {
-    setFeedback(null);
-    setIsSavingMeta(true);
-
+  async function persistClientMeta(successMessage?: string) {
     const { data, error } = await supabase
       .from("clients")
       .update({
@@ -958,22 +949,29 @@ export function OnboardingClientPage({
       .select("*")
       .single();
 
-    setIsSavingMeta(false);
-
     if (error) {
       showError(error.message);
-      return;
+      return null;
     }
 
     setClient((current) => ({ ...current, ...data }));
-    showSuccess("Perfil del cliente guardado.");
+    if (successMessage) showSuccess(successMessage);
+    return data;
   }
 
-  async function saveConfig() {
+  async function saveAllAdjustments() {
     setFeedback(null);
+    setIsSavingMeta(true);
     setIsSavingConfig(true);
-    await persistConfig(config, "Configuracion del proyecto guardada.");
+
+    const savedClient = await persistClientMeta();
+    const savedConfig = await persistConfig(config);
+
+    setIsSavingMeta(false);
     setIsSavingConfig(false);
+
+    if (!savedClient || !savedConfig) return;
+    showSuccess("Ajustes guardados.");
   }
 
   function copyCurrentViewLink() {
@@ -2188,11 +2186,16 @@ export function OnboardingClientPage({
                   <span>{formatLongDate(config.start_date)}</span>
                 </div>
                 <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                <span className="rounded-[3px] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold text-[#516f90]">
-                  {cycleDaysRemaining !== null
-                    ? `${cycleDaysRemaining} d restantes del ciclo`
-                    : "Sin ciclo activo"}
+                <span className="rounded-[3px] bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
+                  {isRecurringPlan ? "Recurrente" : "Paquete de créditos"}
                 </span>
+                {isRecurringPlan ? (
+                  <span className="rounded-[3px] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold text-[#516f90]">
+                    {cycleDaysRemaining !== null
+                      ? `${cycleDaysRemaining} d restantes del ciclo`
+                      : "Sin ciclo activo"}
+                  </span>
+                ) : null}
                 <span
                   className={`rounded-[3px] px-2 py-1 text-[10px] font-bold ${
                     billing.current_cycle_paid
@@ -2204,7 +2207,7 @@ export function OnboardingClientPage({
                 </span>
               </div>
 
-              <div className="mt-3 grid grid-cols-5 gap-3 text-[10px] font-medium sm:gap-4 sm:text-[11px] lg:gap-5">
+              <div className="mt-3 flex flex-wrap items-center gap-x-8 gap-y-3 text-[10px] font-medium sm:gap-x-10 sm:text-[11px] lg:gap-x-12">
                 <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Disponibles</span>
                   <span className="ml-1.5 text-[14px] font-bold text-[#00bda5] sm:text-[15px] xl:text-[16px]">
@@ -2229,7 +2232,7 @@ export function OnboardingClientPage({
                     {metrics.total ? Math.round(((metrics.reserved + metrics.consumed) / metrics.total) * 100) : 0}%
                   </span>
                 </div>
-                <div className="min-w-0 whitespace-nowrap text-right">
+                <div className="min-w-0 whitespace-nowrap">
                   <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Deducidos</span>
                   <span className="ml-1.5 text-[14px] font-bold text-[#94a3b8] sm:text-[15px] xl:text-[16px]">
                     {metrics.lost} créditos
@@ -2257,17 +2260,10 @@ export function OnboardingClientPage({
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
-                      onClick={saveConfig}
-                      disabled={isSavingConfig}
+                      onClick={saveAllAdjustments}
+                      disabled={isSavingConfig || isSavingMeta}
                     >
-                      {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
-                    </Button>
-                    <Button
-                      className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
-                      onClick={saveClientMeta}
-                      disabled={isSavingMeta}
-                    >
-                      {isSavingMeta ? "Guardando..." : "Guardar cliente"}
+                      {isSavingConfig || isSavingMeta ? "Guardando..." : "Guardar ajustes"}
                     </Button>
                   </div>
                 </div>
@@ -2317,40 +2313,12 @@ export function OnboardingClientPage({
                   >
                     Configurar oferta
                   </button>
-                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                  <button
-                    type="button"
-                    onClick={openUpsellModal}
-                    className="inline-flex items-center gap-1.5 text-[#ff7a59] transition hover:text-[#dc6548]"
-                  >
-                    <span className="text-[14px] leading-none">+</span>
-                    Añadir paquetes de créditos
-                  </button>
-                  <span className="text-[#9cb1c6]">{currentExtraCapacityCredits} CR extra</span>
-                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                  <button
-                    type="button"
-                    onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
-                    className="inline-flex items-center gap-1.5 transition hover:text-[#33475b]"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Agregar grupo
-                  </button>
-                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
                   <Button
                     className="rounded-[3px] bg-[#00bda5] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
-                    onClick={saveConfig}
-                    disabled={isSavingConfig}
+                    onClick={saveAllAdjustments}
+                    disabled={isSavingConfig || isSavingMeta}
                   >
-                    {isSavingConfig ? "Guardando..." : "Guardar ajustes"}
-                  </Button>
-                  <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
-                  <Button
-                    className="rounded-[3px] bg-[#33475b] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#26394d]"
-                    onClick={saveClientMeta}
-                    disabled={isSavingMeta}
-                  >
-                    {isSavingMeta ? "Guardando..." : "Guardar cliente"}
+                    {isSavingConfig || isSavingMeta ? "Guardando..." : "Guardar ajustes"}
                   </Button>
                 </div>
               )
@@ -2500,35 +2468,6 @@ export function OnboardingClientPage({
       ) : null}
 
       <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
-        {activeStage === "cs" && writable ? (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-[#dfe3eb] bg-white px-4 py-3 shadow-sm">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
-                Acciones del plan
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[11px] font-bold text-[#516f90]">
-                {currentExtraCapacityCredits} CR extra
-              </span>
-              <Button
-                variant="secondary"
-                className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
-                onClick={openUpsellModal}
-              >
-                <Plus className="mr-2 h-3.5 w-3.5" />
-                Añadir paquetes de créditos
-              </Button>
-              <Button
-                className="h-10 rounded-[8px] bg-[#14b8a6] px-4 text-[12px] font-semibold text-white hover:bg-[#0ea899]"
-                onClick={() => openCatalogModal("wizard")}
-              >
-                <Sparkles className="mr-2 h-3.5 w-3.5" />
-                Guía inteligente
-              </Button>
-            </div>
-          </div>
-        ) : null}
         <div className="overflow-x-auto overflow-y-hidden">
           <div className="flex min-h-[270px] min-w-max gap-4">
             {boardStatuses.map((status) => {
@@ -2541,7 +2480,8 @@ export function OnboardingClientPage({
                 0,
               );
               const allowsQuickAdd = writable && (status === "backlog" || status === "planned");
-              const showsBottomCreateButton = writable && (status === "backlog" || status === "planned");
+              const showsBottomCreateButton =
+                writable && activeStage !== "cs" && (status === "backlog" || status === "planned");
 
               return (
                 <div key={status} className="flex w-[340px] flex-col">
@@ -2831,6 +2771,22 @@ export function OnboardingClientPage({
               );
             })}
           </div>
+          {activeStage === "cs" && writable ? (
+            <div className="mt-4 flex min-w-max gap-4 px-1">
+              <div className="w-[696px]">
+                <Button
+                  variant="primary"
+                  className="w-full !rounded-[4px] !border-2 !border-dashed !border-[#00bda5] !bg-[#effdfa] px-6 py-4 !text-[16px] !font-bold !text-[#00bda5] !shadow-none transition hover:!border-[#00a894] hover:!bg-[#e6fcf8] hover:!text-[#00a894]"
+                  onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
+                >
+                  <Plus className="mr-2 h-5 w-5" />
+                  Agregar Caso de Uso
+                </Button>
+              </div>
+              <div className="w-[340px]" aria-hidden="true" />
+              <div className="w-[340px]" aria-hidden="true" />
+            </div>
+          ) : null}
         </div>
       </section>
 

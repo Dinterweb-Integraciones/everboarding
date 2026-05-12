@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
+import { EXTRA_CREDIT_PACKAGE_PURCHASE_KIND, PUBLIC_EXTRA_CREDIT_PACKAGE } from "@/lib/constants";
 import {
   getPlanPeriodLabel,
   suggestPlanPrice,
@@ -14,6 +15,7 @@ import { formatUserError } from "@/lib/utils";
 type CheckoutRequestBody = {
   audience?: PublicOnboardingAudience;
   slug?: string;
+  purchaseKind?: "plan" | "extra_package";
 };
 
 type PublicOnboardingRpcResponse = {
@@ -61,6 +63,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const purchaseKind = body.purchaseKind === "extra_package" ? "extra_package" : "plan";
+
+    if (purchaseKind === "extra_package" && body.audience !== "client") {
+      return NextResponse.json(
+        { message: "Solo la vista publica del cliente puede comprar paquetes extra." },
+        { status: 400 },
+      );
+    }
+
     const supabase = await createSupabaseServerClient();
     const { data, error } = (await supabase.rpc("get_public_onboarding_snapshot", {
       p_slug: body.slug,
@@ -76,13 +87,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const amount = Number(
-      data.config.custom_plan_price ??
-        suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
-    );
+    const amount =
+      purchaseKind === "extra_package"
+        ? PUBLIC_EXTRA_CREDIT_PACKAGE.price
+        : Number(
+            data.config.custom_plan_price ??
+              suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
+          );
     const amountInCents = Math.round(amount * 100);
     const periodMonths = data.config.custom_plan_period_months ?? 1;
-    const usesSubscription = data.config.custom_plan_billing_mode !== "one_time";
+    const usesSubscription =
+      purchaseKind === "plan" && data.config.custom_plan_billing_mode !== "one_time";
 
     if (!Number.isFinite(amountInCents) || amountInCents <= 0) {
       return NextResponse.json(
@@ -98,17 +113,30 @@ export async function POST(request: Request) {
       client_id: data.client.id,
       client_slug: data.client.slug,
       audience: body.audience,
+      purchase_kind:
+        purchaseKind === "extra_package"
+          ? EXTRA_CREDIT_PACKAGE_PURCHASE_KIND
+          : "plan",
       billing_kind: usesSubscription ? "subscription" : "one_time",
       period_months: String(periodMonths),
+      extra_capacity_credits:
+        purchaseKind === "extra_package"
+          ? String(PUBLIC_EXTRA_CREDIT_PACKAGE.credits)
+          : "0",
     };
-    const productName = usesSubscription
-      ? `Membresia Onboarding ${getPlanPeriodLabel(periodMonths)} - ${data.client.name}`
-      : `Onboarding - ${data.client.name}`;
+    const productName =
+      purchaseKind === "extra_package"
+        ? `Paquete extra de ${PUBLIC_EXTRA_CREDIT_PACKAGE.credits} creditos - ${data.client.name}`
+        : usesSubscription
+          ? `Membresia Onboarding ${getPlanPeriodLabel(periodMonths)} - ${data.client.name}`
+          : `Onboarding - ${data.client.name}`;
     const productDescription =
-      data.client.description ||
-      (usesSubscription
-        ? "Membresia recurrente de onboarding y acompanamiento operativo."
-        : "Plan de onboarding y acompanamiento operativo.");
+      purchaseKind === "extra_package"
+        ? "Compra adicional de creditos para ampliar la capacidad operativa del onboarding."
+        : data.client.description ||
+          (usesSubscription
+            ? "Membresia recurrente de onboarding y acompanamiento operativo."
+            : "Plan de onboarding y acompanamiento operativo.");
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: usesSubscription ? "subscription" : "payment",
       submit_type: usesSubscription ? "subscribe" : "pay",
@@ -134,8 +162,12 @@ export async function POST(request: Request) {
         },
       ],
       metadata,
-      success_url: `${checkoutUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${checkoutUrl}?payment=cancelled`,
+      success_url: `${checkoutUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}${
+        purchaseKind === "extra_package" ? "&purchase=extra_capacity" : ""
+      }`,
+      cancel_url: `${checkoutUrl}?payment=cancelled${
+        purchaseKind === "extra_package" ? "&purchase=extra_capacity" : ""
+      }`,
     };
 
     if (usesSubscription) {
