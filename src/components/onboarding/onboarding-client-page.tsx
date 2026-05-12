@@ -2695,6 +2695,43 @@ export function OnboardingClientPage({
                                 ) : null}
                               </div>
 
+                              {activeStage === "client" ? (
+                                <div className="mt-3 rounded-[3px] border border-[#eaf0f6] bg-[#f8fbfd] p-2">
+                                  <div className="mb-1 flex items-center justify-between gap-2">
+                                    <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-[#516f90]">
+                                      Tareas
+                                    </span>
+                                    <span className="text-[9px] font-bold text-[#9cb1c6]">
+                                      {initiative.subitems.length}
+                                    </span>
+                                  </div>
+                                  {initiative.subitems.length ? (
+                                    <div className="space-y-1">
+                                      {initiative.subitems.slice(0, 3).map((subitem) => (
+                                        <div
+                                          key={subitem.id}
+                                          className="flex items-center justify-between gap-2 rounded-[2px] bg-white px-2 py-1 text-[9px] text-[#33475b]"
+                                        >
+                                          <span className="truncate">{subitem.name}</span>
+                                          <span className="shrink-0 text-[#9cb1c6]">
+                                            {subitem.quantity} x {subitem.unit_credits}
+                                          </span>
+                                        </div>
+                                      ))}
+                                      {initiative.subitems.length > 3 ? (
+                                        <p className="text-[9px] font-bold text-[#9cb1c6]">
+                                          +{initiative.subitems.length - 3} tareas mas
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[9px] text-[#9cb1c6]">
+                                      Sin tareas visibles.
+                                    </p>
+                                  )}
+                                </div>
+                              ) : null}
+
                               <div className="mt-3 flex items-center justify-between border-t border-[#eaf0f6] pt-2">
                                 <span className="text-[10px] font-bold text-[#9cb1c6]">
                                   {spanLabel}

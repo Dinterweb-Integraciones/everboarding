@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, CreditCard, Plus, ShieldCheck } from "lucide-react";
+import { CalendarDays, CreditCard, Plus, ShieldCheck, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { STATUS_META, STAGE_META, TASK_STATUS_META } from "@/lib/constants";
+import { STATUS_META, STAGE_META } from "@/lib/constants";
 import {
   calculateMetrics,
   formatDateRange,
@@ -18,13 +18,14 @@ import {
   resolveStageFromPublicAudience,
   suggestPlanPrice,
   type ClientBillingStatus,
+  type CreditCatalogGroupItem,
+  type CreditCatalogItem,
   type InitiativeRecord,
   type InitiativeStatus,
-  type InitiativeTaskStatus,
   type PublicOnboardingAudience,
   type PublicOnboardingSnapshot,
 } from "@/lib/onboarding";
-import { formatCurrency, formatDate, formatUserError } from "@/lib/utils";
+import { formatCurrency, formatUserError } from "@/lib/utils";
 
 type PublicOnboardingPageProps = {
   audience: PublicOnboardingAudience;
@@ -32,7 +33,20 @@ type PublicOnboardingPageProps = {
   initialData: PublicOnboardingSnapshot;
 };
 
+type CatalogModalGroup = {
+  id: string;
+  name: string;
+  description: string;
+  modalCategoryId: string | null;
+  modalCategory: string;
+  priorityStatus: "normal" | "prioritario";
+  credits: number;
+  sortOrder: number;
+  items: CreditCatalogItem[];
+};
+
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
+type PublicDraftTargetStatus = Extract<InitiativeStatus, "backlog" | "planned">;
 
 function getStatusDot(status: InitiativeStatus) {
   if (status === "executing") return "bg-emerald-500";
@@ -47,10 +61,16 @@ function getSafeStatusMeta(status: InitiativeStatus | string | null | undefined)
   ];
 }
 
-function getSafeTaskStatusMeta(status: InitiativeTaskStatus | string | null | undefined) {
-  return TASK_STATUS_META[
-    status === "in_progress" || status === "blocked" || status === "completed" ? status : "pending"
-  ];
+function normalizeCatalogText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
+  return priorityStatus === "prioritario" ? 0 : 1;
 }
 
 function parseCalendarDate(value: string) {
@@ -102,6 +122,13 @@ function getPublicTimelineBarClass(status: InitiativeStatus) {
   return "border border-dashed border-[#8ea2bd] bg-white text-[#5f7695] shadow-none";
 }
 
+function getPublicBoardAccentClass(status: InitiativeStatus) {
+  if (status === "executing") return "bg-[#00bda5]";
+  if (status === "planned") return "bg-[#6a78d1]";
+  if (status === "completed") return "bg-[#33475b]";
+  return "bg-[#cbd6e2]";
+}
+
 function formatLongDate(value: string) {
   return new Intl.DateTimeFormat("es-NI", {
     day: "numeric",
@@ -122,6 +149,26 @@ function getDaysUntil(date: string | null) {
   );
 }
 
+function getPublicInitiativeSpanLabel(
+  startDate: string | null,
+  endDate: string | null,
+  fallbackCount = 0,
+) {
+  if (startDate && endDate) {
+    const days = Math.max(
+      diffCalendarDays(parseCalendarDate(startDate), parseCalendarDate(endDate)) + 1,
+      1,
+    );
+    return `${days}d`;
+  }
+
+  return fallbackCount > 0 ? `${fallbackCount} act` : "--";
+}
+
+function getPublicDraftStatusLabel(status: PublicDraftTargetStatus) {
+  return status === "planned" ? "Planificado" : "En evaluacion";
+}
+
 export function PublicOnboardingPage({
   audience,
   publicSlug,
@@ -134,8 +181,12 @@ export function PublicOnboardingPage({
     description: "",
     selectedCatalogItemIds: [] as string[],
   });
+  const [requestTargetStatus, setRequestTargetStatus] = useState<PublicDraftTargetStatus>("backlog");
   const [catalogSelection, setCatalogSelection] = useState("");
   const [isGroupBuilderOpen, setIsGroupBuilderOpen] = useState(false);
+  const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+  const [activeCatalogTab, setActiveCatalogTab] = useState("");
+  const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -198,6 +249,100 @@ export function PublicOnboardingPage({
     () => new Map(initialData.catalog.map((item) => [item.id, item])),
     [initialData.catalog],
   );
+  const catalogGroups = useMemo(() => {
+    const itemById = new Map(initialData.catalog.map((item) => [item.id, item]));
+    const groupCategoriesById = new Map(
+      initialData.catalogGroupCategories.map((category) => [category.id, category] as const),
+    );
+    const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
+
+    initialData.catalogGroupMemberships.forEach((membership) => {
+      const bucket = membershipsByGroup.get(membership.group_id) ?? [];
+      bucket.push(membership);
+      membershipsByGroup.set(membership.group_id, bucket);
+    });
+
+    return initialData.catalogGroups
+      .filter((group) => group.is_active)
+      .map((group) => {
+        const selectedCategory = group.modal_category_id
+          ? groupCategoriesById.get(group.modal_category_id) ?? null
+          : null;
+        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
+        const items = (membershipsByGroup.get(group.id) ?? [])
+          .sort((left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0))
+          .map((membership) => itemById.get(membership.catalog_item_id))
+          .filter((item): item is CreditCatalogItem => Boolean(item));
+        const credits = items.length
+          ? items.reduce((sum, item) => sum + Number(item.credits ?? 0), 0)
+          : Math.max(0, Number(group.credits ?? 0));
+
+        return {
+          id: group.id,
+          name: group.name,
+          description: group.description?.trim() || "",
+          modalCategoryId: selectedCategory?.id ?? null,
+          modalCategory,
+          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
+          credits,
+          sortOrder: Number(group.sort_order ?? 0),
+          items,
+        } satisfies CatalogModalGroup;
+      })
+      .sort(
+        (left, right) =>
+          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
+      );
+  }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupMemberships, initialData.catalogGroups]);
+  const catalogGroupOptions = useMemo(() => {
+    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
+    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
+
+    catalogGroups.forEach((group) => {
+      if (group.modalCategoryId) {
+        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
+        bucket.push(group);
+        groupedByCategoryId.set(group.modalCategoryId, bucket);
+        return;
+      }
+
+      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
+      bucket.push(group);
+      groupedLegacy.set(group.modalCategory, bucket);
+    });
+
+    const orderedCategoryTabs = initialData.catalogGroupCategories
+      .filter((category) => category.is_active)
+      .map((category) => ({
+        id: category.id,
+        label: category.name,
+        sortOrder: Number(category.sort_order ?? 0),
+        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
+        ),
+      }))
+      .filter((category) => category.groups.length > 0)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
+
+    const legacyTabs = Array.from(groupedLegacy.entries())
+      .map(([category, groups]) => ({
+        id: `legacy:${category}`,
+        label: category,
+        sortOrder: Number.MAX_SAFE_INTEGER,
+        groups: [...groups].sort(
+          (left, right) =>
+            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
+            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
+        ),
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label, "es"));
+
+    return [...orderedCategoryTabs, ...legacyTabs];
+  }, [catalogGroups, initialData.catalogGroupCategories]);
+  const defaultCatalogLibraryTab = catalogGroupOptions[0]?.id ?? "";
   const selectedCatalogItems = useMemo(
     () =>
       requestDraft.selectedCatalogItemIds
@@ -437,11 +582,15 @@ export function PublicOnboardingPage({
     };
   }, [publicSlug]);
 
-  async function createPublicRequest(draft: {
-    title: string;
-    description: string;
-    selectedCatalogItemIds: string[];
-  }) {
+  async function createPublicRequest(
+    draft: {
+      title: string;
+      description: string;
+      selectedCatalogItemIds: string[];
+      selectedGroupId?: string | null;
+    },
+    targetStatus: PublicDraftTargetStatus = requestTargetStatus,
+  ) {
     setFeedback(null);
 
     if (audience !== "client") {
@@ -456,7 +605,7 @@ export function PublicOnboardingPage({
       return;
     }
 
-    if (!draft.selectedCatalogItemIds.length) {
+    if (!draft.selectedCatalogItemIds.length && !draft.selectedGroupId?.trim()) {
       setFeedback({
         tone: "error",
         message: "Selecciona al menos una tarea de la biblioteca para armar el caso de uso.",
@@ -476,6 +625,8 @@ export function PublicOnboardingPage({
           title: draft.title.trim(),
           description: draft.description.trim(),
           catalogItemIds: draft.selectedCatalogItemIds,
+          groupId: draft.selectedGroupId?.trim() || undefined,
+          targetStatus,
         }),
       });
 
@@ -495,12 +646,30 @@ export function PublicOnboardingPage({
         .map((catalogItemId) => catalogItemMap.get(catalogItemId))
         .filter((item): item is NonNullable<typeof item> => Boolean(item));
       const nowIso = new Date().toISOString();
-      setInitiatives((current) =>
-        [...current, {
-          ...nextInitiative,
-          labels: nextInitiative.labels ?? [],
-          logs: nextInitiative.logs ?? [],
-          subitems: selectedItems.map((item, index) => ({
+      const returnedSubitems: InitiativeRecord["subitems"] = (nextInitiative.subitems ?? []).map(
+        (subitem, index) => ({
+          ...subitem,
+          id: subitem.id ?? `${nextInitiative.id}-subitem-${index}`,
+          initiative_id: subitem.initiative_id ?? nextInitiative.id,
+          catalog_item_id: subitem.catalog_item_id ?? null,
+          name: subitem.name,
+          status:
+            subitem.status === "in_progress" ||
+            subitem.status === "blocked" ||
+            subitem.status === "completed"
+              ? subitem.status
+              : "pending",
+          target_date: subitem.target_date ?? null,
+          unit_credits: Number(subitem.unit_credits ?? 0),
+          quantity: Number(subitem.quantity ?? 1),
+          sort_order: Number(subitem.sort_order ?? index),
+          created_at: subitem.created_at ?? nowIso,
+          updated_at: subitem.updated_at ?? nowIso,
+        }),
+      );
+      const resolvedSubitems: InitiativeRecord["subitems"] = returnedSubitems.length
+        ? returnedSubitems
+        : selectedItems.map((item, index) => ({
             id: `${nextInitiative.id}-${item.id}`,
             initiative_id: nextInitiative.id,
             catalog_item_id: item.id,
@@ -512,8 +681,17 @@ export function PublicOnboardingPage({
             sort_order: index,
             created_at: nowIso,
             updated_at: nowIso,
-          })),
-          credits: selectedItems.reduce((sum, item) => sum + item.credits, 0),
+          }));
+      setInitiatives((current) =>
+        [...current, {
+          ...nextInitiative,
+          labels: nextInitiative.labels ?? [],
+          logs: nextInitiative.logs ?? [],
+          subitems: resolvedSubitems,
+          credits: resolvedSubitems.reduce(
+            (sum, item) => sum + Number(item.unit_credits ?? 0) * Number(item.quantity ?? 1),
+            0,
+          ),
           progressPercent: 0,
         }].sort((left, right) => left.sort_order - right.sort_order),
       );
@@ -522,7 +700,7 @@ export function PublicOnboardingPage({
       setIsGroupBuilderOpen(false);
       setFeedback({
         tone: "success",
-        message: "Tu solicitud quedo registrada en En evaluacion.",
+        message: `Tu solicitud quedo registrada en ${getPublicDraftStatusLabel(targetStatus)}.`,
       });
     } catch (caughtError) {
       setFeedback({
@@ -605,51 +783,53 @@ export function PublicOnboardingPage({
     }));
   }
 
-  function openGroupedBuilder() {
-    setFeedback(null);
-    const selectedItem = catalogSelection ? catalogItemMap.get(catalogSelection) : null;
-
-    setRequestDraft((current) => ({
-      ...current,
-      title: current.title || selectedItem?.label || current.title,
-      selectedCatalogItemIds:
-        !selectedItem || current.selectedCatalogItemIds.includes(selectedItem.id)
-        ? current.selectedCatalogItemIds
-        : [...current.selectedCatalogItemIds, selectedItem.id],
-    }));
-    setIsGroupBuilderOpen(true);
-    if (selectedItem) {
-      setCatalogSelection("");
-    }
-  }
-
   function closeGroupedBuilder() {
     setIsGroupBuilderOpen(false);
   }
 
-  async function quickAddBacklogItem() {
-    if (!catalogSelection) {
-      setFeedback({
-        tone: "error",
-        message: "Selecciona una tarea disponible antes de añadirla.",
-      });
-      return;
-    }
+  function openCatalogModal(targetStatus: PublicDraftTargetStatus = "backlog") {
+    setFeedback(null);
+    setRequestTargetStatus(targetStatus);
+    setActiveCatalogTab(defaultCatalogLibraryTab);
+    setCatalogPreviewGroup(null);
+    setIsCatalogModalOpen(true);
+  }
 
-    const selectedItem = catalogItemMap.get(catalogSelection);
-    if (!selectedItem) {
-      setFeedback({
-        tone: "error",
-        message: "La tarea seleccionada ya no esta disponible.",
-      });
-      return;
-    }
+  function closeCatalogModal() {
+    setIsCatalogModalOpen(false);
+    setCatalogPreviewGroup(null);
+  }
 
-    await createPublicRequest({
-      title: selectedItem.label,
-      description: "",
-      selectedCatalogItemIds: [selectedItem.id],
+  function openCatalogGroupPreview(group: CatalogModalGroup) {
+    setCatalogPreviewGroup(group);
+  }
+
+  function closeCatalogGroupPreview() {
+    setCatalogPreviewGroup(null);
+  }
+
+  function loadGroupIntoBuilder(group: CatalogModalGroup) {
+    setFeedback(null);
+    setRequestDraft({
+      title: group.name,
+      description: group.description,
+      selectedCatalogItemIds: group.items.map((item) => item.id),
     });
+    setCatalogSelection("");
+    setCatalogPreviewGroup(null);
+    setIsCatalogModalOpen(false);
+    setIsGroupBuilderOpen(true);
+  }
+
+  async function quickAddCatalogGroup(group: CatalogModalGroup) {
+    await createPublicRequest({
+      title: group.name,
+      description: group.description,
+      selectedCatalogItemIds: group.items.map((item) => item.id),
+      selectedGroupId: group.id,
+    }, requestTargetStatus);
+    setCatalogPreviewGroup(null);
+    setIsCatalogModalOpen(false);
   }
 
   return (
@@ -774,10 +954,13 @@ export function PublicOnboardingPage({
           <div className="grid gap-4 xl:grid-cols-4">
             {boardStatuses.map((status) => {
               const items = groupedInitiatives[status];
+              const totalCredits = items.reduce((sum, initiative) => sum + initiative.credits, 0);
+              const allowsCatalogAdd =
+                audience === "client" && catalogGroupOptions.length > 0 && (status === "backlog" || status === "planned");
 
               return (
-                <div key={status} className="space-y-3">
-                  <div className="flex items-center justify-between">
+                <div key={status} className="flex min-h-[270px] flex-col">
+                  <div className="mb-2 flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
                       <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(status)}`} />
                       <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
@@ -785,143 +968,120 @@ export function PublicOnboardingPage({
                       </p>
                     </div>
                     <span className="rounded-[3px] bg-white px-2 py-1 text-[10px] font-bold text-[#516f90]">
-                      {items.reduce((sum, initiative) => sum + initiative.credits, 0)} CR
+                      {totalCredits} CR
                     </span>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="min-h-[220px] flex-1 space-y-3 rounded-[4px] border border-dashed border-transparent bg-transparent p-2">
                     {items.map((initiative) => {
                       const estimatedStatus = getEstimatedStatus(
                         initiative.est_start_date,
                         initiative.est_end_date,
                         initiative.status,
                       );
+                      const spanLabel = getPublicInitiativeSpanLabel(
+                        initiative.est_start_date,
+                        initiative.est_end_date,
+                        initiative.subitems.length,
+                      );
+                      const inactiveDays =
+                        initiative.status === "executing"
+                          ? Math.ceil(
+                              (new Date().getTime() -
+                                new Date(
+                                  `${initiative.last_activity ?? new Date().toISOString().slice(0, 10)}T00:00:00`,
+                                ).getTime()) /
+                                (1000 * 60 * 60 * 24),
+                            )
+                          : 0;
+                      const progressPercent = Math.max(0, Math.min(100, initiative.progressPercent ?? 0));
 
                       return (
                         <div
                           key={initiative.id}
-                          className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-[0_6px_18px_rgba(51,71,91,0.08)]"
+                          className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <h3 className="text-[13px] font-bold text-[#33475b]">
-                                {initiative.title}
-                              </h3>
-                              {initiative.labels.length ? (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {initiative.labels.map((label) => (
-                                    <span
-                                      key={`${initiative.id}-${label}`}
-                                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
-                                    >
-                                      #{label}
-                                    </span>
-                                  ))}
+                          <div
+                            className={`absolute left-0 top-0 h-full w-[3px] ${getPublicBoardAccentClass(status)}`}
+                          />
+                          <div className="absolute left-[3px] right-0 top-0 h-[3px] overflow-hidden rounded-tr-[4px] bg-[#eef2f7]">
+                            <div
+                              className={`h-full transition-all ${
+                                progressPercent >= 100
+                                  ? "bg-[#33475b]"
+                                  : progressPercent >= 60
+                                    ? "bg-[#00bda5]"
+                                    : progressPercent > 0
+                                      ? "bg-[#6a78d1]"
+                                      : "bg-[#cbd6e2]"
+                              }`}
+                              style={{ width: `${progressPercent}%` }}
+                            />
+                          </div>
+                          <div className="min-w-0 pl-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <h3 className="text-[13px] font-bold leading-4 text-[#33475b]">
+                                    {initiative.title}
+                                  </h3>
+                                  <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold text-[#516f90]">
+                                    {progressPercent}%
+                                  </span>
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
+                                  {initiative.description || "Sin descripcion ejecutiva."}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 space-y-1.5">
+                              <div className="rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                                {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
+                                {estimatedStatus && estimatedStatus.label !== "Sin fechas"
+                                  ? ` - ${estimatedStatus.label}`
+                                  : ""}
+                              </div>
+
+                              {initiative.is_blocked ? (
+                                <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-[#ef4444]">
+                                  Bloqueada
+                                </div>
+                              ) : initiative.status === "executing" && inactiveDays > 7 ? (
+                                <div className="text-[9px] font-bold text-[#ef4444]">
+                                  Inactiva {inactiveDays} d
                                 </div>
                               ) : null}
-                              <p className="mt-1 text-[11px] text-[#516f90]">
-                                {initiative.description || "Sin descripcion ejecutiva."}
-                              </p>
                             </div>
-                            <span className="rounded-[3px] bg-[#eaf0f6] px-2 py-0.5 text-[10px] font-bold text-[#516f90]">
-                              {initiative.credits} CR
-                            </span>
-                          </div>
 
-                          <div className="mt-3">
-                            <div className="mb-1 flex items-center justify-between text-[10px] font-semibold text-[#516f90]">
-                              <span>Avance</span>
-                              <span>{initiative.progressPercent}%</span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-[#eaf0f6]">
-                              <div
-                                className="h-full rounded-full bg-[#00bda5]"
-                                style={{ width: `${initiative.progressPercent}%` }}
-                              />
+                            <div className="mt-3 flex items-center justify-between border-t border-[#eaf0f6] pt-2">
+                              <span className="text-[10px] font-bold text-[#9cb1c6]">
+                                {spanLabel}
+                              </span>
+                              <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[10px] font-bold text-[#33475b]">
+                                {initiative.credits} CR
+                              </span>
                             </div>
                           </div>
-
-                          <div className="mt-3 rounded-[3px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-1 text-[10px] font-bold text-[#d97706]">
-                            {estimatedStatus?.label ||
-                              formatDateRange(initiative.est_start_date, initiative.est_end_date)}
-                          </div>
-
-                          {initiative.subitems.length ? (
-                            <div className="mt-3 space-y-1">
-                              {initiative.subitems.map((subitem) => (
-                                <div
-                                  key={subitem.id}
-                                  className="flex items-center justify-between gap-3 rounded-[3px] bg-[#f8fbfd] px-2 py-1.5 text-[10px] text-[#33475b]"
-                                >
-                                  <span className="truncate">{subitem.name}</span>
-                                  <div className="flex shrink-0 items-center gap-2 text-[#516f90]">
-                                    {subitem.target_date ? <span>{formatDate(subitem.target_date)}</span> : null}
-                                     <span className={`rounded-full px-2 py-0.5 font-semibold ${getSafeTaskStatusMeta(subitem.status).muted}`}>
-                                       {getSafeTaskStatusMeta(subitem.status).label}
-                                     </span>
-                                    <span>{subitem.quantity} x {subitem.unit_credits} CR</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
                         </div>
                       );
                     })}
 
                     {!items.length ? (
-                      <div className="rounded-[6px] border border-dashed border-[#cbd6e2] bg-white/90 px-4 py-6 text-center text-[12px] text-[#8aa0b4]">
-                        Sin iniciativas
+                      <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white/70 p-4 text-[11px] text-[#9cb1c6]">
+                        Vacio
                       </div>
                     ) : null}
 
-                    {audience === "client" && status === "backlog" ? (
-                      <>
-                        <div className="rounded-[6px] border border-dashed border-[#cbd6e2] bg-white px-3 py-3 shadow-none">
-                          <select
-                            value={catalogSelection}
-                            onChange={(event) => setCatalogSelection(event.target.value)}
-                            className="h-9 w-full appearance-none rounded-[3px] border border-[#dfe3eb] bg-white px-3 text-[10px] font-medium text-[#33475b] outline-none"
-                          >
-                            <option value="">-- Rapido --</option>
-                            {catalogOptions.map((entry) => (
-                              <optgroup key={entry.category} label={entry.category}>
-                                {entry.items.map((item) => (
-                                  <option key={item.id} value={item.id}>
-                                    {item.label} ({item.credits} CR)
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ))}
-                          </select>
-                          <div className="mt-1.5 flex gap-1.5">
-                            <Button
-                              variant="secondary"
-                              className="h-7 flex-1 rounded-[999px] border-[#cbd6e2] bg-white px-2 py-1 text-[10px] font-bold text-[#516f90]"
-                              onClick={() => void quickAddBacklogItem()}
-                              disabled={isSubmitting || !catalogSelection}
-                            >
-                              Añadir
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              className="h-7 flex-1 rounded-[999px] border-[#cbd6e2] bg-white px-2 py-1 text-[10px] font-bold text-[#33475b]"
-                              onClick={openGroupedBuilder}
-                            >
-                              Agrupar
-                            </Button>
-                          </div>
-                        </div>
-
-                        <Button
-                          variant="secondary"
-                          className="w-full rounded-[3px] border-2 border-dashed border-[#cbd6e2] bg-white px-3 py-2 text-[10px] font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b]"
-                          onClick={() => setIsGroupBuilderOpen(true)}
-                        >
-                          <Plus className="mr-1.5 h-3.5 w-3.5" />
-                          Añadir Caso de Uso a En evaluación
-                        </Button>
-                      </>
+                    {allowsCatalogAdd ? (
+                      <Button
+                        variant="secondary"
+                        className="mt-3 w-full rounded-[4px] border-2 border-dashed border-[#00bda5] bg-[#f3fffd] px-3 py-5 text-[11px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                        onClick={() => openCatalogModal(status === "planned" ? "planned" : "backlog")}
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        Agregar Caso de Uso
+                      </Button>
                     ) : null}
                   </div>
                 </div>
@@ -1150,6 +1310,219 @@ export function PublicOnboardingPage({
         </section>
       </main>
 
+      {isCatalogModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/70 p-4 backdrop-blur-sm">
+          <div className="relative flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[16px] border border-[#dfe3eb] bg-white shadow-2xl">
+            <div className="border-b border-[#dfe3eb] bg-white px-6 py-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#9cb1c6]">
+                    Catalogo de grupos
+                  </p>
+                  <h3 className="mt-2 text-[24px] font-extrabold tracking-[-0.02em] text-[#33475b]">
+                    Agrega casos de uso completos
+                  </h3>
+                  <p className="mt-2 text-[13px] text-[#516f90]">
+                    Usa el mismo catalogo de grupos para proponer iniciativas completas con sus tareas incluidas.
+                  </p>
+                </div>
+                <Button variant="secondary" onClick={closeCatalogModal}>
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+              <aside className="border-b border-[#dfe3eb] bg-[#f8fbfd] p-4 lg:w-[240px] lg:border-b-0 lg:border-r">
+                <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Categorias
+                </p>
+                <div className="space-y-2">
+                  {catalogGroupOptions.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setActiveCatalogTab(category.id)}
+                      className={`w-full rounded-[6px] px-3 py-2 text-left text-[12px] font-bold transition ${
+                        activeCatalogTab === category.id
+                          ? "bg-[#00bda5] text-white"
+                          : "bg-white text-[#33475b] hover:bg-[#eef6ff]"
+                      }`}
+                    >
+                      {category.label}
+                    </button>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).length ? (
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => (
+                      <div
+                        key={group.id}
+                        className={`flex flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                          initiatives.some(
+                            (initiative) =>
+                              normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+                          )
+                            ? "border-[#eaf0f6] bg-[#f8fafc]"
+                            : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                        }`}
+                      >
+                        <div className="mb-3 flex flex-wrap gap-1.5">
+                          <span className="rounded-[2px] border border-[#00bda5]/20 bg-[#f0fdfa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#00bda5]">
+                            {group.modalCategory}
+                          </span>
+                          <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                            {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
+                          </span>
+                        </div>
+                        <h4 className="text-[14px] font-bold leading-snug text-[#33475b]">{group.name}</h4>
+                        <p className="mt-2 text-[11px] leading-relaxed text-[#516f90]">
+                          {group.description || "Grupo sugerido desde el catalogo para sumarlo al board del cliente."}
+                        </p>
+                        <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
+                          <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
+                          <button
+                            type="button"
+                            onClick={() => openCatalogGroupPreview(group)}
+                            className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                          >
+                            Ver detalles
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-[10px] border border-dashed border-[#cbd6e2] bg-[#fcfcfc] p-6 text-center text-[12px] text-[#8aa0b4]">
+                    No hay grupos activos en esta categoria todavia.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {catalogPreviewGroup ? (
+        <div className="fixed inset-0 z-[60] flex justify-end">
+          <button
+            type="button"
+            className="flex-1 bg-transparent"
+            onClick={closeCatalogGroupPreview}
+            aria-label="Cerrar detalle del grupo"
+          />
+          <aside className="relative flex h-full w-full max-w-[500px] flex-col border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+            <div className="border-b border-[#dfe3eb] bg-white px-6 py-6">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="inline-flex rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#00bda5]">
+                    {catalogPreviewGroup.modalCategory}
+                  </span>
+                  <h3 className="mt-4 text-[22px] font-extrabold leading-[1.1] text-[#33475b]">
+                    {catalogPreviewGroup.name}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeCatalogGroupPreview}
+                  className="rounded-[2px] p-1 text-[#9cb1c6] hover:bg-white hover:text-[#33475b]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Alcance y descripcion detallada
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                  <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#33475b]">
+                    {catalogPreviewGroup.description || "Este grupo no tiene descripcion detallada todavia."}
+                  </p>
+                </div>
+              </section>
+
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Tareas incluidas
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  {catalogPreviewGroup.items.length ? (
+                    <ul className="space-y-2">
+                      {catalogPreviewGroup.items.map((item) => (
+                        <li key={`preview-${catalogPreviewGroup.id}-${item.id}`} className="rounded-[4px] border border-[#eaf0f6] bg-white px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[12px] font-bold leading-snug text-[#33475b]">
+                                {item.label}
+                              </p>
+                              <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[#516f90]">
+                                {item.category}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-[11px] font-bold text-[#ff7a59]">
+                              {item.credits} CR
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[12px] text-[#516f90]">
+                      Este grupo no tiene tareas asociadas; usa una carga manual de creditos.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-[6px] border border-[#99f6e4] bg-[#f0fdfa] px-5 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
+                    Consumo de creditos:
+                  </p>
+                  <p className="text-[28px] font-extrabold text-[#00bda5]">
+                    {catalogPreviewGroup.credits} CR
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            <div className="border-t border-[#dfe3eb] bg-white px-5 py-5">
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => loadGroupIntoBuilder(catalogPreviewGroup)}
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#14b8a6] px-5 py-4 text-white shadow-md transition hover:bg-[#0ea899]"
+                >
+                  <span className="text-[14px] font-extrabold">Editar antes de enviar</span>
+                  <span className="mt-1 text-[11px] font-medium opacity-90">
+                    Carga el caso completo en {getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void quickAddCatalogGroup(catalogPreviewGroup)}
+                  disabled={isSubmitting}
+                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#5f7ea2] px-5 py-4 text-white shadow-md transition hover:bg-[#4f6f92] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="text-[14px] font-extrabold">
+                    {`Crear en ${getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}`}
+                  </span>
+                  <span className="mt-1 text-[11px] font-medium opacity-90">
+                    Envia el grupo con todas sus tareas
+                  </span>
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {isGroupBuilderOpen ? (
         <div className="fixed inset-0 z-50 bg-[#33475b]/60 backdrop-blur-[2px]">
           <button
@@ -1163,7 +1536,7 @@ export function PublicOnboardingPage({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <span className="inline-flex rounded-[2px] bg-[#eaf0f6] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
-                    En evaluación
+                    {getPublicDraftStatusLabel(requestTargetStatus)}
                   </span>
                   <Input
                     value={requestDraft.title}
@@ -1291,7 +1664,9 @@ export function PublicOnboardingPage({
 
             <div className="border-t border-[#dfe3eb] bg-white px-6 py-5">
               <Button className="w-full" onClick={submitPublicRequest} disabled={isSubmitting}>
-                {isSubmitting ? "Enviando..." : "Crear en evaluación"}
+                {isSubmitting
+                  ? "Enviando..."
+                  : `Crear en ${getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}`}
               </Button>
             </div>
           </aside>

@@ -90,6 +90,9 @@ export type PublicOnboardingSnapshot = {
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
   catalogCategories: CreditCatalogCategory[];
+  catalogGroups: CreditCatalogGroup[];
+  catalogGroupCategories: CreditCatalogGroupCategory[];
+  catalogGroupMemberships: CreditCatalogGroupItem[];
   paymentEmail: string | null;
 };
 

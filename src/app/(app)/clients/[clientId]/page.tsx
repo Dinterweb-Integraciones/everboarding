@@ -13,6 +13,7 @@ import {
   type ProjectStage,
   type ShareLinkRecord,
 } from "@/lib/onboarding";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database, Tables } from "@/types/database";
 
 type ClientDetailPageProps = {
@@ -31,6 +32,7 @@ export default async function ClientDetailPage({
   const { clientId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const { supabase, user } = await requireUser();
+  const admin = createSupabaseAdminClient();
 
   const { data: client, error: clientError } = await supabase
     .from("clients")
@@ -84,7 +86,11 @@ export default async function ClientDetailPage({
   const initiativeRecords = (initiativeRows ?? []) as Tables<"onboarding_initiatives">[];
   const initiativeIds = initiativeRecords.map((initiative) => initiative.id);
 
-  const [{ data: subitemRows }, { data: logRows }, { data: catalogRows }] = await Promise.all([
+  const [
+    { data: subitemRows, error: subitemsError },
+    { data: logRows, error: logsError },
+    { data: catalogRows, error: catalogError },
+  ] = await Promise.all([
     initiativeIds.length
       ? supabase
           .from("onboarding_initiative_subitems")
@@ -97,7 +103,7 @@ export default async function ClientDetailPage({
           .select("*")
           .in("initiative_id", initiativeIds)
       : Promise.resolve({ data: [], error: null }),
-    supabase
+    admin
       .from("credit_catalog_items")
       .select("*")
       .eq("is_active", true)
@@ -106,14 +112,38 @@ export default async function ClientDetailPage({
   ]);
 
   const [
-    { data: catalogGroupRows },
-    { data: catalogGroupCategoryRows },
-    { data: catalogGroupMembershipRows },
+    { data: catalogGroupRows, error: catalogGroupsError },
+    { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
+    { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
   ] = await Promise.all([
-    supabase.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
-    supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
-    supabase.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
+    admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
+    admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
+    admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
   ]);
+
+  if (subitemsError) {
+    throw new Error("No pudimos cargar las tareas de las iniciativas.");
+  }
+
+  if (logsError) {
+    throw new Error("No pudimos cargar el historial del onboarding.");
+  }
+
+  if (catalogError) {
+    throw new Error("No pudimos cargar el catalogo de tareas.");
+  }
+
+  if (catalogGroupsError) {
+    throw new Error("No pudimos cargar los grupos del catalogo.");
+  }
+
+  if (catalogGroupCategoriesError) {
+    throw new Error("No pudimos cargar las categorias de grupos del catalogo.");
+  }
+
+  if (catalogGroupMembershipsError) {
+    throw new Error("No pudimos cargar la relacion entre grupos y tareas.");
+  }
 
   const subitemRecords = (subitemRows ?? []) as Tables<"onboarding_initiative_subitems">[];
   const logRecords = (logRows ?? []) as Tables<"onboarding_activity_logs">[];

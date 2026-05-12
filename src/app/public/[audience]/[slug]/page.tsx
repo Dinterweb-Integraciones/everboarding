@@ -4,7 +4,10 @@ import { PublicOnboardingPage } from "@/components/onboarding/public-onboarding-
 import { Card } from "@/components/ui/card";
 import {
   calculateInitiativeProgress,
+  type CreditCatalogGroup,
+  type CreditCatalogGroupCategory,
   type CreditCatalogCategory,
+  type CreditCatalogGroupItem,
   type CreditCatalogItem,
   type InitiativeTaskStatus,
   type InitiativeRecord,
@@ -15,6 +18,7 @@ import {
   type PublicOnboardingSnapshot,
   createDefaultBillingStatus,
 } from "@/lib/onboarding";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type PublicSharedPageProps = {
@@ -31,6 +35,9 @@ type PublicOnboardingRpcResponse = {
   initiatives: InitiativeRecord[];
   catalog: CreditCatalogItem[];
   catalog_categories: CreditCatalogCategory[];
+  catalog_groups: CreditCatalogGroup[];
+  catalog_group_categories: CreditCatalogGroupCategory[];
+  catalog_group_memberships: CreditCatalogGroupItem[];
   payment_email: string | null;
 };
 
@@ -54,6 +61,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
   }
 
   const supabase = await createSupabaseServerClient();
+  const admin = createSupabaseAdminClient();
   const { data, error } = (await supabase.rpc("get_public_onboarding_snapshot", {
     p_slug: slug,
   })) as {
@@ -79,10 +87,81 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     );
   }
 
+  const [
+    { data: catalogRows, error: catalogError },
+    { data: catalogCategoryRows, error: catalogCategoriesError },
+    { data: catalogGroupRows, error: catalogGroupsError },
+    { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
+    { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
+    billingResult,
+  ] = await Promise.all([
+    admin
+      .from("credit_catalog_items")
+      .select("*")
+      .eq("is_active", true)
+      .order("category", { ascending: true })
+      .order("sort_order", { ascending: true }),
+    admin
+      .from("credit_catalog_categories")
+      .select("*")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    admin
+      .from("credit_catalog_groups")
+      .select("*")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    admin
+      .from("credit_catalog_group_categories")
+      .select("*")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    admin
+      .from("credit_catalog_group_items")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    admin.rpc("get_client_billing_status" as never, {
+      p_client_id: data.client.id,
+    } as never),
+  ]);
+
+  if (catalogError) {
+    throw new Error("No pudimos cargar el catalogo publico de tareas.");
+  }
+
+  if (catalogCategoriesError) {
+    throw new Error("No pudimos cargar las categorias del catalogo publico.");
+  }
+
+  if (catalogGroupsError) {
+    throw new Error("No pudimos cargar los grupos del catalogo publico.");
+  }
+
+  if (catalogGroupCategoriesError) {
+    throw new Error("No pudimos cargar las categorias de grupos del catalogo publico.");
+  }
+
+  if (catalogGroupMembershipsError) {
+    throw new Error("No pudimos cargar la relacion entre grupos y tareas del catalogo publico.");
+  }
+
+  const billingRow = (billingResult as { data: ClientBillingStatus | null }).data ?? null;
+  const typedCatalogRows = (catalogRows ?? []) as CreditCatalogItem[];
+  const typedCatalogCategoryRows = (catalogCategoryRows ?? []) as CreditCatalogCategory[];
+  const typedCatalogGroupRows = (catalogGroupRows ?? []) as CreditCatalogGroup[];
+  const typedCatalogGroupCategoryRows =
+    (catalogGroupCategoryRows ?? []) as CreditCatalogGroupCategory[];
+  const typedCatalogGroupMembershipRows =
+    (catalogGroupMembershipRows ?? []) as CreditCatalogGroupItem[];
+
   const snapshot: PublicOnboardingSnapshot = {
     client: data.client,
     config: data.config,
-    billing: data.billing ?? createDefaultBillingStatus(data.config),
+    billing: billingRow ?? data.billing ?? createDefaultBillingStatus(data.config),
     initiatives: (data.initiatives ?? []).map((initiative) => ({
       ...initiative,
       status:
@@ -109,14 +188,27 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
           }))),
       ),
     })),
-    catalog: (data.catalog ?? []).map((item) => ({
+    catalog: typedCatalogRows.map((item) => ({
       ...item,
       credits: Number(item.credits ?? 0),
       sort_order: Number(item.sort_order ?? 0),
     })),
-    catalogCategories: (data.catalog_categories ?? []).map((category) => ({
+    catalogCategories: typedCatalogCategoryRows.map((category) => ({
       ...category,
       sort_order: Number(category.sort_order ?? 0),
+    })),
+    catalogGroups: typedCatalogGroupRows.map((group) => ({
+      ...group,
+      credits: Number(group.credits ?? 0),
+      sort_order: Number(group.sort_order ?? 0),
+    })),
+    catalogGroupCategories: typedCatalogGroupCategoryRows.map((category) => ({
+      ...category,
+      sort_order: Number(category.sort_order ?? 0),
+    })),
+    catalogGroupMemberships: typedCatalogGroupMembershipRows.map((membership) => ({
+      ...membership,
+      sort_order: Number(membership.sort_order ?? 0),
     })),
     paymentEmail: data.payment_email,
   };
