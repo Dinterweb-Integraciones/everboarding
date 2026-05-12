@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 const catalogLinks = [
   { href: "/cs/categorias", label: "Categorias" },
+  { href: "/cs/categorias-grupos", label: "Categorias de grupos" },
   { href: "/cs/tareas", label: "Tareas" },
   { href: "/cs/grupos", label: "Grupos" },
   { href: "/cs/ventas", label: "Ventas" },
@@ -17,6 +18,7 @@ const mobileLinks = [
   { href: "/dashboard", label: "Inicio", icon: House },
   { href: "/cs/prompts", label: "Prompts", icon: MessageSquareText },
   { href: "/cs/categorias", label: "Categorias", icon: LayoutGrid },
+  { href: "/cs/categorias-grupos", label: "Cat. grupos", icon: LayoutGrid },
   { href: "/cs/tareas", label: "Tareas", icon: LayoutGrid },
   { href: "/cs/grupos", label: "Grupos", icon: LayoutGrid },
   { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },

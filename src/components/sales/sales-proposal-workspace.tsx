@@ -223,16 +223,6 @@ function mergePersistedProposalIntoCurrent(
   });
 }
 
-function formatSalesHeaderDate(date: string) {
-  if (!date) return "--";
-
-  return new Date(`${date}T00:00:00`).toLocaleDateString("es-NI", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
 function parseCalendarDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, (month || 1) - 1, day || 1);
@@ -277,6 +267,10 @@ function normalizeCatalogText(value: string | null | undefined) {
     .trim();
 }
 
+function isKickoffInitiative(initiative: Pick<SalesProposalInitiativeDraft, "title">) {
+  return normalizeCatalogText(initiative.title).includes("kickoff");
+}
+
 function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): SalesProposalInitiativeDraft {
   const kickoffStartDate = startDate || toIsoDate();
   const kickoffEndDate = toIsoDate(addCalendarDays(parseCalendarDate(kickoffStartDate), 5));
@@ -310,6 +304,68 @@ function getSuggestedInitiativeDurationDays(initiative: SalesProposalInitiativeD
   return Math.max(3, Math.min(7, Math.max(creditsDuration, subitemsDuration)));
 }
 
+function getInitiativeDurationDays(initiative: SalesProposalInitiativeDraft) {
+  if (initiative.estStartDate && initiative.estEndDate) {
+    const start = parseCalendarDate(initiative.estStartDate);
+    const end = parseCalendarDate(initiative.estEndDate);
+    return Math.max(diffCalendarDays(start, end) + 1, 1);
+  }
+
+  return getSuggestedInitiativeDurationDays(initiative);
+}
+
+function alignInitiativesToProposalStartDate(
+  initiatives: SalesProposalInitiativeDraft[],
+  proposalStartDate: string,
+) {
+  const nextInitiatives = initiatives.map((initiative) => createEditorDraft(initiative));
+  const kickoffTitle = normalizeCatalogText("SesiÃ³n Kickoff");
+  const kickoff = nextInitiatives.find(
+    (initiative) => normalizeCatalogText(initiative.title) === kickoffTitle,
+  ) ?? nextInitiatives.find((initiative) => isKickoffInitiative(initiative));
+
+  if (!kickoff || !proposalStartDate) {
+    return nextInitiatives;
+  }
+
+  const kickoffDuration = getInitiativeDurationDays(kickoff);
+  kickoff.estStartDate = proposalStartDate;
+  kickoff.estEndDate = toIsoDate(
+    addCalendarDays(parseCalendarDate(proposalStartDate), kickoffDuration - 1),
+  );
+
+  let cursorDate = addCalendarDays(parseCalendarDate(kickoff.estEndDate), 1);
+  const statusPriority: Record<InitiativeStatus, number> = {
+    executing: 0,
+    planned: 1,
+    completed: 2,
+    backlog: 3,
+  };
+
+  nextInitiatives
+    .filter((initiative) => initiative.status === "backlog")
+    .forEach((initiative) => {
+      initiative.estStartDate = "";
+      initiative.estEndDate = "";
+    });
+
+  nextInitiatives
+    .filter((initiative) => initiative.id !== kickoff.id && initiative.status !== "backlog")
+    .sort((left, right) => {
+      const priorityDelta = statusPriority[left.status] - statusPriority[right.status];
+      if (priorityDelta !== 0) return priorityDelta;
+      return left.sortOrder - right.sortOrder;
+    })
+    .forEach((initiative) => {
+      const durationDays = getInitiativeDurationDays(initiative);
+      initiative.estStartDate = toIsoDate(cursorDate);
+      initiative.estEndDate = toIsoDate(addCalendarDays(cursorDate, durationDays - 1));
+      cursorDate = addCalendarDays(cursorDate, durationDays);
+    });
+
+  return nextInitiatives;
+}
+
 function scheduleRecommendedInitiatives(
   initiatives: SalesProposalInitiativeDraft[],
   targetInitiativeIds: string[],
@@ -320,7 +376,7 @@ function scheduleRecommendedInitiatives(
   const kickoffTitle = normalizeCatalogText("Sesión Kickoff");
   const kickoff = nextInitiatives.find(
     (initiative) => normalizeCatalogText(initiative.title) === kickoffTitle,
-  );
+  ) ?? nextInitiatives.find((initiative) => isKickoffInitiative(initiative));
 
   if (!kickoff) {
     return nextInitiatives;
@@ -945,7 +1001,6 @@ export function SalesProposalWorkspace({
       initiatives: [...current.initiatives, next],
     }));
     setCatalogPreviewGroup(null);
-    setIsCatalogModalOpen(false);
     setFeedback({
       tone: "success",
       message:
@@ -1550,6 +1605,28 @@ export function SalesProposalWorkspace({
     setIsCouponPanelOpen((current) => !current);
   }
 
+  function updateProposalStartDate(nextStartDate: string) {
+    const nextProposal = {
+      ...proposal,
+      startDate: nextStartDate,
+      initiatives: nextStartDate
+        ? normalizeBoardSortOrders(
+            alignInitiativesToProposalStartDate(proposal.initiatives, nextStartDate),
+          )
+        : proposal.initiatives,
+    };
+
+    setProposal(nextProposal);
+
+    if (initiativeDraft) {
+      const syncedDraft =
+        nextProposal.initiatives.find((initiative) => initiative.id === initiativeDraft.id) ?? null;
+      if (syncedDraft) {
+        setInitiativeDraft(createEditorDraft(syncedDraft));
+      }
+    }
+  }
+
   const consumedWidth = Math.min((metrics.completed / Math.max(metrics.total, 1)) * 100, 100);
   const committedWidth = Math.min((metrics.committed / Math.max(metrics.total, 1)) * 100, 100);
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
@@ -1678,7 +1755,14 @@ export function SalesProposalWorkspace({
                 <span className="hidden h-4 w-px bg-[#dfe3eb] md:block" />
                 <div className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px] font-medium text-[#516f90] transition hover:bg-[#f5f8fa]">
                   <CalendarDays className="h-3.5 w-3.5" />
-                  <span>Inicio: {formatSalesHeaderDate(proposal.startDate)}</span>
+                  <span className="text-[12px] font-medium text-[#516f90]">Inicio:</span>
+                  <input
+                    type="date"
+                    value={proposal.startDate}
+                    onChange={(event) => updateProposalStartDate(event.target.value)}
+                    disabled={isProposalCheckoutLocked}
+                    className="w-[124px] border-0 border-b border-transparent bg-transparent p-0 text-[12px] font-semibold leading-none text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:text-[#8aa0b4]"
+                  />
                 </div>
               </div>
 
@@ -1705,13 +1789,13 @@ export function SalesProposalWorkspace({
                   <p className="text-[7px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
                     Inversión total
                   </p>
-                  <p className="mt-1 text-[12px] font-extrabold leading-none text-[#33475b]">
+                  <p className="mt-1 text-[20px] font-extrabold leading-none text-[#33475b]">
                     {formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}
                   </p>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
                 <div className="flex items-center px-2.5">
-                  <span className="inline-flex h-8 items-center rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-2 text-[10px] font-bold text-[#00bda5]">
+                  <span className="inline-flex h-10 items-center rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-3 text-[13px] font-bold text-[#00bda5]">
                     {proposal.contractedCredits} CR
                   </span>
                 </div>
@@ -1866,7 +1950,10 @@ export function SalesProposalWorkspace({
                             className="mt-8 inline-flex min-w-[282px] items-center justify-center gap-2 rounded-[4px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
                           >
                             <Sparkles className="h-4 w-4" />
-                            Guía Inteligente
+                            <span>Guía Inteligente</span>
+                            <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
+                              Beta
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -2317,7 +2404,7 @@ export function SalesProposalWorkspace({
 
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
                 {activeCatalogTab === "wizard" ? (
-                  <div className="relative mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
+                  <div className="relative mx-auto flex max-w-[770px] flex-col rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
                     <div className="text-center">
                       <h3 className="text-[24px] font-extrabold text-[#33475b]">Veamos qué activar primero</h3>
                       <p className="mt-2 text-[14px] text-[#516f90]">
@@ -2415,14 +2502,14 @@ export function SalesProposalWorkspace({
                           3. Si tuvieras que elegir un único reto principal, ¿cuál sería?
                         </p>
                         <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
-                          Agrega aqui cualquier contexto comercial adicional para orientar mejor la propuesta.
+                          Agrega aqui cualquier contexto adicional para orientar mejor la propuesta.
                         </p>
                         <div className="mt-4">
                           <textarea
                             rows={5}
                             value={wizardContext}
                             onChange={(event) => setWizardContext(event.target.value)}
-                            placeholder="Ejemplo: el cliente ya usa HubSpot Sales, tiene problemas con la calidad de datos, quiere ordenar su pipeline y necesita una propuesta alineada a un equipo comercial de 8 personas."
+                            placeholder="Ejemplo: Ya se está usando HubSpot Sales, tiene problemas con la calidad de datos, quiere ordenar su pipeline y necesita una propuesta alineada a un equipo comercial de 8 personas."
                             className="w-full rounded-[8px] border-2 border-[#cbd6e2] bg-white px-4 py-3 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6]"
                           />
                           <p className="hidden mt-2 text-[11px] text-[#7c98b6]">
@@ -2460,7 +2547,8 @@ export function SalesProposalWorkspace({
                       </div>
                     </div>
 
-                    <div className="mt-10 flex justify-center pt-6">
+                    <div className="sticky bottom-0 -mx-8 mt-6 border-t border-[#dfe3eb] bg-white/95 px-8 pb-1 pt-4 backdrop-blur-sm">
+                      <div className="flex justify-center">
                       <button
                         type="button"
                         onClick={applyWizardRecommendations}
@@ -2470,6 +2558,7 @@ export function SalesProposalWorkspace({
                         <Sparkles className="h-4 w-4" />
                         {isGeneratingWizardPlan ? "Cargando..." : "Armar Plan de Trabajo"}
                       </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
