@@ -1,7 +1,7 @@
 "use client";
 
 import { CalendarDays, Link2, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -18,6 +18,7 @@ import {
   createLocalId,
   getSalesProposalActivationValidation,
   generateSalesProposalSlug,
+  normalizeSalesProposalDraft,
   type SalesProposalDraft,
   type SalesProposalInitiativeDraft,
   type SalesProposalRecord,
@@ -138,6 +139,88 @@ function getSalesTimelineBarClass(status: InitiativeStatus) {
   }
 
   return "border border-dashed border-[#8ea2bd] bg-white text-[#5f7695] shadow-none";
+}
+
+function canManageSalesStage(status: InitiativeStatus) {
+  return status === "backlog" || status === "planned";
+}
+
+function canMoveSalesInitiativeToStatus(
+  currentStatus: InitiativeStatus,
+  targetStatus: InitiativeStatus,
+) {
+  return (
+    canManageSalesStage(currentStatus) &&
+    canManageSalesStage(targetStatus) &&
+    currentStatus !== targetStatus
+  );
+}
+
+function getAllowedSalesStageTargets(currentStatus: InitiativeStatus) {
+  return boardStatuses.filter((status) => canMoveSalesInitiativeToStatus(currentStatus, status));
+}
+
+function normalizeBoardSortOrders(initiatives: SalesProposalInitiativeDraft[]) {
+  return boardStatuses.flatMap((status) =>
+    initiatives
+      .filter((initiative) => initiative.status === status)
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((initiative, index) => ({
+        ...initiative,
+        sortOrder: index,
+      })),
+  );
+}
+
+function hasSalesProposalIdentity(value: Pick<SalesProposalDraft, "clientName" | "clientEmail">) {
+  const normalizedName = value.clientName.trim().toLowerCase();
+  return normalizedName !== "" && normalizedName !== "cliente" || value.clientEmail.trim() !== "";
+}
+
+function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
+  const normalized = normalizeSalesProposalDraft(proposal);
+
+  return JSON.stringify({
+    title: normalized.title,
+    sellerName: normalized.sellerName,
+    sellerEmail: normalized.sellerEmail,
+    sellerCompany: normalized.sellerCompany,
+    clientName: normalized.clientName,
+    clientEmail: normalized.clientEmail,
+    clientCompany: normalized.clientCompany,
+    clientPhone: normalized.clientPhone,
+    clientDescription: normalized.clientDescription,
+    assignedCsmUserId: normalized.assignedCsmUserId,
+    startDate: normalized.startDate,
+    contractedCredits: normalized.contractedCredits,
+    quotedPrice: normalized.quotedPrice,
+    currency: normalized.currency,
+    billingMode: normalized.billingMode,
+    periodMonths: normalized.periodMonths,
+    status: normalized.status,
+    appliedCouponId: normalized.appliedCouponId,
+    appliedCouponCode: normalized.appliedCouponCode,
+    couponAppliedAt: normalized.couponAppliedAt,
+    initiatives: normalized.initiatives,
+  });
+}
+
+function mergePersistedProposalIntoCurrent(
+  current: SalesProposalDraft,
+  persisted: SalesProposalDraft,
+) {
+  return normalizeSalesProposalDraft({
+    ...current,
+    id: persisted.id,
+    slug: persisted.slug,
+    status: persisted.status,
+    hubspotDealId: persisted.hubspotDealId,
+    activatedClientId: persisted.activatedClientId,
+    assignedCsmUserId: persisted.assignedCsmUserId || current.assignedCsmUserId,
+    appliedCouponId: persisted.appliedCouponId,
+    appliedCouponCode: persisted.appliedCouponCode,
+    couponAppliedAt: persisted.couponAppliedAt,
+  });
 }
 
 function formatSalesHeaderDate(date: string) {
@@ -307,9 +390,11 @@ export function SalesProposalWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [proposal, setProposal] = useState<SalesProposalDraft>(
-    initialProposal ?? createNewSalesProposalDraft(),
+  const initialDraft = useMemo(
+    () => normalizeSalesProposalDraft(initialProposal ?? createNewSalesProposalDraft()),
+    [initialProposal],
   );
+  const [proposal, setProposal] = useState<SalesProposalDraft>(initialDraft);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -337,6 +422,10 @@ export function SalesProposalWorkspace({
   const [wizardContext, setWizardContext] = useState("");
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
   const [initiativeDraft, setInitiativeDraft] = useState<SalesProposalInitiativeDraft | null>(null);
+  const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
+  const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
+  const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
+  const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
 
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, CreditCatalogItem[]>();
@@ -587,6 +676,63 @@ export function SalesProposalWorkspace({
     setInitiativeDraft(null);
   }
 
+  function moveInitiativeToStatus(
+    initiative: SalesProposalInitiativeDraft,
+    targetStatus: InitiativeStatus,
+  ) {
+    if (initiative.status === targetStatus) {
+      setDraggedInitiativeId(null);
+      setDropTargetStatus(null);
+      return;
+    }
+
+    if (!canMoveSalesInitiativeToStatus(initiative.status, targetStatus)) {
+      setFeedback({
+        tone: "error",
+        message:
+          "En la vista comercial solo puedes mover casos de uso entre En evaluacion y Planificado.",
+      });
+      setDraggedInitiativeId(null);
+      setDropTargetStatus(null);
+      return;
+    }
+
+    setProposal((current) => {
+      const targetSortOrder = current.initiatives.filter(
+        (currentInitiative) =>
+          currentInitiative.id !== initiative.id && currentInitiative.status === targetStatus,
+      ).length;
+
+      const nextInitiatives = current.initiatives.map((currentInitiative) =>
+        currentInitiative.id === initiative.id
+          ? {
+              ...currentInitiative,
+              status: targetStatus,
+              sortOrder: targetSortOrder,
+            }
+          : currentInitiative,
+      );
+
+      const scheduledInitiatives = scheduleRecommendedInitiatives(
+        nextInitiatives,
+        [initiative.id],
+        current.startDate,
+      );
+
+      return {
+        ...current,
+        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+      };
+    });
+
+    setFeedback({
+      tone: "success",
+      message: `Caso de uso movido a ${STATUS_META[targetStatus].label}.`,
+    });
+    setDraggedInitiativeId(null);
+    setDropTargetStatus(null);
+  }
+
   function saveInitiativeDraft() {
     if (!initiativeDraft) return;
 
@@ -600,6 +746,23 @@ export function SalesProposalWorkspace({
       return;
     }
 
+    const existingInitiative = proposal.initiatives.find(
+      (initiative) => initiative.id === initiativeDraft.id,
+    );
+
+    if (
+      existingInitiative &&
+      existingInitiative.status !== initiativeDraft.status &&
+      !canMoveSalesInitiativeToStatus(existingInitiative.status, initiativeDraft.status)
+    ) {
+      setFeedback({
+        tone: "error",
+        message:
+          "En la vista comercial solo puedes mover casos de uso entre En evaluacion y Planificado.",
+      });
+      return;
+    }
+
     setProposal((current) => {
       const exists = current.initiatives.some((initiative) => initiative.id === initiativeDraft.id);
       const nextInitiatives = exists
@@ -608,7 +771,16 @@ export function SalesProposalWorkspace({
           )
         : [...current.initiatives, createEditorDraft(initiativeDraft)];
 
-      return { ...current, initiatives: nextInitiatives };
+      const scheduledInitiatives = scheduleRecommendedInitiatives(
+        nextInitiatives,
+        [initiativeDraft.id],
+        current.startDate,
+      );
+
+      return {
+        ...current,
+        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+      };
     });
     closeInitiativeEditor();
     setFeedback({ tone: "success", message: "Iniciativa actualizada en la propuesta." });
@@ -1102,32 +1274,54 @@ export function SalesProposalWorkspace({
     });
   }
 
-  async function persistProposal() {
-    const slug = proposal.slug || generateSalesProposalSlug(proposal);
-    const response = await fetch(
-      proposal.slug ? `/api/sales-proposals/${proposal.slug}` : "/api/sales-proposals",
-      {
-        method: proposal.slug ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
+  const persistProposal = useCallback(async (
+    draftOverride?: SalesProposalDraft,
+    options?: { mergeWithCurrent?: boolean },
+  ) => {
+    const draftToPersist = normalizeSalesProposalDraft(draftOverride ?? proposal);
+    const persistTask = async () => {
+      const slug = draftToPersist.slug || generateSalesProposalSlug(draftToPersist);
+      const response = await fetch(
+        draftToPersist.slug ? `/api/sales-proposals/${draftToPersist.slug}` : "/api/sales-proposals",
+        {
+          method: draftToPersist.slug ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...draftToPersist, slug }),
         },
-        body: JSON.stringify({ ...proposal, slug }),
-      },
+      );
+
+      const payload = (await response.json()) as SalesProposalRecord & { message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos guardar la propuesta.");
+      }
+
+      const normalizedPayload = normalizeSalesProposalDraft(payload);
+      lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(normalizedPayload);
+
+      if (options?.mergeWithCurrent) {
+        setProposal((current) => mergePersistedProposalIntoCurrent(current, normalizedPayload));
+      } else {
+        setProposal(normalizedPayload);
+      }
+
+      if (!draftToPersist.slug) {
+        router.replace(`/sales/proposals/${normalizedPayload.slug}`);
+      }
+
+      return normalizedPayload;
+    };
+
+    const resultPromise = proposalSaveChainRef.current.then(persistTask, persistTask);
+    proposalSaveChainRef.current = resultPromise.then(
+      (savedProposal) => savedProposal,
+      () => null,
     );
 
-    const payload = (await response.json()) as SalesProposalRecord & { message?: string };
-
-    if (!response.ok) {
-      throw new Error(payload.message || "No pudimos guardar la propuesta.");
-    }
-
-    setProposal(payload);
-    if (!proposal.slug) {
-      router.replace(`/sales/proposals/${payload.slug}`);
-    }
-
-    return payload;
-  }
+    return resultPromise;
+  }, [proposal, router]);
 
   async function activatePlan() {
     if (!activationValidation.isValid) {
@@ -1167,7 +1361,7 @@ export function SalesProposalWorkspace({
         throw new Error(payload.message || "No pudimos completar la activacion del plan.");
       }
 
-      setProposal(payload.proposal);
+      setProposal(normalizeSalesProposalDraft(payload.proposal));
       setCouponCode(payload.proposal.appliedCouponCode);
       setIsCouponPanelOpen(Boolean(payload.proposal.appliedCouponCode.trim()));
       setFeedback({
@@ -1240,7 +1434,7 @@ export function SalesProposalWorkspace({
 
         if (!isMounted) return;
 
-        setProposal(payload.proposal);
+        setProposal(normalizeSalesProposalDraft(payload.proposal));
         setFeedback({
           tone: "success",
           message: "Pago confirmado. La propuesta ya no generara un checkout duplicado.",
@@ -1271,15 +1465,18 @@ export function SalesProposalWorkspace({
   }, [pathname, proposal.slug, router, searchParams]);
 
   async function copyShareLink() {
-    if (!proposal.slug) {
+    if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
       setFeedback({
         tone: "error",
-        message: "Activa el plan primero para guardar y compartir la propuesta.",
+        message: "Ingresa el nombre o email del cliente para generar primero la URL de la propuesta.",
       });
       return;
     }
 
-    const shareUrl = `${window.location.origin}/sales/proposals/${proposal.slug}`;
+    const persistedProposal = proposal.slug
+      ? proposal
+      : await persistProposal(proposal, { mergeWithCurrent: true });
+    const shareUrl = `${window.location.origin}/sales/proposals/${persistedProposal.slug}`;
     await navigator.clipboard.writeText(shareUrl);
     setFeedback({ tone: "success", message: "Enlace de propuesta copiado." });
   }
@@ -1332,7 +1529,7 @@ export function SalesProposalWorkspace({
         throw new Error(payload.message || "No pudimos validar el cupon.");
       }
 
-      setProposal(payload.proposal);
+      setProposal(normalizeSalesProposalDraft(payload.proposal));
       setCouponCode(payload.proposal.appliedCouponCode);
       setIsCouponPanelOpen(true);
       setFeedback({
@@ -1394,6 +1591,33 @@ export function SalesProposalWorkspace({
   const isUpsellDisabled = hasAppliedCoupon || isProposalCheckoutLocked;
   const wizardLoadingMessage =
     WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
+
+  useEffect(() => {
+    const autosaveSignature = getSalesProposalAutosaveSignature(proposal);
+    const canAutosave =
+      proposal.status === "draft" &&
+      (Boolean(proposal.slug) || hasSalesProposalIdentity(proposal));
+
+    if (!canAutosave || autosaveSignature === lastPersistedSignatureRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void persistProposal(proposal, { mergeWithCurrent: true }).catch((caughtError) => {
+        setFeedback({
+          tone: "error",
+          message: formatUserError(
+            caughtError,
+            "No pudimos guardar automaticamente la propuesta comercial.",
+          ),
+        });
+      });
+    }, 900);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [persistProposal, proposal]);
 
   return (
     <div className="min-h-screen bg-[#fcfcfc] pb-14 text-[#33475b]">
@@ -1664,17 +1888,76 @@ export function SalesProposalWorkspace({
                       </span>
                     </div>
 
-                    <div className="min-h-[360px] flex-1 space-y-2.5 px-1 pt-1">
+                    <div
+                      className={`min-h-[360px] flex-1 space-y-2.5 rounded-[6px] px-1 pt-1 transition ${
+                        dropTargetStatus === status
+                          ? "bg-[#eef6ff] ring-1 ring-inset ring-[#bfd4ec]"
+                          : ""
+                      }`}
+                      onDragOver={(event) => {
+                        const draggedInitiative = proposal.initiatives.find(
+                          (item) => item.id === draggedInitiativeId,
+                        );
+
+                        if (
+                          !draggedInitiative ||
+                          !canMoveSalesInitiativeToStatus(draggedInitiative.status, status)
+                        ) {
+                          return;
+                        }
+
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setDropTargetStatus(status);
+                      }}
+                      onDragLeave={(event) => {
+                        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                        setDropTargetStatus((current) => (current === status ? null : current));
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+
+                        const initiativeId =
+                          event.dataTransfer.getData("text/plain") || draggedInitiativeId;
+                        const initiative = proposal.initiatives.find((item) => item.id === initiativeId);
+
+                        if (!initiative) {
+                          setDraggedInitiativeId(null);
+                          setDropTargetStatus(null);
+                          return;
+                        }
+
+                        moveInitiativeToStatus(initiative, status);
+                      }}
+                    >
                       {items.map((initiative) => {
                         const credits = calculateSalesInitiativeCredits(initiative);
                         const progress = calculateSalesInitiativeProgress(initiative);
+                        const isDraggable = canManageSalesStage(initiative.status);
 
                         return (
                           <button
                             key={initiative.id}
                             type="button"
                             onClick={() => openInitiativeEditor(initiative)}
-                            className="w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)]"
+                            draggable={isDraggable}
+                            onDragStart={(event) => {
+                              if (!isDraggable) {
+                                event.preventDefault();
+                                return;
+                              }
+
+                              event.dataTransfer.setData("text/plain", initiative.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              setDraggedInitiativeId(initiative.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedInitiativeId(null);
+                              setDropTargetStatus(null);
+                            }}
+                            className={`w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] ${
+                              isDraggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                            }`}
                           >
                             <div className="min-w-0">
                               <div className="min-w-0">
@@ -2509,9 +2792,7 @@ export function SalesProposalWorkspace({
               <div className="mt-6 border-t border-dashed border-[#dfe3eb] pt-6">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#516f90]">Mover a:</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {boardStatuses
-                    .filter((status) => status !== initiativeDraft.status)
-                    .map((status) => (
+                  {getAllowedSalesStageTargets(initiativeDraft.status).map((status) => (
                       <button
                         key={`status-${status}`}
                         type="button"
@@ -2522,6 +2803,11 @@ export function SalesProposalWorkspace({
                       </button>
                     ))}
                 </div>
+                {getAllowedSalesStageTargets(initiativeDraft.status).length === 0 ? (
+                  <p className="mt-3 text-[11px] text-[#8aa0b4]">
+                    Esta etapa no se puede mover desde la vista comercial.
+                  </p>
+                ) : null}
               </div>
             </div>
 

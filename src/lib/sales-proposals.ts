@@ -385,9 +385,18 @@ export function getAssigneeName(users: AssignableUser[], userId: string) {
   return users.find((user) => user.id === userId)?.full_name || users.find((user) => user.id === userId)?.email || "";
 }
 
-export function generateSalesProposalSlug(input: Pick<SalesProposalDraft, "clientCompany" | "clientName" | "title">) {
-  const base =
-    slugify(input.clientCompany) || slugify(input.clientName) || slugify(input.title) || "propuesta";
+export function generateSalesProposalSlug(
+  input: Pick<SalesProposalDraft, "clientCompany" | "clientName" | "clientEmail" | "title">,
+) {
+  const normalizedCompany = input.clientCompany.trim().toLowerCase();
+  const normalizedClientName = input.clientName.trim().toLowerCase();
+  const emailLocalPart = input.clientEmail.trim().split("@")[0] ?? "";
+  const companySlug =
+    !normalizedCompany || normalizedCompany === "cliente" ? "" : slugify(input.clientCompany);
+  const clientSlug =
+    !normalizedClientName || normalizedClientName === "cliente" ? "" : slugify(input.clientName);
+  const emailSlug = slugify(emailLocalPart);
+  const base = companySlug || clientSlug || emailSlug || slugify(input.title) || "propuesta";
 
   return `${base}-${Date.now().toString(36)}`;
 }
