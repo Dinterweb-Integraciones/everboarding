@@ -7,6 +7,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import {
+  PLAN_PRICE_FACTOR,
+  SALES_PROPOSAL_BASE_PRICE,
   SALES_PROPOSAL_UPSELL_OPTIONS,
   STATUS_META,
   TASK_STATUS_META,
@@ -42,6 +44,8 @@ type SalesProposalWorkspaceProps = {
   initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupMemberships: CreditCatalogGroupItem[];
   initialProposal?: SalesProposalRecord | null;
+  variant?: "hubspot" | "dinterweb";
+  routeBase?: string;
 };
 
 type CatalogModalGroup = {
@@ -79,6 +83,14 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
+const DINTERWEB_BASE_PACKAGE = {
+  credits: 60,
+  price: SALES_PROPOSAL_BASE_PRICE,
+} as const;
+const DINTERWEB_EXTRA_PACKAGE_OPTIONS = [
+  { id: "60", credits: 60, price: SALES_PROPOSAL_BASE_PRICE },
+  { id: "80", credits: 80, price: Math.round(80 * PLAN_PRICE_FACTOR) },
+] as const;
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
   "Definiendo prioridades...",
@@ -105,6 +117,27 @@ async function parseJsonResponse<T>(response: Response) {
 
 function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
   return priorityStatus === "prioritario" ? 0 : 1;
+}
+
+function getDinterwebChargeMultiplier(
+  billingMode: SalesProposalDraft["billingMode"],
+  periodMonths: SalesProposalDraft["periodMonths"],
+) {
+  return billingMode === "subscription" ? periodMonths : 1;
+}
+
+function getDinterwebMonthlyCredits(proposal: Pick<SalesProposalDraft, "contractedCredits" | "billingMode" | "periodMonths">) {
+  return Math.max(
+    0,
+    Math.round(proposal.contractedCredits / getDinterwebChargeMultiplier(proposal.billingMode, proposal.periodMonths)),
+  );
+}
+
+function getDinterwebMonthlyPrice(proposal: Pick<SalesProposalDraft, "quotedPrice" | "billingMode" | "periodMonths">) {
+  return Math.max(
+    0,
+    Math.round(proposal.quotedPrice / getDinterwebChargeMultiplier(proposal.billingMode, proposal.periodMonths)),
+  );
 }
 
 function getStatusDot(status: InitiativeStatus) {
@@ -181,6 +214,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
   const normalized = normalizeSalesProposalDraft(proposal);
 
   return JSON.stringify({
+    workspaceVariant: normalized.workspaceVariant,
     title: normalized.title,
     sellerName: normalized.sellerName,
     sellerEmail: normalized.sellerEmail,
@@ -213,6 +247,7 @@ function mergePersistedProposalIntoCurrent(
     ...current,
     id: persisted.id,
     slug: persisted.slug,
+    workspaceVariant: persisted.workspaceVariant || current.workspaceVariant,
     status: persisted.status,
     hubspotDealId: persisted.hubspotDealId,
     activatedClientId: persisted.activatedClientId,
@@ -288,11 +323,12 @@ function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): Sales
   return kickoff;
 }
 
-function createNewSalesProposalDraft() {
+function createNewSalesProposalDraft(variant: "hubspot" | "dinterweb" = "hubspot") {
   const draft = createEmptySalesProposalDraft();
 
   return {
     ...draft,
+    workspaceVariant: variant,
     initiatives: [createDefaultKickoffInitiative(draft.startDate, 0)],
   };
 }
@@ -437,18 +473,27 @@ export function SalesProposalWorkspace({
   initialGroupCategories,
   initialGroupMemberships,
   initialProposal,
+  variant = "hubspot",
+  routeBase = "/sales/proposals",
 }: SalesProposalWorkspaceProps) {
   const wizardChallenges: Record<
     string,
     Array<{ id: string; label: string; description: string; keywords: string[] }>
   > = {};
+  const isDinterwebVariant = variant === "dinterweb";
+  const newProposalHref = `${routeBase}/new`;
+  const packageOptions = SALES_PROPOSAL_UPSELL_OPTIONS;
 
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialDraft = useMemo(
-    () => normalizeSalesProposalDraft(initialProposal ?? createNewSalesProposalDraft()),
-    [initialProposal],
+    () =>
+      normalizeSalesProposalDraft({
+        ...(initialProposal ?? createNewSalesProposalDraft(variant)),
+        workspaceVariant: variant,
+      }),
+    [initialProposal, variant],
   );
   const [proposal, setProposal] = useState<SalesProposalDraft>(initialDraft);
   const [feedback, setFeedback] = useState<{
@@ -461,9 +506,15 @@ export function SalesProposalWorkspace({
   const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
   const [upsellPackageCredits, setUpsellPackageCredits] = useState<number>(
-    SALES_PROPOSAL_UPSELL_OPTIONS[0].credits,
+    packageOptions[0].credits,
   );
   const [upsellCartCount, setUpsellCartCount] = useState(0);
+  const [dinterwebExtraCreditsDraft, setDinterwebExtraCreditsDraft] = useState(
+    String(Math.max(0, getDinterwebMonthlyCredits(initialDraft) - DINTERWEB_BASE_PACKAGE.credits)),
+  );
+  const [dinterwebExtraPriceDraft, setDinterwebExtraPriceDraft] = useState(
+    String(Math.max(0, getDinterwebMonthlyPrice(initialDraft) - DINTERWEB_BASE_PACKAGE.price)),
+  );
   const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
     Boolean(initialProposal?.appliedCouponCode?.trim()),
   );
@@ -482,6 +533,26 @@ export function SalesProposalWorkspace({
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
+
+  function applyDinterwebCommercialTerms(
+    monthlyCredits: number,
+    monthlyPrice: number,
+    billingMode: SalesProposalDraft["billingMode"],
+    periodMonths: SalesProposalDraft["periodMonths"],
+  ) {
+    const normalizedMonthlyCredits = Math.max(DINTERWEB_BASE_PACKAGE.credits, safeParseNumber(monthlyCredits));
+    const normalizedMonthlyPrice = Math.max(DINTERWEB_BASE_PACKAGE.price, safeParseNumber(monthlyPrice));
+    const multiplier = getDinterwebChargeMultiplier(billingMode, periodMonths);
+
+    setProposal((current) => ({
+      ...current,
+      workspaceVariant: "dinterweb",
+      billingMode,
+      periodMonths,
+      contractedCredits: normalizedMonthlyCredits * multiplier,
+      quotedPrice: normalizedMonthlyPrice * multiplier,
+    }));
+  }
 
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, CreditCatalogItem[]>();
@@ -599,6 +670,14 @@ export function SalesProposalWorkspace({
     ],
     [catalogGroupOptions],
   );
+
+  const wizardOptionLabels = useMemo(() => {
+    if (!isDinterwebVariant) {
+      return ["Sales", "Marketing", "Service", "Content"];
+    }
+
+    return catalogGroupOptions.map((category) => category.label).filter(Boolean);
+  }, [catalogGroupOptions, isDinterwebVariant]);
 
   const groupedInitiatives = useMemo(
     () =>
@@ -867,12 +946,25 @@ export function SalesProposalWorkspace({
     if (proposal.appliedCouponCode.trim()) {
       setFeedback({
         tone: "error",
-        message: "Quita o cambia el cupon antes de agregar creditos extra al plan.",
+        message: isDinterwebVariant
+          ? "Quita o cambia el cupon antes de reconfigurar el paquete."
+          : "Quita o cambia el cupon antes de agregar creditos extra al plan.",
       });
       return;
     }
 
-    setUpsellPackageCredits(SALES_PROPOSAL_UPSELL_OPTIONS[0].credits);
+    if (isDinterwebVariant) {
+      setDinterwebExtraCreditsDraft(
+        String(Math.max(0, getDinterwebMonthlyCredits(proposal) - DINTERWEB_BASE_PACKAGE.credits)),
+      );
+      setDinterwebExtraPriceDraft(
+        String(Math.max(0, getDinterwebMonthlyPrice(proposal) - DINTERWEB_BASE_PACKAGE.price)),
+      );
+      setIsUpsellModalOpen(true);
+      return;
+    }
+
+    setUpsellPackageCredits(packageOptions[0].credits);
     setUpsellCartCount(0);
     setIsUpsellModalOpen(true);
   }
@@ -890,6 +982,34 @@ export function SalesProposalWorkspace({
   }
 
   function confirmUpsell() {
+    if (isDinterwebVariant) {
+      const extraCredits = Math.max(0, safeParseNumber(dinterwebExtraCreditsDraft));
+      const extraPrice = Math.max(0, safeParseNumber(dinterwebExtraPriceDraft));
+      const nextMonthlyCredits = DINTERWEB_BASE_PACKAGE.credits + extraCredits;
+      const nextMonthlyPrice = DINTERWEB_BASE_PACKAGE.price + extraPrice;
+
+      if (!nextMonthlyCredits || !nextMonthlyPrice) {
+        setFeedback({
+          tone: "error",
+          message: "Define un paquete valido con creditos e inversion mayores a cero.",
+        });
+        return;
+      }
+
+      applyDinterwebCommercialTerms(
+        nextMonthlyCredits,
+        nextMonthlyPrice,
+        proposal.billingMode,
+        proposal.periodMonths,
+      );
+      setFeedback({
+        tone: "success",
+        message: `Paquete configurado en ${nextMonthlyCredits} creditos por ciclo base.`,
+      });
+      closeUpsellModal();
+      return;
+    }
+
     if (!upsellCartCount) {
       closeUpsellModal();
       return;
@@ -1363,7 +1483,7 @@ export function SalesProposalWorkspace({
       }
 
       if (!draftToPersist.slug) {
-        router.replace(`/sales/proposals/${normalizedPayload.slug}`);
+        router.replace(`${routeBase}/${normalizedPayload.slug}`);
       }
 
       return normalizedPayload;
@@ -1376,7 +1496,7 @@ export function SalesProposalWorkspace({
     );
 
     return resultPromise;
-  }, [proposal, router]);
+  }, [proposal, routeBase, router]);
 
   async function activatePlan() {
     if (!activationValidation.isValid) {
@@ -1519,7 +1639,7 @@ export function SalesProposalWorkspace({
     };
   }, [pathname, proposal.slug, router, searchParams]);
 
-  async function copyShareLink() {
+  async function copyProspectShareLink() {
     if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
       setFeedback({
         tone: "error",
@@ -1531,9 +1651,26 @@ export function SalesProposalWorkspace({
     const persistedProposal = proposal.slug
       ? proposal
       : await persistProposal(proposal, { mergeWithCurrent: true });
-    const shareUrl = `${window.location.origin}/sales/proposals/${persistedProposal.slug}`;
+    const shareUrl = `${window.location.origin}${routeBase}/${persistedProposal.slug}`;
     await navigator.clipboard.writeText(shareUrl);
-    setFeedback({ tone: "success", message: "Enlace de propuesta copiado." });
+    setFeedback({
+      tone: "success",
+      message: isDinterwebVariant ? "Link para prospecto copiado." : "Enlace de propuesta copiado.",
+    });
+  }
+
+  async function copyClientShareLink() {
+    if (!proposal.activatedClientId) {
+      setFeedback({
+        tone: "error",
+        message: "El link para cliente se habilita cuando el plan ya fue activado.",
+      });
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/public/client/${proposal.activatedClientId}`;
+    await navigator.clipboard.writeText(shareUrl);
+    setFeedback({ tone: "success", message: "Link para cliente copiado." });
   }
 
   async function handleApplyCoupon() {
@@ -1638,9 +1775,11 @@ export function SalesProposalWorkspace({
     0,
   );
   const remainingRecommendationCredits = Math.max(0, proposal.contractedCredits - currentPlanCredits);
+  const dinterwebMonthlyCredits = getDinterwebMonthlyCredits(proposal);
+  const dinterwebMonthlyPrice = getDinterwebMonthlyPrice(proposal);
   const upsellPackagePrice =
-    SALES_PROPOSAL_UPSELL_OPTIONS.find((option) => option.credits === upsellPackageCredits)?.price ??
-    SALES_PROPOSAL_UPSELL_OPTIONS[0].price;
+    packageOptions.find((option) => option.credits === upsellPackageCredits)?.price ??
+    packageOptions[0].price;
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
   const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
   const activationValidation = getSalesProposalActivationValidation(proposal);
@@ -1701,26 +1840,48 @@ export function SalesProposalWorkspace({
       <header className="sticky top-0 z-30 border-b border-[#dfe3eb] bg-white shadow-sm">
         <div className="flex items-center justify-between gap-4 px-6 py-3">
           <div className="flex items-center gap-6">
-            <BrandLogo href="/sales/proposals/new" priority />
+            <BrandLogo href={newProposalHref} priority />
           </div>
           <div className="flex items-center gap-4 text-[12.5px] font-medium text-[#516f90]">
             <button
               type="button"
-              onClick={() => setProposal(createNewSalesProposalDraft())}
+              onClick={() => setProposal(createNewSalesProposalDraft(variant))}
               className="inline-flex items-center gap-1.5 transition hover:text-[#ff7a59]"
             >
               <Trash2 className="h-3.5 w-3.5" />
               Limpiar
             </button>
             <span className="h-4 w-px bg-[#dfe3eb]" />
-            <button
-              type="button"
-              onClick={copyShareLink}
-              className="inline-flex items-center gap-1.5 font-semibold text-[#00bda5] transition hover:text-[#009c88]"
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              Compartir Link
-            </button>
+            {isDinterwebVariant ? (
+              <>
+                <button
+                  type="button"
+                  onClick={copyProspectShareLink}
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#00bda5] transition hover:text-[#009c88]"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Compartir prospecto
+                </button>
+                <button
+                  type="button"
+                  onClick={copyClientShareLink}
+                  disabled={!proposal.activatedClientId}
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#516f90] transition hover:text-[#33475b] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Compartir cliente
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={copyProspectShareLink}
+                className="inline-flex items-center gap-1.5 font-semibold text-[#00bda5] transition hover:text-[#009c88]"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                Compartir Link
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1823,6 +1984,78 @@ export function SalesProposalWorkspace({
                   </button>
                 </div>
               </div>
+
+              {isDinterwebVariant ? (
+                <div className="border-t border-[#dfe3eb] px-3 py-3">
+                  <div className="grid gap-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                          Tipo de cobro
+                        </span>
+                        <select
+                          value={proposal.billingMode}
+                          onChange={(event) =>
+                            applyDinterwebCommercialTerms(
+                              dinterwebMonthlyCredits,
+                              dinterwebMonthlyPrice,
+                              event.target.value === "subscription" ? "subscription" : "one_time",
+                              event.target.value === "subscription" ? proposal.periodMonths : 1,
+                            )
+                          }
+                          disabled={isProposalCheckoutLocked}
+                          className="h-9 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="one_time">Paquete de creditos</option>
+                          <option value="subscription">Recurrencia</option>
+                        </select>
+                      </label>
+
+                      <label className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                          Frecuencia
+                        </span>
+                        <select
+                          value={String(proposal.periodMonths)}
+                          onChange={(event) =>
+                            applyDinterwebCommercialTerms(
+                              dinterwebMonthlyCredits,
+                              dinterwebMonthlyPrice,
+                              proposal.billingMode,
+                              safeParseNumber(event.target.value) === 3
+                                ? 3
+                                : safeParseNumber(event.target.value) === 6
+                                  ? 6
+                                  : safeParseNumber(event.target.value) === 12
+                                    ? 12
+                                    : 1,
+                            )
+                          }
+                          disabled={proposal.billingMode !== "subscription" || isProposalCheckoutLocked}
+                          className="h-9 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="1">Mensual</option>
+                          <option value="3">Trimestral</option>
+                          <option value="6">Semestral</option>
+                          <option value="12">Anual</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="rounded-[4px] border border-[#eaf0f6] bg-[#f8fbfd] px-3 py-2 text-[11px] text-[#516f90]">
+                      <p>
+                        Base mensual: <strong>{dinterwebMonthlyCredits} CR</strong> ·{" "}
+                        <strong>{formatCurrency(dinterwebMonthlyPrice, proposal.currency.toUpperCase())}</strong>.
+                      </p>
+                      <p className="mt-1">
+                        {proposal.billingMode === "subscription"
+                          ? `Stripe cobrara ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())} cada ${proposal.periodMonths === 3 ? "trimestre" : proposal.periodMonths === 6 ? "semestre" : proposal.periodMonths === 12 ? "ano" : "mes"}.`
+                          : `Stripe cobrara ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())} una sola vez por este paquete.`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <div className="flex flex-col items-center gap-2.5">
@@ -1936,13 +2169,27 @@ export function SalesProposalWorkspace({
                         <div className="mx-auto mt-6 flex w-full max-w-[580px] flex-col items-center rounded-[8px] border border-[#eaf0f6] bg-white px-10 py-9 text-center shadow-[0_10px_30px_rgba(0,189,165,0.12)]">
                           <div className="mb-6 h-1 w-[calc(100%+80px)] -mt-9 bg-[#00bda5]" />
                           <p className="text-[13.5px] leading-[1.8] text-[#516f90]">
-                            Aqui definimos como activar HubSpot de forma{" "}
-                            <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
-                            <br />
-                            Seleccionamos los casos de uso que{" "}
-                            <strong className="font-extrabold text-[#46668b]">mas sentido tienen para tu operacion hoy</strong>{" "}
-                            y el orden en el que conviene trabajarlos para{" "}
-                            <strong className="font-extrabold text-[#46668b]">empezar a ver resultados rapidamente</strong>.
+                            {isDinterwebVariant ? (
+                              <>
+                                Aqui definimos como estructurar la propuesta de Dinterweb de forma{" "}
+                                <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
+                                <br />
+                                Priorizamos los casos de uso que{" "}
+                                <strong className="font-extrabold text-[#46668b]">mas valor pueden entregar hoy</strong>{" "}
+                                y el orden en el que conviene trabajarlos para{" "}
+                                <strong className="font-extrabold text-[#46668b]">arrancar con claridad y velocidad</strong>.
+                              </>
+                            ) : (
+                              <>
+                                Aqui definimos como activar HubSpot de forma{" "}
+                                <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
+                                <br />
+                                Seleccionamos los casos de uso que{" "}
+                                <strong className="font-extrabold text-[#46668b]">mas sentido tienen para tu operacion hoy</strong>{" "}
+                                y el orden en el que conviene trabajarlos para{" "}
+                                <strong className="font-extrabold text-[#46668b]">empezar a ver resultados rapidamente</strong>.
+                              </>
+                            )}
                           </p>
                           <button
                             type="button"
@@ -2418,7 +2665,7 @@ export function SalesProposalWorkspace({
                           1. ¿Qué áreas de HubSpot deseas activar?
                         </p>
                         <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-                          {["Sales", "Marketing", "Service", "Content"].map((hub) => {
+                          {wizardOptionLabels.map((hub) => {
                             const selectedIndex = wizardHubs.indexOf(hub);
                             const isSelected = selectedIndex !== -1;
 
@@ -2740,7 +2987,125 @@ export function SalesProposalWorkspace({
         </div>
       ) : null}
 
-      {isUpsellModalOpen ? (
+      {isUpsellModalOpen && isDinterwebVariant ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[640px] rounded-[6px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
+            <div className="text-center">
+              <h3 className="text-[18px] font-bold text-[#33475b]">Expandir paquete base</h3>
+              <p className="mt-2 text-[13px] text-[#516f90]">
+                El paquete base incluye 60 creditos. Desde aqui puedes sumarle 60, 80 o un ajuste personalizado.
+              </p>
+            </div>
+
+            <div className="mt-6 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbfd] p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[14px] font-bold text-[#33475b]">Base incluida</p>
+                  <p className="mt-1 text-[12px] text-[#516f90]">
+                    {DINTERWEB_BASE_PACKAGE.credits} CR por{" "}
+                    {formatCurrency(DINTERWEB_BASE_PACKAGE.price, proposal.currency.toUpperCase())} al mes base.
+                  </p>
+                </div>
+                <span className="rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] px-3 py-1 text-[11px] font-bold text-[#00bda5]">
+                  Fijo
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {DINTERWEB_EXTRA_PACKAGE_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setDinterwebExtraCreditsDraft((current) =>
+                      String(Math.max(0, safeParseNumber(current)) + option.credits),
+                    );
+                    setDinterwebExtraPriceDraft((current) =>
+                      String(Math.max(0, safeParseNumber(current)) + option.price),
+                    );
+                  }}
+                  className="rounded-[6px] border border-[#dfe3eb] bg-white px-4 py-4 text-left transition hover:border-[#14b8a6] hover:bg-[#ecfffb]"
+                >
+                  <p className="text-[14px] font-bold text-[#33475b]">Agregar +{option.credits} CR</p>
+                  <p className="mt-1 text-[12px] text-[#516f90]">
+                    Suma {formatCurrency(option.price, proposal.currency.toUpperCase())} al valor por periodo base.
+                  </p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-5 grid gap-3 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbfd] p-4 sm:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
+                  Creditos extra
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  value={dinterwebExtraCreditsDraft}
+                  onChange={(event) => setDinterwebExtraCreditsDraft(event.target.value)}
+                  className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
+                  Inversion extra
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  value={dinterwebExtraPriceDraft}
+                  onChange={(event) => setDinterwebExtraPriceDraft(event.target.value)}
+                  className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] p-4">
+              <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#33475b]">
+                <span>Total mensual base</span>
+                <span>
+                  {DINTERWEB_BASE_PACKAGE.credits + Math.max(0, safeParseNumber(dinterwebExtraCreditsDraft))} CR
+                </span>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-4 text-[15px] font-extrabold">
+                <span className="text-[#33475b]">Valor por periodo base</span>
+                <span className="text-[#ff7a59]">
+                  {formatCurrency(
+                    DINTERWEB_BASE_PACKAGE.price + Math.max(0, safeParseNumber(dinterwebExtraPriceDraft)),
+                    proposal.currency.toUpperCase(),
+                  )}
+                </span>
+              </div>
+              {proposal.billingMode === "subscription" ? (
+                <div className="mt-3 border-t border-[#99f6e4] pt-3 text-[12px] font-medium text-[#516f90]">
+                  Se convertira en una suscripcion Stripe {proposal.periodMonths === 3 ? "trimestral" : proposal.periodMonths === 6 ? "semestral" : proposal.periodMonths === 12 ? "anual" : "mensual"}.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={closeUpsellModal}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white px-4 text-[13px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmUpsell}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] bg-[#ff7a59] px-4 text-[13px] font-bold text-white transition hover:bg-[#dc6548]"
+              >
+                Guardar paquete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isUpsellModalOpen && !isDinterwebVariant ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm">
           <div className="w-full max-w-[640px] rounded-[6px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
             <div className="text-center">

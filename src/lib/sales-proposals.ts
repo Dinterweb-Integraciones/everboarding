@@ -49,6 +49,7 @@ export type SalesProposalInitiativeDraft = {
 export type SalesProposalDraft = {
   id?: string;
   slug?: string;
+  workspaceVariant?: "hubspot" | "dinterweb";
   title: string;
   sellerName: string;
   sellerEmail: string;
@@ -91,6 +92,7 @@ export function createLocalId(prefix: string) {
 
 export function createEmptySalesProposalDraft(): SalesProposalDraft {
   return {
+    workspaceVariant: "hubspot",
     title: "Propuesta comercial",
     sellerName: "",
     sellerEmail: "",
@@ -115,6 +117,14 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     couponAppliedAt: null,
     initiatives: [],
   };
+}
+
+function normalizeSalesBillingMode(value: unknown): "subscription" | "one_time" {
+  return value === "subscription" ? "subscription" : "one_time";
+}
+
+function normalizeSalesPeriodMonths(value: unknown): 1 | 3 | 6 | 12 {
+  return value === 3 || value === 6 || value === 12 ? value : 1;
 }
 
 export function createEmptySalesInitiative(status: InitiativeStatus): SalesProposalInitiativeDraft {
@@ -151,11 +161,12 @@ export function normalizeSalesProposalDraft(input: Partial<SalesProposalDraft>):
     ...base,
     ...input,
     currency: (input.currency || base.currency).toLowerCase(),
-    billingMode: "one_time",
+    workspaceVariant: input.workspaceVariant === "dinterweb" ? "dinterweb" : "hubspot",
+    billingMode: normalizeSalesBillingMode(input.billingMode ?? base.billingMode),
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
     couponAppliedAt: input.couponAppliedAt || null,
-    periodMonths: 1,
+    periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
     initiatives: (input.initiatives ?? []).map((initiative, initiativeIndex) => ({
@@ -213,8 +224,12 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
       (row.quoted_price as string | number | null | undefined) ?? snapshot.quotedPrice,
     ),
     currency: String(row.currency ?? snapshot.currency ?? "usd").toLowerCase(),
-    billingMode: "one_time",
-    periodMonths: 1,
+    billingMode: normalizeSalesBillingMode(
+      (row.billing_mode as string | null | undefined) ?? snapshot.billingMode,
+    ),
+    periodMonths: normalizeSalesPeriodMonths(
+      (row.plan_period_months as number | null | undefined) ?? snapshot.periodMonths,
+    ),
     status: normalizeSalesStatus(row.status),
     hubspotDealId: (row.hubspot_deal_id as string | null) ?? null,
     activatedClientId: (row.activated_client_id as string | null) ?? null,
@@ -248,8 +263,8 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     contracted_credits: normalized.contractedCredits,
     quoted_price: normalized.quotedPrice,
     currency: normalized.currency.toLowerCase(),
-    billing_mode: "one_time",
-    plan_period_months: 1,
+    billing_mode: normalized.billingMode,
+    plan_period_months: normalized.periodMonths,
     status: normalized.status,
     applied_coupon_id: normalized.appliedCouponId,
     applied_coupon_code: normalized.appliedCouponCode.trim() || null,

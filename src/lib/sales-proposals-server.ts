@@ -115,6 +115,10 @@ function buildActivatedClientSlug(proposal: SalesProposalRecord, proposalId: str
   return baseSlug.toLowerCase();
 }
 
+function getSalesProposalRouteBase(proposal: Pick<SalesProposalRecord, "workspaceVariant">) {
+  return proposal.workspaceVariant === "dinterweb" ? "/sales/dinterweb/proposals" : "/sales/proposals";
+}
+
 export async function getActiveSalesCouponByCode(code: string) {
   const normalizedCode = normalizeSalesCouponCode(code);
   if (!normalizedCode) {
@@ -373,15 +377,24 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
   const stripe = getStripe();
   const origin = resolveOrigin(request);
   const amountInCents = Math.round(proposal.quotedPrice * 100);
+  const routeBase = getSalesProposalRouteBase(proposal);
 
   if (!proposal.hubspotDealId && isHubSpotConfigured()) {
     const synced = await saveSalesProposal(proposal, proposal.slug || proposal.id || "proposal");
     proposal = synced;
   }
 
+  const baseMetadata = {
+    sales_proposal_id: proposal.id || "",
+    sales_proposal_slug: proposal.slug || "",
+    sales_client_name: proposal.clientName,
+    sales_workspace_variant: proposal.workspaceVariant || "hubspot",
+  };
+  const isRecurringProposal = proposal.billingMode === "subscription";
+
   const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    submit_type: "pay",
+    mode: isRecurringProposal ? "subscription" : "payment",
+    ...(isRecurringProposal ? {} : { submit_type: "pay" as const }),
     customer_email: proposal.clientEmail || undefined,
     line_items: [
       {
@@ -389,6 +402,14 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
         price_data: {
           currency: resolveCurrency(proposal.currency),
           unit_amount: amountInCents,
+          ...(isRecurringProposal
+            ? {
+                recurring: {
+                  interval: "month" as const,
+                  interval_count: proposal.periodMonths,
+                },
+              }
+            : {}),
           product_data: {
             name: `${proposal.clientCompany || proposal.clientName} · Activar plan`,
             description: `${proposal.contractedCredits} CR · ${proposal.title}`,
@@ -396,19 +417,26 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
         },
       },
     ],
-    success_url: `${origin}/sales/proposals/${proposal.slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/sales/proposals/${proposal.slug}?payment=cancelled`,
-    metadata: {
-      sales_proposal_id: proposal.id || "",
-      sales_proposal_slug: proposal.slug || "",
-      sales_client_name: proposal.clientName,
-    },
-    payment_intent_data: {
-      metadata: {
-        sales_proposal_id: proposal.id || "",
-        sales_proposal_slug: proposal.slug || "",
-      },
-    },
+    success_url: `${origin}${routeBase}/${proposal.slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${origin}${routeBase}/${proposal.slug}?payment=cancelled`,
+    metadata: baseMetadata,
+    ...(isRecurringProposal
+      ? {
+          subscription_data: {
+            metadata: {
+              sales_proposal_id: proposal.id || "",
+              sales_proposal_slug: proposal.slug || "",
+            },
+          },
+        }
+      : {
+          payment_intent_data: {
+            metadata: {
+              sales_proposal_id: proposal.id || "",
+              sales_proposal_slug: proposal.slug || "",
+            },
+          },
+        }),
   });
 
   const { error } = await admin
@@ -576,9 +604,9 @@ async function activateSalesProposalWithPaymentContext(
       base_capacity: proposal.contractedCredits,
       custom_plan_credits: proposal.contractedCredits,
       custom_plan_price: proposal.quotedPrice,
-      custom_plan_type: "proyecto",
-      custom_plan_billing_mode: "one_time",
-      custom_plan_period_months: 1,
+      custom_plan_type: proposal.billingMode === "subscription" ? "mensual" : "proyecto",
+      custom_plan_billing_mode: proposal.billingMode,
+      custom_plan_period_months: proposal.periodMonths,
       current_stage: "cs",
       credit_validity_days: 60,
       sales_cleared: true,

@@ -889,7 +889,7 @@ export function PublicOnboardingPage({
 
           {shouldShowPaymentCta ? (
             <Button
-              onClick={startStripeCheckout}
+              onClick={() => void startStripeCheckout()}
               disabled={
                 isStartingPayment || isSyncingPayment || paymentAmount <= 0
               }
