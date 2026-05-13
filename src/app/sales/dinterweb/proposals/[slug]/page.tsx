@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
+import { requireUser } from "@/lib/auth";
+import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -24,6 +26,8 @@ export const revalidate = 0;
 export default async function DinterwebSalesProposalPage({
   params,
 }: DinterwebSalesProposalPageProps) {
+  const { user } = await requireUser("/sales/dinterweb");
+  const seller = getDinterwebSellerIdentity(user);
   const { slug } = await params;
   let proposalRow: SalesProposalRow | null = null;
   let catalogRows: CreditCatalogItem[] = [];
@@ -98,6 +102,14 @@ export default async function DinterwebSalesProposalPage({
       ? await syncSalesProposalCheckoutStatus(slug)
       : mapSalesProposalRow(typedProposalRow);
 
+  if (
+    initialProposal.workspaceVariant !== "dinterweb" ||
+    (initialProposal.sellerEmail.trim() &&
+      initialProposal.sellerEmail.trim().toLowerCase() !== seller.email)
+  ) {
+    notFound();
+  }
+
   return (
     <SalesProposalWorkspace
       initialCatalog={catalogRows ?? []}
@@ -107,6 +119,7 @@ export default async function DinterwebSalesProposalPage({
       initialProposal={initialProposal}
       variant="dinterweb"
       routeBase="/sales/dinterweb/proposals"
+      sellerPreset={seller}
     />
   );
 }

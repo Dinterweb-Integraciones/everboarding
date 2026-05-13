@@ -18,6 +18,10 @@ import {
   type PublicOnboardingSnapshot,
   createDefaultBillingStatus,
 } from "@/lib/onboarding";
+import {
+  buildPublicProspectSnapshotBase,
+  getSalesProposalBySlug,
+} from "@/lib/public-prospect";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -60,41 +64,16 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     notFound();
   }
 
-  const supabase = await createSupabaseServerClient();
   const admin = createSupabaseAdminClient();
-  const { data, error } = (await supabase.rpc("get_public_onboarding_snapshot", {
-    p_slug: slug,
-  })) as {
-    data: PublicOnboardingRpcResponse | null;
-    error: Error | null;
-  };
-
-  if (error || !data) {
-    return (
-      <div className="min-h-screen bg-[#f5f8fa] px-6 py-16">
-        <Card className="mx-auto max-w-2xl rounded-[24px] px-8 py-10">
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-            Enlace publico no valido
-          </p>
-          <h1 className="mt-4 text-3xl font-semibold text-slate-950">
-            No encontramos este onboarding publico.
-          </h1>
-          <p className="mt-4 text-sm leading-6 text-slate-600">
-            Revisa el enlace compartido o solicita una URL nueva.
-          </p>
-        </Card>
-      </div>
-    );
-  }
-
   const [
+    prospectProposal,
     { data: catalogRows, error: catalogError },
     { data: catalogCategoryRows, error: catalogCategoriesError },
     { data: catalogGroupRows, error: catalogGroupsError },
     { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
     { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
-    billingResult,
   ] = await Promise.all([
+    audience === "prospect" ? getSalesProposalBySlug(slug) : Promise.resolve(null),
     admin
       .from("credit_catalog_items")
       .select("*")
@@ -124,9 +103,6 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       .select("*")
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true }),
-    admin.rpc("get_client_billing_status" as never, {
-      p_client_id: data.client.id,
-    } as never),
   ]);
 
   if (catalogError) {
@@ -149,7 +125,6 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     throw new Error("No pudimos cargar la relacion entre grupos y tareas del catalogo publico.");
   }
 
-  const billingRow = (billingResult as { data: ClientBillingStatus | null }).data ?? null;
   const typedCatalogRows = (catalogRows ?? []) as CreditCatalogItem[];
   const typedCatalogCategoryRows = (catalogCategoryRows ?? []) as CreditCatalogCategory[];
   const typedCatalogGroupRows = (catalogGroupRows ?? []) as CreditCatalogGroup[];
@@ -157,6 +132,74 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     (catalogGroupCategoryRows ?? []) as CreditCatalogGroupCategory[];
   const typedCatalogGroupMembershipRows =
     (catalogGroupMembershipRows ?? []) as CreditCatalogGroupItem[];
+
+  if (prospectProposal) {
+    const baseSnapshot = buildPublicProspectSnapshotBase(prospectProposal);
+    const snapshot: PublicOnboardingSnapshot = {
+      ...baseSnapshot,
+      catalog: typedCatalogRows.map((item) => ({
+        ...item,
+        credits: Number(item.credits ?? 0),
+        sort_order: Number(item.sort_order ?? 0),
+      })),
+      catalogCategories: typedCatalogCategoryRows.map((category) => ({
+        ...category,
+        sort_order: Number(category.sort_order ?? 0),
+      })),
+      catalogGroups: typedCatalogGroupRows.map((group) => ({
+        ...group,
+        credits: Number(group.credits ?? 0),
+        sort_order: Number(group.sort_order ?? 0),
+      })),
+      catalogGroupCategories: typedCatalogGroupCategoryRows.map((category) => ({
+        ...category,
+        sort_order: Number(category.sort_order ?? 0),
+      })),
+      catalogGroupMemberships: typedCatalogGroupMembershipRows.map((membership) => ({
+        ...membership,
+        sort_order: Number(membership.sort_order ?? 0),
+      })),
+    };
+
+    return (
+      <PublicOnboardingPage
+        audience={audience}
+        publicSlug={slug}
+        initialData={snapshot}
+      />
+    );
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = (await supabase.rpc("get_public_onboarding_snapshot", {
+    p_slug: slug,
+  })) as {
+    data: PublicOnboardingRpcResponse | null;
+    error: Error | null;
+  };
+
+  if (error || !data) {
+    return (
+      <div className="min-h-screen bg-[#f5f8fa] px-6 py-16">
+        <Card className="mx-auto max-w-2xl rounded-[24px] px-8 py-10">
+          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+            Enlace publico no valido
+          </p>
+          <h1 className="mt-4 text-3xl font-semibold text-slate-950">
+            No encontramos este onboarding publico.
+          </h1>
+          <p className="mt-4 text-sm leading-6 text-slate-600">
+            Revisa el enlace compartido o solicita una URL nueva.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  const billingResult = await admin.rpc("get_client_billing_status" as never, {
+    p_client_id: data.client.id,
+  } as never);
+  const billingRow = (billingResult as { data: ClientBillingStatus | null }).data ?? null;
 
   const snapshot: PublicOnboardingSnapshot = {
     client: data.client,

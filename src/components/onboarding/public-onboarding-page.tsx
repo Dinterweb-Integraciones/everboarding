@@ -597,10 +597,8 @@ export function PublicOnboardingPage({
     targetStatus: PublicDraftTargetStatus = requestTargetStatus,
   ) {
     setFeedback(null);
-
-    if (audience !== "client") {
-      return;
-    }
+    const resolvedTargetStatus: PublicDraftTargetStatus =
+      audience === "prospect" ? "backlog" : targetStatus;
 
     if (!draft.title.trim()) {
       setFeedback({
@@ -631,7 +629,7 @@ export function PublicOnboardingPage({
           description: draft.description.trim(),
           catalogItemIds: draft.selectedCatalogItemIds,
           groupId: draft.selectedGroupId?.trim() || undefined,
-          targetStatus,
+          targetStatus: resolvedTargetStatus,
         }),
       });
 
@@ -705,7 +703,7 @@ export function PublicOnboardingPage({
       setIsGroupBuilderOpen(false);
       setFeedback({
         tone: "success",
-        message: `Tu solicitud quedo registrada en ${getPublicDraftStatusLabel(targetStatus)}.`,
+        message: `Tu solicitud quedo registrada en ${getPublicDraftStatusLabel(resolvedTargetStatus)}.`,
       });
     } catch (caughtError) {
       setFeedback({
@@ -964,10 +962,10 @@ export function PublicOnboardingPage({
               </div>
 
               <div className="flex w-full max-w-[360px] flex-col gap-3">
-                <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
+              <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
                   {audience === "client"
                     ? "Puedes proponer nuevas iniciativas solo en En evaluacion."
-                    : "Vista publica de solo lectura para presentar alcance y roadmap."}
+                    : "Puedes proponer nuevas iniciativas, pero solo entraran en En evaluacion."}
                 </div>
                 {audience === "client" ? (
                   <div className="rounded-[14px] border border-[#99f6e4] bg-[#effdfa] px-4 py-4">
@@ -1030,9 +1028,13 @@ export function PublicOnboardingPage({
               const items = groupedInitiatives[status];
               const totalCredits = items.reduce((sum, initiative) => sum + initiative.credits, 0);
               const allowsCustomBuilder =
-                audience === "client" && catalogOptions.length > 0 && status === "backlog";
+                (audience === "client" || audience === "prospect") &&
+                catalogOptions.length > 0 &&
+                status === "backlog";
               const allowsCatalogAdd =
-                audience === "client" && catalogGroupOptions.length > 0 && status === "backlog";
+                (audience === "client" || audience === "prospect") &&
+                catalogGroupOptions.length > 0 &&
+                status === "backlog";
 
               return (
                 <div key={status} className="flex min-h-[270px] flex-col">

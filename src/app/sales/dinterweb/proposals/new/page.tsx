@@ -1,4 +1,6 @@
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
+import { requireUser } from "@/lib/auth";
+import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -11,6 +13,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function NewDinterwebSalesProposalPage() {
+  const { user } = await requireUser("/sales/dinterweb");
+  const seller = getDinterwebSellerIdentity(user);
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
   let groupCategoryRows: CreditCatalogGroupCategory[] = [];
@@ -72,6 +76,7 @@ export default async function NewDinterwebSalesProposalPage() {
       initialProposal={null}
       variant="dinterweb"
       routeBase="/sales/dinterweb/proposals"
+      sellerPreset={seller}
     />
   );
 }

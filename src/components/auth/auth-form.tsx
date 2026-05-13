@@ -29,7 +29,8 @@ export function AuthForm({ mode }: AuthFormProps) {
     setIsLoading(true);
 
     try {
-      const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
+      const nextPath = searchParams.get("next") || "/dashboard";
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {

@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 
+import {
+  getSalesProposalBySlug,
+  mapProposalInitiativeToPublicRecord,
+} from "@/lib/public-prospect";
+import { createLocalId, type SalesProposalRecord } from "@/lib/sales-proposals";
+import { saveSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError, toIsoDate } from "@/lib/utils";
 
@@ -29,10 +35,17 @@ type InsertedSubitemRow = {
   quantity?: number | null;
 } & Record<string, unknown>;
 
+type GroupRecord = {
+  id: string;
+  name: string;
+  description: string | null;
+  credits: number | null;
+};
+
 export async function POST(request: Request, context: RouteContext) {
   const { audience, slug } = await context.params;
 
-  if (audience !== "client") {
+  if (audience !== "client" && audience !== "prospect") {
     return NextResponse.json(
       { message: "Esta vista publica no permite crear iniciativas." },
       { status: 403 },
@@ -62,39 +75,52 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
-    const targetStatus: PublicTargetStatus = body.targetStatus === "planned" ? "planned" : "backlog";
+    const targetStatus: PublicTargetStatus =
+      audience === "prospect"
+        ? "backlog"
+        : body.targetStatus === "planned"
+          ? "planned"
+          : "backlog";
     const admin = createSupabaseAdminClient();
+    const proposal = audience === "prospect" ? await getSalesProposalBySlug(slug) : null;
+    let resolvedClientId: string | null = null;
 
-    const { data: snapshot, error: snapshotError } = await admin.rpc(
-      "get_public_onboarding_snapshot" as never,
-      {
-        p_slug: slug,
-      } as never,
-    );
-    const snapshotData = snapshot as { client?: { id?: string } } | null;
-    const clientId = snapshotData?.client?.id ?? null;
-
-    if (snapshotError || !clientId) {
-      return NextResponse.json(
+    if (!proposal) {
+      const { data: snapshot, error: snapshotError } = await admin.rpc(
+        "get_public_onboarding_snapshot" as never,
         {
-          message: formatUserError(
-            snapshotError,
-            "No fue posible ubicar el cliente para esta solicitud publica.",
-          ),
-        },
-        { status: 400 },
+          p_slug: slug,
+        } as never,
       );
+      const snapshotData = snapshot as { client?: { id?: string } } | null;
+      const clientId = snapshotData?.client?.id ?? null;
+
+      if (snapshotError || !clientId) {
+        return NextResponse.json(
+          {
+            message: formatUserError(
+              snapshotError,
+              "No fue posible ubicar el cliente para esta solicitud publica.",
+            ),
+          },
+          { status: 400 },
+        );
+      }
+
+      resolvedClientId = clientId;
     }
 
-    const resolvedClientId = clientId;
-
-    async function createInitiativeWithItems(input: {
+    async function createClientInitiativeWithItems(input: {
       title: string;
       description: string | null;
       type: string;
       items: CatalogItemRecord[];
       fallbackCredits?: number;
     }) {
+      if (!resolvedClientId) {
+        throw new Error("No fue posible ubicar el cliente para esta solicitud publica.");
+      }
+
       const { data: existingForStatus, error: sortError } = await admin
         .from("onboarding_initiatives")
         .select("sort_order")
@@ -208,6 +234,77 @@ export async function POST(request: Request, context: RouteContext) {
       };
     }
 
+    async function createProposalInitiativeWithItems(
+      activeProposal: SalesProposalRecord,
+      input: {
+        title: string;
+        description: string | null;
+        type: string;
+        items: CatalogItemRecord[];
+        fallbackCredits?: number;
+      },
+    ) {
+      const nextSortOrder =
+        activeProposal.initiatives
+          .filter((initiative) => initiative.status === targetStatus)
+          .reduce((max, initiative) => Math.max(max, Number(initiative.sortOrder ?? -1)), -1) + 1;
+      const nextInitiative = {
+        id: createLocalId("sales-initiative"),
+        title: input.title.trim(),
+        type: input.type,
+        status: "backlog" as const,
+        description: input.description || "",
+        estStartDate: "",
+        estEndDate: "",
+        sortOrder: nextSortOrder,
+        isBlocked: false,
+        subitems: input.items.length
+          ? input.items.map((item) => ({
+              id: createLocalId("sales-subitem"),
+              catalogItemId: item.id,
+              name: item.label,
+              status: "pending" as const,
+              targetDate: "",
+              unitCredits: Number(item.credits ?? 0),
+              quantity: 1,
+            }))
+          : [
+              {
+                id: createLocalId("sales-subitem"),
+                catalogItemId: null,
+                name: input.title.trim(),
+                status: "pending" as const,
+                targetDate: "",
+                unitCredits: Math.max(1, Number(input.fallbackCredits ?? 0)),
+                quantity: 1,
+              },
+            ],
+      };
+      const savedProposal = await saveSalesProposal(
+        {
+          ...activeProposal,
+          initiatives: [...activeProposal.initiatives, nextInitiative],
+        },
+        activeProposal.slug || activeProposal.id || slug,
+      );
+
+      return mapProposalInitiativeToPublicRecord(nextInitiative, savedProposal, nextSortOrder);
+    }
+
+    async function createInitiativeWithItems(input: {
+      title: string;
+      description: string | null;
+      type: string;
+      items: CatalogItemRecord[];
+      fallbackCredits?: number;
+    }) {
+      if (proposal) {
+        return createProposalInitiativeWithItems(proposal, input);
+      }
+
+      return createClientInitiativeWithItems(input);
+    }
+
     if (body.groupId?.trim()) {
       const { data: group, error: groupError } = await admin
         .from("credit_catalog_groups")
@@ -215,12 +312,7 @@ export async function POST(request: Request, context: RouteContext) {
         .eq("id", body.groupId.trim())
         .eq("is_active", true)
         .maybeSingle();
-      const groupRecord = group as {
-        id: string;
-        name: string;
-        description: string | null;
-        credits: number | null;
-      } | null;
+      const groupRecord = group as GroupRecord | null;
 
       if (groupError || !groupRecord) {
         return NextResponse.json(

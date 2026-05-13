@@ -46,6 +46,11 @@ type SalesProposalWorkspaceProps = {
   initialProposal?: SalesProposalRecord | null;
   variant?: "hubspot" | "dinterweb";
   routeBase?: string;
+  sellerPreset?: {
+    name: string;
+    email: string;
+    company: string;
+  } | null;
 };
 
 type CatalogModalGroup = {
@@ -91,6 +96,7 @@ const DINTERWEB_EXTRA_PACKAGE_OPTIONS = [
   { id: "60", credits: 60, price: SALES_PROPOSAL_BASE_PRICE },
   { id: "80", credits: 80, price: Math.round(80 * PLAN_PRICE_FACTOR) },
 ] as const;
+const WIZARD_HUB_OPTIONS = ["Sales", "Marketing", "Service", "Content"] as const;
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
   "Definiendo prioridades...",
@@ -323,12 +329,18 @@ function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): Sales
   return kickoff;
 }
 
-function createNewSalesProposalDraft(variant: "hubspot" | "dinterweb" = "hubspot") {
+function createNewSalesProposalDraft(
+  variant: "hubspot" | "dinterweb" = "hubspot",
+  sellerPreset?: SalesProposalWorkspaceProps["sellerPreset"],
+) {
   const draft = createEmptySalesProposalDraft();
 
   return {
     ...draft,
     workspaceVariant: variant,
+    sellerName: sellerPreset?.name ?? draft.sellerName,
+    sellerEmail: sellerPreset?.email ?? draft.sellerEmail,
+    sellerCompany: sellerPreset?.company ?? draft.sellerCompany,
     initiatives: [createDefaultKickoffInitiative(draft.startDate, 0)],
   };
 }
@@ -475,6 +487,7 @@ export function SalesProposalWorkspace({
   initialProposal,
   variant = "hubspot",
   routeBase = "/sales/proposals",
+  sellerPreset = null,
 }: SalesProposalWorkspaceProps) {
   const wizardChallenges: Record<
     string,
@@ -482,6 +495,7 @@ export function SalesProposalWorkspace({
   > = {};
   const isDinterwebVariant = variant === "dinterweb";
   const newProposalHref = `${routeBase}/new`;
+  const workspaceHomeHref = isDinterwebVariant ? "/sales/dinterweb" : newProposalHref;
   const packageOptions = SALES_PROPOSAL_UPSELL_OPTIONS;
 
   const router = useRouter();
@@ -490,10 +504,10 @@ export function SalesProposalWorkspace({
   const initialDraft = useMemo(
     () =>
       normalizeSalesProposalDraft({
-        ...(initialProposal ?? createNewSalesProposalDraft(variant)),
+        ...(initialProposal ?? createNewSalesProposalDraft(variant, sellerPreset)),
         workspaceVariant: variant,
       }),
-    [initialProposal, variant],
+    [initialProposal, sellerPreset, variant],
   );
   const [proposal, setProposal] = useState<SalesProposalDraft>(initialDraft);
   const [feedback, setFeedback] = useState<{
@@ -663,21 +677,27 @@ export function SalesProposalWorkspace({
     return [...orderedCategoryTabs, ...legacyTabs];
   }, [catalogGroups, initialGroupCategories]);
 
+  const visibleCatalogGroupOptions = useMemo(
+    () =>
+      isDinterwebVariant
+        ? catalogGroupOptions.filter((category) =>
+            WIZARD_HUB_OPTIONS.includes(category.label as (typeof WIZARD_HUB_OPTIONS)[number]),
+          )
+        : catalogGroupOptions,
+    [catalogGroupOptions, isDinterwebVariant],
+  );
+
   const catalogTabs = useMemo(
     () => [
       { id: "wizard", label: "Guía de Activación" },
-      ...catalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
+      ...visibleCatalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
     ],
-    [catalogGroupOptions],
+    [visibleCatalogGroupOptions],
   );
 
   const wizardOptionLabels = useMemo(() => {
-    if (!isDinterwebVariant) {
-      return ["Sales", "Marketing", "Service", "Content"];
-    }
-
-    return catalogGroupOptions.map((category) => category.label).filter(Boolean);
-  }, [catalogGroupOptions, isDinterwebVariant]);
+    return [...WIZARD_HUB_OPTIONS];
+  }, []);
 
   const groupedInitiatives = useMemo(
     () =>
@@ -1640,6 +1660,24 @@ export function SalesProposalWorkspace({
   }, [pathname, proposal.slug, router, searchParams]);
 
   async function copyProspectShareLink() {
+    if (isDinterwebVariant) {
+      if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
+        setFeedback({
+          tone: "error",
+          message: "Ingresa el nombre o email del prospecto para generar primero la URL publica.",
+        });
+        return;
+      }
+
+      const persistedProposal = proposal.slug
+        ? proposal
+        : await persistProposal(proposal, { mergeWithCurrent: true });
+      const shareUrl = `${window.location.origin}/public/prospect/${persistedProposal.slug}`;
+      await navigator.clipboard.writeText(shareUrl);
+      setFeedback({ tone: "success", message: "Link para prospecto copiado." });
+      return;
+    }
+
     if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
       setFeedback({
         tone: "error",
@@ -1653,10 +1691,7 @@ export function SalesProposalWorkspace({
       : await persistProposal(proposal, { mergeWithCurrent: true });
     const shareUrl = `${window.location.origin}${routeBase}/${persistedProposal.slug}`;
     await navigator.clipboard.writeText(shareUrl);
-    setFeedback({
-      tone: "success",
-      message: isDinterwebVariant ? "Link para prospecto copiado." : "Enlace de propuesta copiado.",
-    });
+    setFeedback({ tone: "success", message: "Enlace de propuesta copiado." });
   }
 
   async function copyClientShareLink() {
@@ -1840,12 +1875,24 @@ export function SalesProposalWorkspace({
       <header className="sticky top-0 z-30 border-b border-[#dfe3eb] bg-white shadow-sm">
         <div className="flex items-center justify-between gap-4 px-6 py-3">
           <div className="flex items-center gap-6">
-            <BrandLogo href={newProposalHref} priority />
+            <BrandLogo href={workspaceHomeHref} priority />
           </div>
           <div className="flex items-center gap-4 text-[12.5px] font-medium text-[#516f90]">
+            {isDinterwebVariant ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => router.push("/sales/dinterweb")}
+                  className="inline-flex items-center gap-1.5 font-semibold transition hover:text-[#33475b]"
+                >
+                  Mis prospectos
+                </button>
+                <span className="h-4 w-px bg-[#dfe3eb]" />
+              </>
+            ) : null}
             <button
               type="button"
-              onClick={() => setProposal(createNewSalesProposalDraft(variant))}
+              onClick={() => setProposal(createNewSalesProposalDraft(variant, sellerPreset))}
               className="inline-flex items-center gap-1.5 transition hover:text-[#ff7a59]"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -2810,7 +2857,7 @@ export function SalesProposalWorkspace({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
+                    {(visibleCatalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
                       const alreadyAdded = proposal.initiatives.some(
                         (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
                       );
