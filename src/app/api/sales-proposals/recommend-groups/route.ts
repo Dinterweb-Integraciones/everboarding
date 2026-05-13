@@ -202,9 +202,9 @@ function mapLegacyGroupsToRecommendations(
   entries: ClaudeLegacyGroup[] | undefined,
   status: "planned" | "backlog",
   groups: RecommendationGroup[],
-) {
+): ClaudeRecommendation[] {
   if (!Array.isArray(entries)) {
-    return [] as ClaudeRecommendation[];
+    return [];
   }
 
   const groupsById = new Map(groups.map((group) => [group.id, group]));
