@@ -543,6 +543,12 @@ export function SalesProposalWorkspace({
   const [wizardContext, setWizardContext] = useState("");
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
   const [initiativeDraft, setInitiativeDraft] = useState<SalesProposalInitiativeDraft | null>(null);
+  const [quickAddSelections, setQuickAddSelections] = useState<Record<InitiativeStatus, string>>({
+    backlog: "",
+    planned: "",
+    executing: "",
+    completed: "",
+  });
   const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
@@ -677,22 +683,12 @@ export function SalesProposalWorkspace({
     return [...orderedCategoryTabs, ...legacyTabs];
   }, [catalogGroups, initialGroupCategories]);
 
-  const visibleCatalogGroupOptions = useMemo(
-    () =>
-      isDinterwebVariant
-        ? catalogGroupOptions.filter((category) =>
-            WIZARD_HUB_OPTIONS.includes(category.label as (typeof WIZARD_HUB_OPTIONS)[number]),
-          )
-        : catalogGroupOptions,
-    [catalogGroupOptions, isDinterwebVariant],
-  );
-
   const catalogTabs = useMemo(
     () => [
       { id: "wizard", label: "Guía de Activación" },
-      ...visibleCatalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
+      ...catalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
     ],
-    [visibleCatalogGroupOptions],
+    [catalogGroupOptions],
   );
 
   const wizardOptionLabels = useMemo(() => {
@@ -824,6 +820,126 @@ export function SalesProposalWorkspace({
   function openInitiativeEditor(initiative: SalesProposalInitiativeDraft) {
     setEditingInitiativeId(initiative.id);
     setInitiativeDraft(createEditorDraft(initiative));
+  }
+
+  function createDraftInitiative(status: InitiativeStatus) {
+    const next = createEmptySalesInitiative(status);
+    next.id = createLocalId("sales-initiative");
+    next.sortOrder = groupedInitiatives[status].length;
+    return next;
+  }
+
+  function openCreateModal(status: InitiativeStatus) {
+    setEditingInitiativeId(null);
+    setInitiativeDraft(createDraftInitiative(status));
+  }
+
+  function openGroupedDraft(status: InitiativeStatus) {
+    const selectedCatalogId = quickAddSelections[status];
+    const selectedItem = initialCatalog.find((item) => item.id === selectedCatalogId);
+    const next = createDraftInitiative(status);
+
+    if (selectedItem) {
+      next.title = selectedItem.label;
+      next.type = selectedItem.category;
+      next.subitems = [createProposalSubitemFromCatalog(selectedItem)];
+    }
+
+    setEditingInitiativeId(null);
+    setInitiativeDraft(next);
+  }
+
+  function quickAddInitiative(status: InitiativeStatus) {
+    const selectedCatalogId = quickAddSelections[status];
+    const selectedItem = initialCatalog.find((item) => item.id === selectedCatalogId);
+
+    if (!selectedItem) {
+      setFeedback({ tone: "error", message: "Selecciona un caso del catalogo para anadir." });
+      return;
+    }
+
+    const next = createDraftInitiative(status);
+    next.title = selectedItem.label;
+    next.type = selectedItem.category;
+    next.description = `Caso de uso agregado desde ${selectedItem.category}.`;
+    next.subitems = [createProposalSubitemFromCatalog(selectedItem)];
+
+    setProposal((current) => {
+      const scheduledInitiatives = scheduleRecommendedInitiatives(
+        [...current.initiatives, next],
+        [next.id],
+        current.startDate,
+      );
+
+      return {
+        ...current,
+        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+      };
+    });
+    setQuickAddSelections((current) => ({ ...current, [status]: "" }));
+    setFeedback({ tone: "success", message: "Caso de uso agregado a la propuesta." });
+  }
+
+  function renderDinterwebStageComposer(status: InitiativeStatus, compact = false) {
+    if (!isDinterwebVariant || !canManageSalesStage(status)) {
+      return null;
+    }
+
+    return (
+      <div className={compact ? "space-y-2" : "space-y-3"}>
+        <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white p-1.5 shadow-sm">
+          <select
+            value={quickAddSelections[status]}
+            onChange={(event) =>
+              setQuickAddSelections((current) => ({
+                ...current,
+                [status]: event.target.value,
+              }))
+            }
+            className="h-10 w-full rounded-[3px] border border-transparent bg-white px-3 text-[10px] font-medium leading-4 text-[#33475b] outline-none transition focus:border-[#00bda5]"
+          >
+            <option value="">-- Rapido --</option>
+            {catalogOptions.map(([category, items]) => (
+              <optgroup key={`quick-${status}-${category}`} label={category}>
+                {items.map((item) => (
+                  <option key={`quick-${status}-${item.id}`} value={item.id}>
+                    {item.label} ({item.credits} CR)
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <div className="mt-1.5 flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => quickAddInitiative(status)}
+              disabled={!quickAddSelections[status]}
+              className="inline-flex h-7 flex-1 items-center justify-center rounded-[3px] border border-[#cbd6e2] bg-white px-2 py-1 text-[10px] font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Anadir
+            </button>
+            <button
+              type="button"
+              onClick={() => openGroupedDraft(status)}
+              className="inline-flex h-7 items-center justify-center rounded-[3px] border border-[#cbd6e2] bg-white px-2 py-1 text-[10px] font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b]"
+            >
+              Agrupar
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => openCreateModal(status)}
+          className={`inline-flex w-full items-center justify-center rounded-[3px] border-2 border-dashed border-[#cbd6e2] bg-white px-3 font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b] ${
+            compact ? "py-2 text-[10px]" : "py-3 text-[11px]"
+          }`}
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          {status === "backlog" ? "Anadir Caso de Uso a En evaluacion" : "Anadir Caso de Uso Directo"}
+        </button>
+      </div>
+    );
   }
 
   function closeInitiativeEditor() {
@@ -2249,6 +2365,32 @@ export function SalesProposalWorkspace({
                               Beta
                             </span>
                           </button>
+                          {isDinterwebVariant ? (
+                            <div className="mt-5 grid w-full max-w-[760px] gap-4 md:grid-cols-2">
+                              <div className="rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] p-3 text-left">
+                                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                                  {getStatusLabel("backlog")}
+                                </p>
+                                {renderDinterwebStageComposer("backlog", true)}
+                              </div>
+                              <div className="rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] p-3 text-left">
+                                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#6a78d1]">
+                                  {getStatusLabel("planned")}
+                                </p>
+                                {renderDinterwebStageComposer("planned", true)}
+                              </div>
+                              <div className="md:col-span-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-[4px] border-2 border-dashed border-[#14b8a6] bg-[#f5fffd] px-6 py-4 text-[15px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                                >
+                                  <Plus className="h-5 w-5" />
+                                  Agregar Caso de Uso
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -2368,7 +2510,9 @@ export function SalesProposalWorkspace({
                           </button>
                         );
                       })}
-
+                      {isDinterwebVariant && canManageSalesStage(status) ? (
+                        <div className="mx-1">{renderDinterwebStageComposer(status)}</div>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -2380,7 +2524,7 @@ export function SalesProposalWorkspace({
             <div className="mt-6 w-[664px] min-w-[664px]">
               <button
                 type="button"
-                onClick={() => openCatalogModal()}
+                onClick={() => openCatalogModal(isDinterwebVariant ? defaultCatalogLibraryTab : undefined)}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[4px] border-2 border-dashed border-[#14b8a6] bg-[#f5fffd] px-6 py-4 text-[16px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
               >
                 <Plus className="h-5 w-5" />
@@ -2857,7 +3001,7 @@ export function SalesProposalWorkspace({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {(visibleCatalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
+                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
                       const alreadyAdded = proposal.initiatives.some(
                         (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
                       );
