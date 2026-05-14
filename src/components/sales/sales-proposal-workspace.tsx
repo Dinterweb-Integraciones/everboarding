@@ -305,6 +305,11 @@ function diffCalendarDays(left: Date, right: Date) {
   return Math.round((rightCopy.getTime() - leftCopy.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+function getSnappedDayDelta(deltaX: number, dayWidth: number) {
+  if (dayWidth <= 0) return 0;
+  return Math.round(deltaX / dayWidth);
+}
+
 function minCalendarDate(values: Date[]) {
   return values.reduce((earliest, current) => (current < earliest ? current : earliest));
 }
@@ -568,6 +573,15 @@ export function SalesProposalWorkspace({
   });
   const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
+  const [ganttDrag, setGanttDrag] = useState<{
+    initiativeId: string;
+    originX: number;
+    dayDelta: number;
+    startDate: string;
+    endDate: string;
+    mode: "move" | "resize-start" | "resize-end";
+  } | null>(null);
+  const [isSavingTimelineDates, setIsSavingTimelineDates] = useState(false);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
 
@@ -1945,6 +1959,65 @@ function mergeRecommendedGroups(
     }
   }
 
+  const persistGanttDates = useCallback(async (initiativeId: string, startDate: string, endDate: string) => {
+    const targetInitiative = proposal.initiatives.find((initiative) => initiative.id === initiativeId);
+    if (!targetInitiative) return;
+
+    if (targetInitiative.isBlocked) {
+      setFeedback({
+        tone: "error",
+        message: "Esta iniciativa esta bloqueada. Debes desbloquearla antes de ajustar sus fechas.",
+      });
+      return;
+    }
+
+    const previousSignature = lastPersistedSignatureRef.current;
+    const nextProposal = normalizeSalesProposalDraft({
+      ...proposal,
+      initiatives: proposal.initiatives.map((initiative) =>
+        initiative.id === initiativeId
+          ? {
+              ...initiative,
+              estStartDate: startDate,
+              estEndDate: endDate,
+            }
+          : initiative,
+      ),
+    });
+
+    setProposal(nextProposal);
+
+    if (initiativeDraft?.id === initiativeId) {
+      const syncedDraft = nextProposal.initiatives.find((initiative) => initiative.id === initiativeId);
+      if (syncedDraft) {
+        setInitiativeDraft(createEditorDraft(syncedDraft));
+      }
+    }
+
+    setFeedback(null);
+    setIsSavingTimelineDates(true);
+    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
+
+    try {
+      await persistProposal(nextProposal, { mergeWithCurrent: true });
+      setFeedback({
+        tone: "success",
+        message: `Fechas actualizadas en Plan de Trabajo: ${formatDateRange(startDate, endDate)}.`,
+      });
+    } catch (caughtError) {
+      lastPersistedSignatureRef.current = previousSignature;
+      setFeedback({
+        tone: "error",
+        message: formatUserError(
+          caughtError,
+          "No pudimos actualizar las fechas desde el Plan de Trabajo.",
+        ),
+      });
+    } finally {
+      setIsSavingTimelineDates(false);
+    }
+  }, [initiativeDraft, persistProposal, proposal]);
+
   const consumedWidth = Math.min((metrics.completed / Math.max(metrics.total, 1)) * 100, 100);
   const committedWidth = Math.min((metrics.committed / Math.max(metrics.total, 1)) * 100, 100);
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
@@ -1991,6 +2064,56 @@ function mergeRecommendedGroups(
   const isUpsellDisabled = hasAppliedCoupon || isProposalCheckoutLocked;
   const wizardLoadingMessage =
     WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
+
+  useEffect(() => {
+    if (!ganttDrag) return;
+    const activeDrag = ganttDrag;
+
+    function handlePointerMove(event: PointerEvent) {
+      const deltaX = event.clientX - activeDrag.originX;
+      const nextDelta = getSnappedDayDelta(deltaX, timelineRows.dayWidth);
+      setGanttDrag((current) => (current ? { ...current, dayDelta: nextDelta } : current));
+    }
+
+    function handlePointerUp() {
+      setGanttDrag(null);
+
+      if (!activeDrag || activeDrag.dayDelta === 0) {
+        return;
+      }
+
+      const initiative = proposal.initiatives.find((item) => item.id === activeDrag.initiativeId);
+      if (!initiative) return;
+
+      const startBase = parseCalendarDate(activeDrag.startDate);
+      const endBase = parseCalendarDate(activeDrag.endDate);
+      let nextStart = activeDrag.startDate;
+      let nextEnd = activeDrag.endDate;
+
+      if (activeDrag.mode === "move") {
+        nextStart = toIsoDate(addCalendarDays(startBase, activeDrag.dayDelta));
+        nextEnd = toIsoDate(addCalendarDays(endBase, activeDrag.dayDelta));
+      } else if (activeDrag.mode === "resize-start") {
+        const candidateStart = addCalendarDays(startBase, activeDrag.dayDelta);
+        const normalizedStart = candidateStart > endBase ? endBase : candidateStart;
+        nextStart = toIsoDate(normalizedStart);
+      } else {
+        const candidateEnd = addCalendarDays(endBase, activeDrag.dayDelta);
+        const normalizedEnd = candidateEnd < startBase ? startBase : candidateEnd;
+        nextEnd = toIsoDate(normalizedEnd);
+      }
+
+      void persistGanttDates(initiative.id, nextStart, nextEnd);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [ganttDrag, persistGanttDates, proposal.initiatives, timelineRows.dayWidth]);
 
   useEffect(() => {
     const autosaveSignature = getSalesProposalAutosaveSignature(proposal);
@@ -2720,47 +2843,155 @@ function mergeRecommendedGroups(
                     </div>
                   </>
                 ) : (
-                  timelineRows.rows.map((row) => (
-                    <Fragment key={row.initiative.id}>
-                      <div className="h-[30px] w-0 overflow-hidden border-b border-transparent" />
-                      <div className="relative border border-[#eaf0f6] border-l-0 border-t-0 bg-white">
-                        <div
-                          className="grid"
-                          style={{
-                            gridTemplateColumns: `repeat(${timelineRows.timelineDays}, ${timelineRows.dayWidth}px)`,
-                          }}
-                        >
-                          {timelineRows.dayMarkers.map((marker) => (
-                            <div
-                              key={`${row.initiative.id}-${marker.key}`}
-                              className="h-[30px] border-r border-b border-[#eef2f7] last:border-r-0"
-                            />
-                          ))}
-                        </div>
-                        {!row.isOutsideRange ? (
-                          <button
-                            type="button"
-                            onClick={() => openInitiativeEditor(row.initiative)}
-                          className={`absolute top-[4px] flex h-[22px] items-center justify-center rounded-[3px] px-2 text-center leading-none ${getSalesTimelineBarClass(
-                            row.initiative.status,
-                          )}`}
+                  timelineRows.rows.map((row) => {
+                    const baseStart = row.initiative.estStartDate ?? toIsoDate(row.start as Date);
+                    const baseEnd = row.initiative.estEndDate ?? toIsoDate(row.end as Date);
+                    const dragDelta =
+                      ganttDrag?.initiativeId === row.initiative.id ? ganttDrag.dayDelta : 0;
+                    const baseStartDate = parseCalendarDate(baseStart);
+                    const baseEndDate = parseCalendarDate(baseEnd);
+                    const previewStartDate =
+                      ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-start"
+                        ? (() => {
+                            const candidate = addCalendarDays(baseStartDate, dragDelta);
+                            return candidate > baseEndDate ? baseEndDate : candidate;
+                          })()
+                        : ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-end"
+                          ? baseStartDate
+                          : addCalendarDays(baseStartDate, dragDelta);
+                    const previewEndDate =
+                      ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-start"
+                        ? baseEndDate
+                        : ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-end"
+                          ? (() => {
+                              const candidate = addCalendarDays(baseEndDate, dragDelta);
+                              return candidate < baseStartDate ? baseStartDate : candidate;
+                            })()
+                          : addCalendarDays(baseEndDate, dragDelta);
+                    const previewStartOffset = Math.max(
+                      diffCalendarDays(timelineRows.windowStart, previewStartDate),
+                      0,
+                    );
+                    const previewSpan = Math.max(
+                      diffCalendarDays(previewStartDate, previewEndDate) + 1,
+                      1,
+                    );
+
+                    return (
+                      <Fragment key={row.initiative.id}>
+                        <div className="h-[30px] w-0 overflow-hidden border-b border-transparent" />
+                        <div className="relative border border-[#eaf0f6] border-l-0 border-t-0 bg-white">
+                          <div
+                            className="grid"
                             style={{
-                              left: `${row.startOffset * timelineRows.dayWidth}px`,
-                              width: `${Math.max(row.span * timelineRows.dayWidth - 4, timelineRows.dayWidth * 6)}px`,
+                              gridTemplateColumns: `repeat(${timelineRows.timelineDays}, ${timelineRows.dayWidth}px)`,
                             }}
                           >
-                            <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
-                          </button>
-                        ) : (
-                          <div className="absolute inset-0 grid place-items-center px-4 text-center">
-                            <p className="text-[10px] font-semibold text-[#8aa0b4]">
-                              Fuera de la ventana visible.
-                            </p>
+                            {timelineRows.dayMarkers.map((marker) => (
+                              <div
+                                key={`${row.initiative.id}-${marker.key}`}
+                                className="h-[30px] border-r border-b border-[#eef2f7] last:border-r-0"
+                              />
+                            ))}
                           </div>
-                        )}
-                      </div>
-                    </Fragment>
-                  ))
+                          {!row.isOutsideRange ? (
+                            <div
+                              className={`absolute top-[4px] h-[22px] rounded-[3px] ${getSalesTimelineBarClass(
+                                row.initiative.status,
+                              )}`}
+                              style={{
+                                left: `${previewStartOffset * timelineRows.dayWidth}px`,
+                                width: `${Math.max(previewSpan * timelineRows.dayWidth - 4, timelineRows.dayWidth * 6)}px`,
+                                opacity: ganttDrag?.initiativeId === row.initiative.id ? 0.92 : 1,
+                              }}
+                            >
+                              <div
+                                onPointerDown={(event) => {
+                                  if (isSavingTimelineDates || row.initiative.isBlocked) return;
+                                  event.preventDefault();
+                                  setGanttDrag({
+                                    initiativeId: row.initiative.id,
+                                    originX: event.clientX,
+                                    dayDelta: 0,
+                                    startDate: baseStart,
+                                    endDate: baseEnd,
+                                    mode: "move",
+                                  });
+                                }}
+                                onDoubleClick={() => openInitiativeEditor(row.initiative)}
+                                className="absolute inset-y-0 left-3 right-3 z-0 flex cursor-grab items-center justify-center rounded-[3px] px-1 text-center active:cursor-grabbing"
+                                title="Arrastra para mover fechas. Doble clic para editar."
+                              >
+                                <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label="Ajustar fecha de inicio"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  event.preventDefault();
+                                  if (isSavingTimelineDates) return;
+                                  if (row.initiative.isBlocked) {
+                                    setFeedback({
+                                      tone: "error",
+                                      message: "Esta iniciativa esta bloqueada. Debes desbloquearla antes de ajustar sus fechas.",
+                                    });
+                                    return;
+                                  }
+                                  setGanttDrag({
+                                    initiativeId: row.initiative.id,
+                                    originX: event.clientX,
+                                    dayDelta: 0,
+                                    startDate: baseStart,
+                                    endDate: baseEnd,
+                                    mode: "resize-start",
+                                  });
+                                }}
+                                className="absolute left-0 top-0 z-20 h-full w-3 cursor-ew-resize rounded-l-[3px] bg-transparent"
+                                title="Arrastra para cambiar el inicio"
+                              >
+                                <span className="absolute left-1 top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Ajustar fecha de fin"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  event.preventDefault();
+                                  if (isSavingTimelineDates) return;
+                                  if (row.initiative.isBlocked) {
+                                    setFeedback({
+                                      tone: "error",
+                                      message: "Esta iniciativa esta bloqueada. Debes desbloquearla antes de ajustar sus fechas.",
+                                    });
+                                    return;
+                                  }
+                                  setGanttDrag({
+                                    initiativeId: row.initiative.id,
+                                    originX: event.clientX,
+                                    dayDelta: 0,
+                                    startDate: baseStart,
+                                    endDate: baseEnd,
+                                    mode: "resize-end",
+                                  });
+                                }}
+                                className="absolute right-0 top-0 z-20 h-full w-3 cursor-ew-resize rounded-r-[3px] bg-transparent"
+                                title="Arrastra para cambiar el fin"
+                              >
+                                <span className="absolute right-1 top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="absolute inset-0 grid place-items-center px-4 text-center">
+                              <p className="text-[10px] font-semibold text-[#8aa0b4]">
+                                Fuera de la ventana visible.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </Fragment>
+                    );
+                  })
                 )}
               </div>
             </div>
