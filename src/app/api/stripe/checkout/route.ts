@@ -9,6 +9,8 @@ import {
   type PublicClientSummary,
   type PublicOnboardingAudience,
 } from "@/lib/onboarding";
+import { getSalesProposalBySlug } from "@/lib/public-prospect";
+import { createSalesProposalCheckout } from "@/lib/sales-proposals-server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
 
@@ -70,6 +72,26 @@ export async function POST(request: Request) {
         { message: "Solo la vista publica del cliente puede comprar paquetes extra." },
         { status: 400 },
       );
+    }
+
+    if (body.audience === "prospect") {
+      const proposal = await getSalesProposalBySlug(body.slug);
+
+      if (!proposal) {
+        return NextResponse.json(
+          { message: "No encontramos la propuesta para preparar el pago." },
+          { status: 404 },
+        );
+      }
+
+      const origin = resolveOrigin(request);
+      const publicProspectUrl = `${origin}/public/prospect/${body.slug}`;
+      const url = await createSalesProposalCheckout(request, proposal, {
+        successUrl: `${publicProspectUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${publicProspectUrl}?payment=cancelled`,
+      });
+
+      return NextResponse.json({ url });
     }
 
     const supabase = await createSupabaseServerClient();

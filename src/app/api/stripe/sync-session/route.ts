@@ -6,6 +6,8 @@ import {
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
+import { buildPublicProspectSnapshotBase } from "@/lib/public-prospect";
+import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 import type { Database } from "@/types/database";
@@ -53,6 +55,33 @@ export async function POST(request: Request) {
         { message: "El pago aun no aparece como completado." },
         { status: 409 },
       );
+    }
+
+    const salesProposalId = session.metadata?.sales_proposal_id;
+    const salesProposalSlug = session.metadata?.sales_proposal_slug;
+
+    if (salesProposalId || salesProposalSlug) {
+      if (slug && salesProposalSlug && slug !== salesProposalSlug) {
+        return NextResponse.json(
+          { message: "El pago no pertenece a esta propuesta." },
+          { status: 403 },
+        );
+      }
+
+      if (!salesProposalSlug) {
+        return NextResponse.json(
+          { message: "La sesion de pago no tiene propuesta asociada." },
+          { status: 400 },
+        );
+      }
+
+      const proposal = await syncSalesProposalCheckoutStatus(salesProposalSlug, sessionId);
+      const snapshot = buildPublicProspectSnapshotBase(proposal);
+
+      return NextResponse.json({
+        billing: snapshot.billing,
+        purchaseKind: "plan",
+      });
     }
 
     const clientId = session.metadata?.client_id;

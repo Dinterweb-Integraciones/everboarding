@@ -362,7 +362,16 @@ export async function activateSalesProposal(
   };
 }
 
-export async function createSalesProposalCheckout(request: Request, proposal: SalesProposalRecord) {
+type SalesProposalCheckoutOptions = {
+  successUrl?: string;
+  cancelUrl?: string;
+};
+
+export async function createSalesProposalCheckout(
+  request: Request,
+  proposal: SalesProposalRecord,
+  options: SalesProposalCheckoutOptions = {},
+) {
   const proposalId = proposal.id;
   if (!proposalId) {
     throw new Error("La propuesta debe guardarse antes de activar el checkout.");
@@ -417,8 +426,10 @@ export async function createSalesProposalCheckout(request: Request, proposal: Sa
         },
       },
     ],
-    success_url: `${origin}${routeBase}/${proposal.slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}${routeBase}/${proposal.slug}?payment=cancelled`,
+    success_url:
+      options.successUrl ||
+      `${origin}${routeBase}/${proposal.slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: options.cancelUrl || `${origin}${routeBase}/${proposal.slug}?payment=cancelled`,
     metadata: baseMetadata,
     ...(isRecurringProposal
       ? {

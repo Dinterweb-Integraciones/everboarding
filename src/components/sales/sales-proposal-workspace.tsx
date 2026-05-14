@@ -829,11 +829,6 @@ export function SalesProposalWorkspace({
     return next;
   }
 
-  function openCreateModal(status: InitiativeStatus) {
-    setEditingInitiativeId(null);
-    setInitiativeDraft(createDraftInitiative(status));
-  }
-
   function openGroupedDraft(status: InitiativeStatus) {
     const selectedCatalogId = quickAddSelections[status];
     const selectedItem = initialCatalog.find((item) => item.id === selectedCatalogId);
@@ -880,13 +875,13 @@ export function SalesProposalWorkspace({
     setFeedback({ tone: "success", message: "Caso de uso agregado a la propuesta." });
   }
 
-  function renderDinterwebStageComposer(status: InitiativeStatus, compact = false) {
+  function renderDinterwebStageComposer(status: InitiativeStatus) {
     if (!isDinterwebVariant || !canManageSalesStage(status)) {
       return null;
     }
 
     return (
-      <div className={compact ? "space-y-2" : "space-y-3"}>
+      <div className="space-y-2">
         <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white p-1.5 shadow-sm">
           <select
             value={quickAddSelections[status]}
@@ -927,17 +922,6 @@ export function SalesProposalWorkspace({
             </button>
           </div>
         </div>
-
-        <button
-          type="button"
-          onClick={() => openCreateModal(status)}
-          className={`inline-flex w-full items-center justify-center rounded-[3px] border-2 border-dashed border-[#cbd6e2] bg-white px-3 font-bold text-[#516f90] transition hover:border-[#8fb3d9] hover:bg-[#f8fbff] hover:text-[#33475b] ${
-            compact ? "py-2 text-[10px]" : "py-3 text-[11px]"
-          }`}
-        >
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          {status === "backlog" ? "Anadir Caso de Uso a En evaluacion" : "Anadir Caso de Uso Directo"}
-        </button>
       </div>
     );
   }
@@ -2302,7 +2286,7 @@ function mergeRecommendedGroups(
           <div className="overflow-x-auto overflow-y-hidden">
             <div className="flex min-h-[420px] min-w-max gap-6">
               {boardStatuses.map((status) => {
-                if (!hasPlanningItems && status === "planned") {
+                if (!hasPlanningItems && status !== "backlog") {
                   return null;
                 }
 
@@ -2313,11 +2297,61 @@ function mergeRecommendedGroups(
                 );
 
                 if (!hasPlanningItems && status === "backlog") {
+                  if (isDinterwebVariant) {
+                    return (
+                      <div key="planning-empty-state" className="flex min-w-[1352px] flex-col">
+                        <div className="flex gap-6">
+                          {boardStatuses.map((emptyStatus) => (
+                            <div
+                              key={`empty-${emptyStatus}`}
+                              className="flex w-[320px] min-w-[320px] max-w-[340px] flex-col"
+                            >
+                              <div className="mb-2 flex items-center justify-between px-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(emptyStatus)}`} />
+                                  <p
+                                    className={`text-[13px] font-bold uppercase tracking-[0.18em] ${getStatusHeadingClass(emptyStatus)}`}
+                                  >
+                                    {getStatusLabel(emptyStatus)}
+                                  </p>
+                                </div>
+                                <span className="rounded-[2px] bg-[#eaf0f6] px-2 py-0.5 text-[11px] font-bold text-[#516f90]">
+                                  0 CR
+                                </span>
+                              </div>
+
+                              {canManageSalesStage(emptyStatus) ? (
+                                <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-white p-2 shadow-[0_1px_2px_rgba(51,71,91,0.06)]">
+                                  {renderDinterwebStageComposer(emptyStatus)}
+                                </div>
+                              ) : (
+                                <div className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-[#f5f8fa] px-3 py-4 text-[10px] text-[#9cb1c6]">
+                                  Vacio
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-28 w-[664px] min-w-[664px] rounded-[8px] border border-[#8ee1d5] bg-[#e8fffb] p-4 shadow-[0_8px_24px_rgba(0,189,165,0.14)]">
+                          <button
+                            type="button"
+                            onClick={() => openCatalogModal("wizard")}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-[6px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
+                          >
+                            <Sparkles className="h-4 w-4" />
+                            <span>Guia Inteligente</span>
+                            <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
+                              Beta
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
-                    <div
-                      key="planning-empty-state"
-                      className="flex min-w-[666px] flex-col"
-                    >
+                    <div key="planning-empty-state" className="flex min-w-[666px] flex-col">
                       <div className="mb-2 grid grid-cols-2 gap-6">
                         <div className="flex items-center justify-between px-1">
                           <div className="flex items-center gap-2">
@@ -2348,27 +2382,13 @@ function mergeRecommendedGroups(
                         <div className="mx-auto mt-6 flex w-full max-w-[580px] flex-col items-center rounded-[8px] border border-[#eaf0f6] bg-white px-10 py-9 text-center shadow-[0_10px_30px_rgba(0,189,165,0.12)]">
                           <div className="mb-6 h-1 w-[calc(100%+80px)] -mt-9 bg-[#00bda5]" />
                           <p className="text-[13.5px] leading-[1.8] text-[#516f90]">
-                            {isDinterwebVariant ? (
-                              <>
-                                Aqui definimos como estructurar la propuesta de Dinterweb de forma{" "}
-                                <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
-                                <br />
-                                Priorizamos los casos de uso que{" "}
-                                <strong className="font-extrabold text-[#46668b]">mas valor pueden entregar hoy</strong>{" "}
-                                y el orden en el que conviene trabajarlos para{" "}
-                                <strong className="font-extrabold text-[#46668b]">arrancar con claridad y velocidad</strong>.
-                              </>
-                            ) : (
-                              <>
-                                Aqui definimos como activar HubSpot de forma{" "}
-                                <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
-                                <br />
-                                Seleccionamos los casos de uso que{" "}
-                                <strong className="font-extrabold text-[#46668b]">mas sentido tienen para tu operacion hoy</strong>{" "}
-                                y el orden en el que conviene trabajarlos para{" "}
-                                <strong className="font-extrabold text-[#46668b]">empezar a ver resultados rapidamente</strong>.
-                              </>
-                            )}
+                            Aqui definimos como activar HubSpot de forma{" "}
+                            <strong className="font-extrabold text-[#46668b]">enfocada desde el inicio</strong>.
+                            <br />
+                            Seleccionamos los casos de uso que{" "}
+                            <strong className="font-extrabold text-[#46668b]">mas sentido tienen para tu operacion hoy</strong>{" "}
+                            y el orden en el que conviene trabajarlos para{" "}
+                            <strong className="font-extrabold text-[#46668b]">empezar a ver resultados rapidamente</strong>.
                           </p>
                           <button
                             type="button"
@@ -2376,37 +2396,11 @@ function mergeRecommendedGroups(
                             className="mt-8 inline-flex min-w-[282px] items-center justify-center gap-2 rounded-[4px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
                           >
                             <Sparkles className="h-4 w-4" />
-                            <span>Guía Inteligente</span>
+                            <span>Guia Inteligente</span>
                             <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
                               Beta
                             </span>
                           </button>
-                          {isDinterwebVariant ? (
-                            <div className="mt-5 grid w-full max-w-[760px] gap-4 md:grid-cols-2">
-                              <div className="rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] p-3 text-left">
-                                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
-                                  {getStatusLabel("backlog")}
-                                </p>
-                                {renderDinterwebStageComposer("backlog", true)}
-                              </div>
-                              <div className="rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] p-3 text-left">
-                                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#6a78d1]">
-                                  {getStatusLabel("planned")}
-                                </p>
-                                {renderDinterwebStageComposer("planned", true)}
-                              </div>
-                              <div className="md:col-span-2">
-                                <button
-                                  type="button"
-                                  onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
-                                  className="inline-flex w-full items-center justify-center gap-2 rounded-[4px] border-2 border-dashed border-[#14b8a6] bg-[#f5fffd] px-6 py-4 text-[15px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                                >
-                                  <Plus className="h-5 w-5" />
-                                  Agregar Caso de Uso
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                     </div>

@@ -379,12 +379,24 @@ export function PublicOnboardingPage({
       initiative.status === "completed",
   );
   const hasPaidCycleAccess =
-    billing.current_cycle_paid ||
-    Boolean(billing.paid_at) ||
-    (!usesStripeMembership && billing.active_credits > 0) ||
-    hasActivatedWork;
-  const shouldShowPaymentCta = audience === "client" && paymentAmount > 0 && !hasPaidCycleAccess;
+    audience === "prospect"
+      ? billing.current_cycle_paid || Boolean(billing.paid_at)
+      : billing.current_cycle_paid ||
+        Boolean(billing.paid_at) ||
+        (!usesStripeMembership && billing.active_credits > 0) ||
+        hasActivatedWork;
+  const shouldShowPaymentCta = paymentAmount > 0 && !hasPaidCycleAccess;
   const shouldPromptPayment = shouldShowPaymentCta;
+  const paymentButtonLabel =
+    isStartingPayment || isSyncingPayment
+      ? "Confirmando pago..."
+      : audience === "prospect"
+        ? usesStripeMembership
+          ? `Pagar membresia ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
+          : `Pagar propuesta ${formatCurrency(paymentAmount)}`
+        : usesStripeMembership
+          ? `Activar membresia ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
+          : `Pagar ${formatCurrency(paymentAmount)}`;
   const timeline = useMemo(() => {
     const today = new Date();
     const baseDateCandidates = [today];
@@ -885,22 +897,6 @@ export function PublicOnboardingPage({
             </span>
           </div>
 
-          {shouldShowPaymentCta ? (
-            <Button
-              onClick={() => void startStripeCheckout()}
-              disabled={
-                isStartingPayment || isSyncingPayment || paymentAmount <= 0
-              }
-              className="rounded-[10px] px-5"
-            >
-              <CreditCard className="mr-2 h-4 w-4" />
-              {isStartingPayment || isSyncingPayment
-                ? "Confirmando pago..."
-                : usesStripeMembership
-                  ? `Activar membresía ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
-                  : `Pagar ${formatCurrency(paymentAmount)}`}
-            </Button>
-          ) : null}
         </div>
       </header>
 
@@ -910,11 +906,16 @@ export function PublicOnboardingPage({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#c2410c]">
-                  Ciclo pendiente de pago
+                  {audience === "prospect" ? "Propuesta lista para pago" : "Ciclo pendiente de pago"}
                 </p>
                 {initialData.paymentEmail ? (
                   <p className="mt-1 text-sm text-[#7c5a3c]">
                     Referencia: <strong>{initialData.paymentEmail}</strong>
+                  </p>
+                ) : null}
+                {audience === "prospect" ? (
+                  <p className="mt-1 text-sm text-[#7c5a3c]">
+                    Puedes pagar esta propuesta directamente desde este enlace compartido por tu vendedor.
                   </p>
                 ) : null}
               </div>
@@ -924,11 +925,7 @@ export function PublicOnboardingPage({
                 className="rounded-[10px] bg-[#ea580c] px-5 text-white hover:bg-[#c2410c]"
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                {isStartingPayment || isSyncingPayment
-                  ? "Confirmando pago..."
-                  : usesStripeMembership
-                    ? `Activar membresía ${formatCurrency(paymentAmount)}`
-                    : `Pagar ${formatCurrency(paymentAmount)}`}
+                {paymentButtonLabel}
               </Button>
             </div>
           </section>
