@@ -1166,18 +1166,20 @@ export function SalesProposalWorkspace({
     closeUpsellModal();
   }
 
-  function createInitiativeFromGroup(
-    group: CatalogModalGroup,
-    status: InitiativeStatus,
-    sortOrder: number,
-    schedule?: { startDate?: string; endDate?: string },
-  ) {
-    const next = createEmptySalesInitiative(status);
-    next.id = createLocalId("sales-initiative");
-    next.title = group.name;
-    next.type = group.modalCategory || group.name;
-    next.description =
-      group.description || `Grupo de casos de uso recomendado para ${group.modalCategory}.`;
+function createInitiativeFromGroup(
+  group: CatalogModalGroup,
+  status: InitiativeStatus,
+  sortOrder: number,
+  schedule?: { startDate?: string; endDate?: string },
+  options?: { preserveProvidedSchedule?: boolean },
+) {
+  const next = createEmptySalesInitiative(status);
+  const preserveProvidedSchedule = options?.preserveProvidedSchedule ?? false;
+  next.id = createLocalId("sales-initiative");
+  next.title = group.name;
+  next.type = group.modalCategory || group.name;
+  next.description =
+    group.description || `Grupo de casos de uso recomendado para ${group.modalCategory}.`;
     next.subitems = group.items.length
       ? group.items.map((item) => createProposalSubitemFromCatalog(item))
       : [
@@ -1191,8 +1193,16 @@ export function SalesProposalWorkspace({
             quantity: 1,
           },
         ];
-    next.estStartDate = status === "backlog" ? "" : (schedule?.startDate || proposal.startDate);
-    next.estEndDate = status === "backlog" ? "" : (schedule?.endDate || schedule?.startDate || proposal.startDate);
+    if (status === "backlog") {
+      next.estStartDate = "";
+      next.estEndDate = "";
+    } else if (preserveProvidedSchedule) {
+      next.estStartDate = schedule?.startDate || "";
+      next.estEndDate = schedule?.endDate || "";
+    } else {
+      next.estStartDate = schedule?.startDate || proposal.startDate;
+      next.estEndDate = schedule?.endDate || schedule?.startDate || proposal.startDate;
+    }
     next.sortOrder = sortOrder;
 
     return next;
@@ -1315,10 +1325,12 @@ export function SalesProposalWorkspace({
     });
   }
 
-  function mergeRecommendedGroups(
-    recommendations: WizardRecommendation[],
-    feedbackMessage: string,
-  ) {
+function mergeRecommendedGroups(
+  recommendations: WizardRecommendation[],
+  feedbackMessage: string,
+  options?: { preservePromptSchedule?: boolean },
+) {
+    const preservePromptSchedule = options?.preservePromptSchedule ?? false;
     const existingTitles = new Set(
       proposal.initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
     );
@@ -1343,6 +1355,7 @@ export function SalesProposalWorkspace({
           startDate: recommendation.startDate,
           endDate: recommendation.endDate,
         },
+        { preserveProvidedSchedule: preservePromptSchedule },
       );
 
       nextSortOrder += 1;
@@ -1364,11 +1377,13 @@ export function SalesProposalWorkspace({
       pushInitiativeFromGroup(group, recommendation);
     });
 
-    const scheduledInitiatives = scheduleRecommendedInitiatives(
-      nextInitiatives,
-      addedInitiativeIds,
-      proposal.startDate,
-    );
+    const scheduledInitiatives = preservePromptSchedule
+      ? nextInitiatives
+      : scheduleRecommendedInitiatives(
+          nextInitiatives,
+          addedInitiativeIds,
+          proposal.startDate,
+        );
 
     setProposal((current) => ({
       ...current,
@@ -1506,6 +1521,7 @@ export function SalesProposalWorkspace({
       mergeRecommendedGroups(
         normalizedRecommendations,
         "Plan agregado exitosamente.",
+        { preservePromptSchedule: true },
       );
     } catch (caughtError) {
       console.error("sales_wizard_recommendations_failed", caughtError);

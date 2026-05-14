@@ -46,6 +46,8 @@ type ClaudeLegacyGroup = {
   descripcion?: string;
   description?: string;
   reason?: string;
+  start_date?: string;
+  end_date?: string;
 };
 
 type ClaudeParsedPayload = {
@@ -215,13 +217,29 @@ function mapLegacyGroupsToRecommendations(
     const namedGroup = entry.nombre || entry.name;
 
     if (groupId && groupsById.has(groupId)) {
-      return [{ group_id: groupId, status, reason: entry.reason }];
+      return [
+        {
+          group_id: groupId,
+          status,
+          reason: entry.reason,
+          start_date: entry.start_date,
+          end_date: entry.end_date,
+        },
+      ];
     }
 
     if (namedGroup) {
       const matchedGroup = groupsByName.get(normalizeGroupLookupName(namedGroup));
       if (matchedGroup) {
-        return [{ group_id: matchedGroup.id, status, reason: entry.reason }];
+        return [
+          {
+            group_id: matchedGroup.id,
+            status,
+            reason: entry.reason,
+            start_date: entry.start_date,
+            end_date: entry.end_date,
+          },
+        ];
       }
     }
 
