@@ -77,6 +77,8 @@ create table if not exists public.sales_proposals (
 create table if not exists public.sales_coupons (
   id uuid primary key default gen_random_uuid(),
   code text not null,
+  granted_credits integer not null default 40 check (granted_credits >= 0),
+  discounted_price numeric(10, 2) not null default 0 check (discounted_price >= 0),
   is_active boolean not null default true,
   starts_at timestamptz,
   ends_at timestamptz,

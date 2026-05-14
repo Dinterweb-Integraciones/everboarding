@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { applySalesCouponToProposal } from "@/lib/sales-proposals-server";
-import { formatUserError } from "@/lib/utils";
+import { formatCurrency, formatUserError } from "@/lib/utils";
 
 type SalesProposalApplyCouponRouteProps = {
   params: Promise<{ slug: string }>;
@@ -23,7 +23,10 @@ export async function POST(request: Request, { params }: SalesProposalApplyCoupo
 
     return NextResponse.json({
       proposal,
-      message: "Cupon aplicado. La propuesta queda en 40 creditos, $0 y se activara sin pasarela.",
+      message:
+        proposal.quotedPrice <= 0
+          ? `Cupon aplicado. La propuesta queda en ${proposal.contractedCredits} creditos, ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())} y podra activarse sin pasarela.`
+          : `Cupon aplicado. La propuesta queda en ${proposal.contractedCredits} creditos por ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}.`,
     });
   } catch (caughtError) {
     return NextResponse.json(

@@ -11,6 +11,7 @@ const catalogLinks = [
   { href: "/cs/categorias-grupos", label: "Categorias de grupos" },
   { href: "/cs/tareas", label: "Tareas" },
   { href: "/cs/grupos", label: "Grupos" },
+  { href: "/cs/cupones", label: "Cupones" },
   { href: "/cs/ventas", label: "Ventas" },
 ];
 
@@ -21,6 +22,7 @@ const mobileLinks = [
   { href: "/cs/categorias-grupos", label: "Cat. grupos", icon: LayoutGrid },
   { href: "/cs/tareas", label: "Tareas", icon: LayoutGrid },
   { href: "/cs/grupos", label: "Grupos", icon: LayoutGrid },
+  { href: "/cs/cupones", label: "Cupones", icon: LayoutGrid },
   { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
 ];
 

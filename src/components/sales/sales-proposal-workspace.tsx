@@ -1935,6 +1935,9 @@ function mergeRecommendedGroups(
   const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
   const activationValidation = getSalesProposalActivationValidation(proposal);
   const hasAppliedCoupon = Boolean(proposal.appliedCouponCode.trim());
+  const appliedCouponLabel = hasAppliedCoupon
+    ? `Cupon aplicado: ${proposal.appliedCouponCode} · ${proposal.contractedCredits} CR · ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}`
+    : "Canjear cupon";
   const isProposalCheckoutLocked =
     proposal.status === "checkout_pending" ||
     proposal.status === "paid" ||
@@ -2225,9 +2228,10 @@ function mergeRecommendedGroups(
                   <button
                     type="button"
                     onClick={hasAppliedCoupon ? undefined : handleRedeemCoupon}
-                    className="inline-flex h-10 w-full items-center justify-center rounded-[4px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[12px] font-bold text-[#00bda5] transition hover:border-[#00bda5] hover:bg-[#d7fff7] hover:text-[#009c88]"
+                    className="inline-flex h-10 w-full items-center justify-center rounded-[4px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[12px] font-bold text-[#00bda5] transition hover:border-[#00bda5] hover:bg-[#d7fff7] hover:text-[#009c88] disabled:cursor-not-allowed disabled:opacity-75"
+                    disabled={hasAppliedCoupon}
                   >
-                    {hasAppliedCoupon ? `Cupon aplicado: ${proposal.appliedCouponCode}` : "Canjear cupon"}
+                    {appliedCouponLabel}
                   </button>
 
                   {!hasAppliedCoupon && isCouponPanelOpen ? (

@@ -14,7 +14,7 @@ import {
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { slugify, toIsoDate } from "@/lib/utils";
+import { safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
 type RecordStripeCheckoutPaymentArgs =
@@ -45,8 +45,8 @@ type SalesProposalPaymentContext = {
   currency: string;
 };
 
-const SALES_COUPON_GRANTED_CREDITS = 40;
-const SALES_COUPON_PRICE = 0;
+const LEGACY_SALES_COUPON_GRANTED_CREDITS = 40;
+const LEGACY_SALES_COUPON_PRICE = 0;
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -74,6 +74,24 @@ function normalizeSalesCouponCode(value: string) {
   return value.trim().toUpperCase();
 }
 
+function getSalesCouponGrantedCredits(coupon: SalesCouponRow) {
+  return Math.max(
+    0,
+    safeParseNumber(
+      (coupon.granted_credits as number | string | null | undefined) ?? LEGACY_SALES_COUPON_GRANTED_CREDITS,
+    ),
+  );
+}
+
+function getSalesCouponDiscountedPrice(coupon: SalesCouponRow) {
+  return Math.max(
+    0,
+    safeParseNumber(
+      (coupon.discounted_price as number | string | null | undefined) ?? LEGACY_SALES_COUPON_PRICE,
+    ),
+  );
+}
+
 function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
   const startsAt = coupon.starts_at ? new Date(coupon.starts_at) : null;
   const endsAt = coupon.ends_at ? new Date(coupon.ends_at) : null;
@@ -96,13 +114,11 @@ function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
 function applyCouponTermsToProposal(proposal: SalesProposalRecord, coupon: SalesCouponRow): SalesProposalDraft {
   return {
     ...proposal,
-    contractedCredits: SALES_COUPON_GRANTED_CREDITS,
-    quotedPrice: SALES_COUPON_PRICE,
+    contractedCredits: getSalesCouponGrantedCredits(coupon),
+    quotedPrice: getSalesCouponDiscountedPrice(coupon),
     currency: resolveCurrency(proposal.currency),
-    billingMode: "one_time",
-    periodMonths: 1,
     appliedCouponId: coupon.id,
-    appliedCouponCode: coupon.code,
+    appliedCouponCode: normalizeSalesCouponCode(coupon.code),
     couponAppliedAt: proposal.couponAppliedAt || new Date().toISOString(),
   };
 }
@@ -139,6 +155,57 @@ export async function getActiveSalesCouponByCode(code: string) {
 
   if (!coupon || !isCouponCurrentlyActive(coupon)) {
     return null;
+  }
+
+  return coupon;
+}
+
+export async function createSalesCoupon(input: {
+  code: string;
+  grantedCredits: number;
+  discountedPrice: number;
+}) {
+  const normalizedCode = normalizeSalesCouponCode(input.code);
+  const grantedCredits = Math.max(0, Math.round(safeParseNumber(input.grantedCredits)));
+  const discountedPrice = Math.max(0, safeParseNumber(input.discountedPrice));
+
+  if (!normalizedCode) {
+    throw new Error("Ingresa un codigo de cupon.");
+  }
+
+  if (grantedCredits <= 0) {
+    throw new Error("Define una cantidad de creditos mayor a 0.");
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: existingCoupon, error: existingError } = await admin
+    .from("sales_coupons")
+    .select("id")
+    .ilike("code", normalizedCode)
+    .maybeSingle();
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  if (existingCoupon) {
+    throw new Error("Ya existe un cupon con ese codigo.");
+  }
+
+  const { data, error } = await admin
+    .from("sales_coupons")
+    .insert(({
+      code: normalizedCode,
+      granted_credits: grantedCredits,
+      discounted_price: discountedPrice,
+      is_active: true,
+    }) as never)
+    .select("*")
+    .single();
+  const coupon = data as SalesCouponRow | null;
+
+  if (error || !coupon) {
+    throw error ?? new Error("No pudimos crear el cupon.");
   }
 
   return coupon;
@@ -348,6 +415,10 @@ export async function activateSalesProposal(
   const appliedCouponCode = normalizeSalesCouponCode(proposal.appliedCouponCode);
 
   if (!appliedCouponCode) {
+    return { url: await createSalesProposalCheckout(request, proposal) };
+  }
+
+  if (proposal.quotedPrice > 0) {
     return { url: await createSalesProposalCheckout(request, proposal) };
   }
 
@@ -791,7 +862,7 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
 
   const storedCoupon = await getSalesCouponForProposal(typedProposalRow, false);
 
-  if (storedCoupon) {
+  if (storedCoupon && getSalesCouponDiscountedPrice(storedCoupon) <= 0) {
     await activateSalesProposalFromCoupon(mapSalesProposalRow(typedProposalRow), storedCoupon);
     return;
   }

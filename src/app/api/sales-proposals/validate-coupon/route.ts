@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getActiveSalesCouponByCode } from "@/lib/sales-proposals-server";
-import { formatUserError } from "@/lib/utils";
+import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
 
 export async function POST(request: Request) {
   try {
@@ -26,7 +26,15 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      coupon: {
+        code: coupon.code,
+        grantedCredits: Math.max(0, safeParseNumber(coupon.granted_credits)),
+        discountedPrice: Math.max(0, safeParseNumber(coupon.discounted_price)),
+      },
+      message: `Cupon valido: ${Math.max(0, safeParseNumber(coupon.granted_credits))} creditos por ${formatCurrency(Math.max(0, safeParseNumber(coupon.discounted_price)))}.`,
+    });
   } catch (caughtError) {
     return NextResponse.json(
       { message: formatUserError(caughtError, "No pudimos validar el cupon.") },
