@@ -8,6 +8,7 @@ import {
   Link2,
   Loader2,
   Plus,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -74,6 +75,22 @@ type CatalogModalGroup = {
   sortOrder: number;
   items: CreditCatalogItem[];
 };
+
+function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
+  const normalizedQuery = normalizeCatalogText(query);
+  if (!normalizedQuery) return true;
+
+  const searchableText = [
+    group.name,
+    group.description,
+    group.modalCategory,
+    ...group.items.map((item) => `${item.label} ${item.category}`),
+  ]
+    .map((value) => normalizeCatalogText(value))
+    .join(" ");
+
+  return searchableText.includes(normalizedQuery);
+}
 
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
 
@@ -353,6 +370,7 @@ export function OnboardingClientPage({
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [wizardHubs, setWizardHubs] = useState<string[]>([]);
   const [wizardPortalState, setWizardPortalState] = useState<"new" | "optimize">("new");
   const [wizardContext, setWizardContext] = useState("");
@@ -535,6 +553,17 @@ export function OnboardingClientPage({
     ],
     [catalogGroupOptions],
   );
+
+  const activeCatalogCategory = useMemo(
+    () => catalogGroupOptions.find((category) => category.id === activeCatalogTab) ?? null,
+    [activeCatalogTab, catalogGroupOptions],
+  );
+
+  const visibleCatalogGroups = useMemo(() => {
+    if (!activeCatalogCategory) return [];
+
+    return activeCatalogCategory.groups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
+  }, [activeCatalogCategory, catalogSearchQuery]);
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
@@ -833,12 +862,14 @@ export function OnboardingClientPage({
     const nextTab = tab ?? (hasPlanningItems ? defaultCatalogLibraryTab : "wizard");
     setActiveCatalogTab(nextTab);
     setCatalogPreviewGroup(null);
+    setCatalogSearchQuery("");
     setIsCatalogModalOpen(true);
   }
 
   function closeCatalogModal() {
     setIsCatalogModalOpen(false);
     setCatalogPreviewGroup(null);
+    setCatalogSearchQuery("");
   }
 
   function openCatalogGroupPreview(group: CatalogModalGroup) {
@@ -3788,8 +3819,34 @@ export function OnboardingClientPage({
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => {
+                  <div className="space-y-5">
+                    <div className="flex flex-col gap-4 rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
+                          {activeCatalogCategory?.label ?? "Catalogo"}
+                        </p>
+                        <p className="mt-1 text-[12px] text-[#7c98b6]">
+                          {catalogSearchQuery.trim()
+                            ? `${visibleCatalogGroups.length} resultado${visibleCatalogGroups.length === 1 ? "" : "s"} encontrado${visibleCatalogGroups.length === 1 ? "" : "s"}`
+                            : `${activeCatalogCategory?.groups.length ?? 0} grupos disponibles`}
+                        </p>
+                      </div>
+
+                      <label className="relative block w-full lg:max-w-[360px]">
+                        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
+                        <input
+                          type="search"
+                          value={catalogSearchQuery}
+                          onChange={(event) => setCatalogSearchQuery(event.target.value)}
+                          placeholder="Buscar grupo, caso de uso o tarea..."
+                          className="h-11 w-full rounded-[8px] border border-[#cbd6e2] bg-[#fbfcfe] pl-11 pr-4 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6] focus:bg-white"
+                        />
+                      </label>
+                    </div>
+
+                    {visibleCatalogGroups.length ? (
+                      <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                        {visibleCatalogGroups.map((group) => {
                       const alreadyAdded = initiatives.some(
                         (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
                       );
@@ -3797,7 +3854,16 @@ export function OnboardingClientPage({
                       return (
                         <div
                           key={group.id}
-                          className={`flex flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openCatalogGroupPreview(group)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openCatalogGroupPreview(group);
+                            }
+                          }}
+                          className={`flex h-full min-h-[320px] cursor-pointer flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
                               ? "border-[#eaf0f6] bg-[#f8fafc]"
                               : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
@@ -3811,10 +3877,30 @@ export function OnboardingClientPage({
                               {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
                             </span>
                           </div>
-                          <h4 className="text-[14px] font-bold leading-snug text-[#33475b]">{group.name}</h4>
-                          <p className="mt-2 text-[11px] leading-relaxed text-[#516f90]">
-                            {group.description || "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo."}
-                          </p>
+                          <h4
+                            className="min-h-[44px] text-[14px] font-bold leading-snug text-[#33475b]"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitBoxOrient: "vertical",
+                              WebkitLineClamp: 2,
+                              overflow: "hidden",
+                            }}
+                          >
+                            {group.name}
+                          </h4>
+                          <div className="mt-2 flex-1 overflow-hidden">
+                            <p
+                              className="text-[11px] leading-relaxed text-[#516f90]"
+                              style={{
+                                display: "-webkit-box",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: 7,
+                                overflow: "hidden",
+                              }}
+                            >
+                              {group.description || "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo."}
+                            </p>
+                          </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
                             <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
                             <div className="flex items-center gap-3">
@@ -3823,7 +3909,10 @@ export function OnboardingClientPage({
                               </span>
                               <button
                                 type="button"
-                                onClick={() => openCatalogGroupPreview(group)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openCatalogGroupPreview(group);
+                                }}
                                 disabled={alreadyAdded}
                                 className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:bg-[#f8fafc] disabled:text-[#9cb1c6]"
                               >
@@ -3834,6 +3923,15 @@ export function OnboardingClientPage({
                         </div>
                       );
                     })}
+                      </div>
+                    ) : (
+                      <div className="rounded-[8px] border border-dashed border-[#bfd9d4] bg-[#f8fffd] px-6 py-12 text-center shadow-sm">
+                        <p className="text-[15px] font-bold text-[#33475b]">No encontramos grupos con esa busqueda.</p>
+                        <p className="mt-2 text-[12px] text-[#7c98b6]">
+                          Prueba con otra palabra clave o cambia de categoria.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
