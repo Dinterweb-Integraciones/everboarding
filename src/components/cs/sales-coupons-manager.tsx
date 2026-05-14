@@ -289,14 +289,7 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
         </section>
       </div>
 
-      <FeedbackToast
-        message={feedback?.message ?? ""}
-        tone={feedback?.tone ?? "success"}
-        open={Boolean(feedback)}
-        onOpenChange={(open) => {
-          if (!open) setFeedback(null);
-        }}
-      />
+      <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />
     </>
   );
 }
