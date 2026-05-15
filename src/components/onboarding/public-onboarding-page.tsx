@@ -917,16 +917,11 @@ export function PublicOnboardingPage({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#c2410c]">
-                  {audience === "prospect" ? "Propuesta lista para pago" : "Ciclo pendiente de pago"}
+                  Ciclo pendiente de pago
                 </p>
                 {initialData.paymentEmail ? (
                   <p className="mt-1 text-sm text-[#7c5a3c]">
                     Referencia: <strong>{initialData.paymentEmail}</strong>
-                  </p>
-                ) : null}
-                {audience === "prospect" ? (
-                  <p className="mt-1 text-sm text-[#7c5a3c]">
-                    Puedes pagar esta propuesta directamente desde este enlace compartido por tu vendedor.
                   </p>
                 ) : null}
               </div>
