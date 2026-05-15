@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, CreditCard, Plus, ShieldCheck, X } from "lucide-react";
+import { CalendarDays, CreditCard, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -46,6 +46,7 @@ type CatalogModalGroup = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
+const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
 type PublicDraftTargetStatus = Extract<InitiativeStatus, "backlog" | "planned">;
 
 function getStatusDot(status: InitiativeStatus) {
@@ -360,6 +361,10 @@ export function PublicOnboardingPage({
     initialData.config.custom_plan_price ??
       suggestPlanPrice(initialData.config.custom_plan_credits ?? initialData.config.base_capacity),
   );
+  const contractedPlanCredits = Math.max(
+    initialData.config.custom_plan_credits ?? initialData.config.base_capacity,
+    0,
+  );
   const isRecurringPlan = initialData.config.custom_plan_billing_mode !== "one_time";
   const usesStripeMembership = initialData.config.custom_plan_billing_mode !== "one_time";
   const progressParts = useMemo(() => {
@@ -387,6 +392,12 @@ export function PublicOnboardingPage({
         hasActivatedWork;
   const shouldShowPaymentCta = paymentAmount > 0 && !hasPaidCycleAccess;
   const shouldPromptPayment = shouldShowPaymentCta;
+  const prospectPlanActionLabel =
+    isStartingPayment || isSyncingPayment
+      ? "Confirmando pago..."
+      : hasPaidCycleAccess
+        ? "Plan activo"
+        : "Activar Plan";
   const paymentButtonLabel =
     isStartingPayment || isSyncingPayment
       ? "Confirmando pago..."
@@ -901,7 +912,7 @@ export function PublicOnboardingPage({
       </header>
 
       <main className="space-y-5 px-5 py-5">
-        {shouldPromptPayment ? (
+        {shouldPromptPayment && audience !== "prospect" ? (
           <section className="rounded-[16px] border border-[#fed7aa] bg-[#fff7ed] px-4 py-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
@@ -958,8 +969,44 @@ export function PublicOnboardingPage({
                 </p>
               </div>
 
-              <div className="flex w-full max-w-[360px] flex-col gap-3">
-              <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
+              <div
+                className={`flex w-full flex-col gap-3 ${
+                  audience === "prospect" ? "max-w-[520px]" : "max-w-[360px]"
+                }`}
+              >
+                {audience === "prospect" ? (
+                  <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
+                    <div className="flex flex-wrap items-stretch">
+                      <div className="flex min-w-[148px] flex-1 flex-col justify-center px-4 py-3">
+                        <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
+                          Inversión total
+                        </p>
+                        <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
+                          {formatCurrency(paymentAmount)}
+                        </p>
+                      </div>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex shrink-0 items-center px-4 py-3">
+                        <span className="inline-flex h-11 min-w-[96px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[16px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
+                          {contractedPlanCredits} CR
+                        </span>
+                      </div>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex min-w-[220px] flex-1 items-center px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => void startStripeCheckout("plan")}
+                          disabled={hasPaidCycleAccess || isStartingPayment || isSyncingPayment || paymentAmount <= 0}
+                          className="inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[14px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <span className="whitespace-nowrap">{prospectPlanActionLabel}</span>
+                          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
                   {audience === "client"
                     ? "Puedes proponer nuevas iniciativas solo en En evaluacion."
                     : "Puedes proponer nuevas iniciativas, pero solo entraran en En evaluacion."}
@@ -1351,7 +1398,7 @@ export function PublicOnboardingPage({
               <h2 className="text-[14px] font-bold text-[#33475b]">Desglose Analitico por Etapa</h2>
             </div>
             <div className="mt-7 space-y-4">
-              {boardStatuses.map((status) => {
+              {summaryStatuses.map((status) => {
                 const items = groupedInitiatives[status];
                 if (!items.length) return null;
 

@@ -104,6 +104,7 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
+const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog"];
 const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,
@@ -443,9 +444,11 @@ function scheduleRecommendedInitiatives(
   initiatives: SalesProposalInitiativeDraft[],
   targetInitiativeIds: string[],
   proposalStartDate: string,
+  options?: { preserveBacklogDates?: boolean },
 ) {
   const nextInitiatives = initiatives.map((initiative) => createEditorDraft(initiative));
   const targetIds = new Set(targetInitiativeIds);
+  const preserveBacklogDates = options?.preserveBacklogDates ?? false;
   const kickoffTitle = normalizeCatalogText("Sesión Kickoff");
   const kickoff = nextInitiatives.find(
     (initiative) => normalizeCatalogText(initiative.title) === kickoffTitle,
@@ -477,6 +480,24 @@ function scheduleRecommendedInitiatives(
   nextInitiatives
     .filter((initiative) => targetIds.has(initiative.id) && initiative.status === "backlog")
     .forEach((initiative) => {
+      if (preserveBacklogDates) {
+        if (!initiative.estStartDate) {
+          const durationDays = getSuggestedInitiativeDurationDays(initiative);
+          initiative.estStartDate = toIsoDate(cursorDate);
+          initiative.estEndDate = toIsoDate(addCalendarDays(cursorDate, durationDays - 1));
+          cursorDate = addCalendarDays(cursorDate, durationDays);
+          return;
+        }
+
+        if (!initiative.estEndDate) {
+          const durationDays = getSuggestedInitiativeDurationDays(initiative);
+          initiative.estEndDate = toIsoDate(
+            addCalendarDays(parseCalendarDate(initiative.estStartDate), durationDays - 1),
+          );
+        }
+        return;
+      }
+
       initiative.estStartDate = "";
       initiative.estEndDate = "";
     });
@@ -914,6 +935,7 @@ export function SalesProposalWorkspace({
         [...current.initiatives, next],
         [next.id],
         current.startDate,
+        { preserveBacklogDates: isDinterwebVariant },
       );
 
       return {
@@ -1022,6 +1044,7 @@ export function SalesProposalWorkspace({
         nextInitiatives,
         [initiative.id],
         current.startDate,
+        { preserveBacklogDates: isDinterwebVariant },
       );
 
       return {
@@ -1080,6 +1103,7 @@ export function SalesProposalWorkspace({
         nextInitiatives,
         [initiativeDraft.id],
         current.startDate,
+        { preserveBacklogDates: isDinterwebVariant },
       );
 
       return {
@@ -1298,10 +1322,19 @@ function createInitiativeFromGroup(
       groupedInitiatives[status].length,
     );
 
-    setProposal((current) => ({
-      ...current,
-      initiatives: [...current.initiatives, next],
-    }));
+    setProposal((current) => {
+      const scheduledInitiatives = scheduleRecommendedInitiatives(
+        [...current.initiatives, next],
+        [next.id],
+        current.startDate,
+        { preserveBacklogDates: isDinterwebVariant },
+      );
+
+      return {
+        ...current,
+        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+      };
+    });
     setCatalogPreviewGroup(null);
     setFeedback({
       tone: "success",
@@ -1419,6 +1452,7 @@ function mergeRecommendedGroups(
           nextInitiatives,
           addedInitiativeIds,
           proposal.startDate,
+          { preserveBacklogDates: isDinterwebVariant },
         );
 
     setProposal((current) => ({
@@ -3049,7 +3083,7 @@ function mergeRecommendedGroups(
           <h2 className="text-[14px] font-bold text-[#33475b]">Desglose Analítico por Etapa</h2>
           </div>
           <div className="mt-7 space-y-4">
-            {boardStatuses.map((status) => {
+            {summaryStatuses.map((status) => {
               const items = groupedInitiatives[status];
               if (!items.length) return null;
 

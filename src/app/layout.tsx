@@ -12,6 +12,11 @@ export const metadata: Metadata = {
   title: "Strategic Roadmap & Capacity Manager",
   description:
     "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
+  icons: {
+    icon: "/dinterweb.png",
+    shortcut: "/dinterweb.png",
+    apple: "/dinterweb.png",
+  },
 };
 
 export default function RootLayout({
