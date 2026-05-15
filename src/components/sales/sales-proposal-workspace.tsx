@@ -232,6 +232,10 @@ function hasSalesProposalIdentity(value: Pick<SalesProposalDraft, "clientName" |
   return normalizedName !== "" && normalizedName !== "cliente" || value.clientEmail.trim() !== "";
 }
 
+function canPersistSalesProposal(value: Pick<SalesProposalDraft, "slug" | "clientName" | "clientEmail">) {
+  return Boolean(value.slug) || hasSalesProposalIdentity(value);
+}
+
 function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
   const normalized = normalizeSalesProposalDraft(proposal);
 
@@ -727,11 +731,15 @@ export function SalesProposalWorkspace({
     [activeCatalogTab, catalogGroupOptions],
   );
 
-  const visibleCatalogGroups = useMemo(() => {
-    if (!activeCatalogCategory) return [];
+  const isGlobalCatalogSearch = catalogSearchQuery.trim().length > 0;
 
-    return activeCatalogCategory.groups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
-  }, [activeCatalogCategory, catalogSearchQuery]);
+  const visibleCatalogGroups = useMemo(() => {
+    const sourceGroups = isGlobalCatalogSearch
+      ? catalogGroupOptions.flatMap((category) => category.groups)
+      : (activeCatalogCategory?.groups ?? []);
+
+    return sourceGroups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
+  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, isGlobalCatalogSearch]);
 
   const wizardOptionLabels = useMemo(() => {
     return [...WIZARD_HUB_OPTIONS];
@@ -1994,6 +2002,14 @@ function mergeRecommendedGroups(
       }
     }
 
+    if (!canPersistSalesProposal(nextProposal)) {
+      setFeedback({
+        tone: "success",
+        message: `Fechas ajustadas localmente: ${formatDateRange(startDate, endDate)}. Agrega nombre o email del cliente para guardarlas con URL.`,
+      });
+      return;
+    }
+
     setFeedback(null);
     setIsSavingTimelineDates(true);
     lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
@@ -2119,7 +2135,7 @@ function mergeRecommendedGroups(
     const autosaveSignature = getSalesProposalAutosaveSignature(proposal);
     const canAutosave =
       proposal.status === "draft" &&
-      (Boolean(proposal.slug) || hasSalesProposalIdentity(proposal));
+      canPersistSalesProposal(proposal);
 
     if (!canAutosave || autosaveSignature === lastPersistedSignatureRef.current) {
       return;
@@ -2263,43 +2279,43 @@ function mergeRecommendedGroups(
 
             </div>
 
-            <div className="w-full max-w-[430px] rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
+            <div className="w-full max-w-[520px] rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md xl:w-[520px] xl:max-w-[520px]">
               <div className="flex items-stretch">
                 <div className="flex min-w-[132px] flex-col justify-center px-3 py-2">
                   <p className="text-[7px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
                     Inversión total
                   </p>
-                  <p className="mt-1 text-[20px] font-extrabold leading-none text-[#33475b]">
+                  <p className="mt-1 whitespace-nowrap text-[20px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
                     {formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}
                   </p>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex items-center px-2.5">
-                  <span className="inline-flex h-10 items-center rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-3 text-[13px] font-bold text-[#00bda5]">
+                <div className="flex shrink-0 items-center px-2.5">
+                  <span className="inline-flex h-10 min-w-[88px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-3 text-[13px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
                     {proposal.contractedCredits} CR
                   </span>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex items-center px-1.5">
+                <div className="flex shrink-0 items-center px-1.5">
                   <button
                     type="button"
                     onClick={openUpsellModal}
                     disabled={isUpsellDisabled}
-                    className="grid h-7 w-7 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex items-center px-1.5 py-1">
+                <div className="flex min-w-0 flex-1 items-center px-1.5 py-1">
                   <button
                     type="button"
                     onClick={activatePlan}
                     disabled={isActivatePlanDisabled}
-                    className="inline-flex h-10 items-center gap-2 rounded-[4px] bg-[#ff7a59] px-5 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+                    className="inline-flex h-10 w-full min-w-[190px] items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
                   >
-                    {activatePlanButtonLabel}
-                    <Sparkles className="h-3 w-3" />
+                    <span className="whitespace-nowrap">{activatePlanButtonLabel}</span>
+                    <Sparkles className="h-3 w-3 shrink-0" />
                   </button>
                 </div>
               </div>
@@ -3357,19 +3373,8 @@ function mergeRecommendedGroups(
                   </div>
                 ) : (
                   <div className="space-y-5">
-                    <div className="flex flex-col gap-4 rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
-                          {activeCatalogCategory?.label ?? "Catalogo"}
-                        </p>
-                        <p className="mt-1 text-[12px] text-[#7c98b6]">
-                          {catalogSearchQuery.trim()
-                            ? `${visibleCatalogGroups.length} resultado${visibleCatalogGroups.length === 1 ? "" : "s"} encontrado${visibleCatalogGroups.length === 1 ? "" : "s"}`
-                            : `${activeCatalogCategory?.groups.length ?? 0} grupos disponibles`}
-                        </p>
-                      </div>
-
-                      <label className="relative block w-full lg:max-w-[360px]">
+                    <div className="rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm">
+                      <label className="relative ml-auto block w-full lg:max-w-[360px]">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
                         <input
                           type="search"
@@ -3391,31 +3396,45 @@ function mergeRecommendedGroups(
                       return (
                         <div
                           key={group.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openCatalogGroupPreview(group)}
+                          role={alreadyAdded ? undefined : "button"}
+                          tabIndex={alreadyAdded ? -1 : 0}
+                          onClick={() => {
+                            if (!alreadyAdded) openCatalogGroupPreview(group);
+                          }}
                           onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
+                            if (!alreadyAdded && (event.key === "Enter" || event.key === " ")) {
                               event.preventDefault();
                               openCatalogGroupPreview(group);
                             }
                           }}
-                          className={`flex h-full min-h-[320px] cursor-pointer flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                          className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
-                              ? "border-[#eaf0f6] bg-[#f8fafc]"
-                              : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                              ? "cursor-default border-[#d7dee8] bg-[#f3f5f7]"
+                              : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
                           <div className="mb-3 flex flex-wrap gap-1.5">
-                            <span className="rounded-[2px] border border-[#00bda5]/20 bg-[#f0fdfa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#00bda5]">
+                            <span
+                              className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                alreadyAdded
+                                  ? "border border-[#d7dee8] bg-[#eef2f6] text-[#7c8da1]"
+                                  : "border border-[#00bda5]/20 bg-[#f0fdfa] text-[#00bda5]"
+                              }`}
+                            >
                               {group.modalCategory}
                             </span>
-                            <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                            <span
+                              className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
+                              }`}
+                            >
                               {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
                             </span>
                           </div>
                           <h4
-                            className="min-h-[44px] text-[14px] font-bold leading-snug text-[#33475b]"
+                            className={`min-h-[44px] text-[14px] font-bold leading-snug ${
+                              alreadyAdded ? "text-[#6b7d91]" : "text-[#33475b]"
+                            }`}
                             style={{
                               display: "-webkit-box",
                               WebkitBoxOrient: "vertical",
@@ -3427,7 +3446,9 @@ function mergeRecommendedGroups(
                           </h4>
                           <div className="mt-2 flex-1 overflow-hidden">
                             <p
-                              className="text-[11px] leading-relaxed text-[#516f90]"
+                              className={`text-[11px] leading-relaxed ${
+                                alreadyAdded ? "text-[#7c8da1]" : "text-[#516f90]"
+                              }`}
                               style={{
                                 display: "-webkit-box",
                                 WebkitBoxOrient: "vertical",
@@ -3439,7 +3460,9 @@ function mergeRecommendedGroups(
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                            <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
+                            <span className={`text-[14px] font-bold ${alreadyAdded ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
+                              {group.credits} CR
+                            </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
                                 {alreadyAdded ? "Ya agregado" : "Disponible"}
@@ -3531,7 +3554,7 @@ function mergeRecommendedGroups(
                 </div>
               </section>
 
-              <section>
+              <section className="rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
                   Tareas incluidas
                 </p>
@@ -3841,7 +3864,7 @@ function mergeRecommendedGroups(
       {initiativeDraft ? (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">
           <button type="button" className="absolute inset-0" onClick={closeInitiativeEditor} aria-label="Cerrar" />
-          <aside className="relative h-full w-full max-w-[560px] overflow-y-auto border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+          <aside className="relative h-full w-full max-w-[760px] overflow-y-auto border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
             <div className="border-b border-[#dfe3eb] bg-white px-6 py-6">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -3904,12 +3927,14 @@ function mergeRecommendedGroups(
 
               <section>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Descripción</p>
-                <textarea
-                  rows={4}
-                  value={initiativeDraft.description}
-                  onChange={(event) => updateInitiativeDraft("description", event.target.value)}
-                  className="mt-3 min-h-[72px] w-full rounded-[2px] border border-[#cbd6e2] bg-white px-3 py-2 text-[12px] text-[#516f90] outline-none transition focus:border-[#00bda5]"
-                />
+                <div className="mt-3 rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
+                  <textarea
+                    rows={7}
+                    value={initiativeDraft.description}
+                    onChange={(event) => updateInitiativeDraft("description", event.target.value)}
+                    className="min-h-[220px] w-full resize-y rounded-[2px] border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                  />
+                </div>
               </section>
 
               <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">

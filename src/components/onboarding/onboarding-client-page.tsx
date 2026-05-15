@@ -559,11 +559,15 @@ export function OnboardingClientPage({
     [activeCatalogTab, catalogGroupOptions],
   );
 
-  const visibleCatalogGroups = useMemo(() => {
-    if (!activeCatalogCategory) return [];
+  const isGlobalCatalogSearch = catalogSearchQuery.trim().length > 0;
 
-    return activeCatalogCategory.groups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
-  }, [activeCatalogCategory, catalogSearchQuery]);
+  const visibleCatalogGroups = useMemo(() => {
+    const sourceGroups = isGlobalCatalogSearch
+      ? catalogGroupOptions.flatMap((category) => category.groups)
+      : (activeCatalogCategory?.groups ?? []);
+
+    return sourceGroups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
+  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, isGlobalCatalogSearch]);
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
@@ -878,6 +882,15 @@ export function OnboardingClientPage({
 
   function closeCatalogGroupPreview() {
     setCatalogPreviewGroup(null);
+  }
+
+  async function removeCatalogGroup(group: CatalogModalGroup) {
+    const matchingInitiative = initiatives.find(
+      (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+    );
+    if (!matchingInitiative) return;
+
+    await deleteInitiative(matchingInitiative);
   }
 
   function findCatalogGroupsByCategory(category: string) {
@@ -3820,19 +3833,8 @@ export function OnboardingClientPage({
                   </div>
                 ) : (
                   <div className="space-y-5">
-                    <div className="flex flex-col gap-4 rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#516f90]">
-                          {activeCatalogCategory?.label ?? "Catalogo"}
-                        </p>
-                        <p className="mt-1 text-[12px] text-[#7c98b6]">
-                          {catalogSearchQuery.trim()
-                            ? `${visibleCatalogGroups.length} resultado${visibleCatalogGroups.length === 1 ? "" : "s"} encontrado${visibleCatalogGroups.length === 1 ? "" : "s"}`
-                            : `${activeCatalogCategory?.groups.length ?? 0} grupos disponibles`}
-                        </p>
-                      </div>
-
-                      <label className="relative block w-full lg:max-w-[360px]">
+                    <div className="rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm">
+                      <label className="relative ml-auto block w-full lg:max-w-[360px]">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
                         <input
                           type="search"
@@ -3854,31 +3856,45 @@ export function OnboardingClientPage({
                       return (
                         <div
                           key={group.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openCatalogGroupPreview(group)}
+                          role={alreadyAdded ? undefined : "button"}
+                          tabIndex={alreadyAdded ? -1 : 0}
+                          onClick={() => {
+                            if (!alreadyAdded) openCatalogGroupPreview(group);
+                          }}
                           onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
+                            if (!alreadyAdded && (event.key === "Enter" || event.key === " ")) {
                               event.preventDefault();
                               openCatalogGroupPreview(group);
                             }
                           }}
-                          className={`flex h-full min-h-[320px] cursor-pointer flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                          className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
-                              ? "border-[#eaf0f6] bg-[#f8fafc]"
-                              : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                              ? "cursor-default border-[#d7dee8] bg-[#f3f5f7]"
+                              : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
                           <div className="mb-3 flex flex-wrap gap-1.5">
-                            <span className="rounded-[2px] border border-[#00bda5]/20 bg-[#f0fdfa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#00bda5]">
+                            <span
+                              className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                alreadyAdded
+                                  ? "border border-[#d7dee8] bg-[#eef2f6] text-[#7c8da1]"
+                                  : "border border-[#00bda5]/20 bg-[#f0fdfa] text-[#00bda5]"
+                              }`}
+                            >
                               {group.modalCategory}
                             </span>
-                            <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                            <span
+                              className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
+                              }`}
+                            >
                               {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
                             </span>
                           </div>
                           <h4
-                            className="min-h-[44px] text-[14px] font-bold leading-snug text-[#33475b]"
+                            className={`min-h-[44px] text-[14px] font-bold leading-snug ${
+                              alreadyAdded ? "text-[#6b7d91]" : "text-[#33475b]"
+                            }`}
                             style={{
                               display: "-webkit-box",
                               WebkitBoxOrient: "vertical",
@@ -3890,7 +3906,9 @@ export function OnboardingClientPage({
                           </h4>
                           <div className="mt-2 flex-1 overflow-hidden">
                             <p
-                              className="text-[11px] leading-relaxed text-[#516f90]"
+                              className={`text-[11px] leading-relaxed ${
+                                alreadyAdded ? "text-[#7c8da1]" : "text-[#516f90]"
+                              }`}
                               style={{
                                 display: "-webkit-box",
                                 WebkitBoxOrient: "vertical",
@@ -3902,22 +3920,36 @@ export function OnboardingClientPage({
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                            <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
+                            <span className={`text-[14px] font-bold ${alreadyAdded ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
+                              {group.credits} CR
+                            </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
                                 {alreadyAdded ? "Ya agregado" : "Disponible"}
                               </span>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openCatalogGroupPreview(group);
-                                }}
-                                disabled={alreadyAdded}
-                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:bg-[#f8fafc] disabled:text-[#9cb1c6]"
-                              >
-                                Ver detalles
-                              </button>
+                              {alreadyAdded ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void removeCatalogGroup(group);
+                                  }}
+                                  className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5]"
+                                >
+                                  Quitar
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openCatalogGroupPreview(group);
+                                  }}
+                                  className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                                >
+                                  Ver detalles
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -4240,7 +4272,7 @@ export function OnboardingClientPage({
             aria-label="Cerrar panel"
             onClick={() => setDraft(null)}
           />
-          <aside className="absolute inset-y-0 right-0 flex w-full max-w-[620px] flex-col border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+          <aside className="absolute inset-y-0 right-0 flex w-full max-w-[760px] flex-col border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
             <div
               className={`border-b border-[#dfe3eb] bg-[#f5f8fa] px-6 pb-5 pt-6 ${
                 draft.isBlocked ? "border-l-4 border-l-[#ef4444] pl-5" : ""
@@ -4322,45 +4354,46 @@ export function OnboardingClientPage({
 
             <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
               <div className="space-y-6">
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] xl:items-start">
+                  <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Rango estimado
+                    </p>
+                    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                      <Input
+                        type="date"
+                        value={draft.estStartDate}
+                        onChange={(event) => setDraft({ ...draft, estStartDate: event.target.value })}
+                        disabled={!writable}
+                        className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                        style={{ borderRadius: 0, boxShadow: "none" }}
+                      />
+                      <span className="text-[11px] font-bold text-[#516f90]">al</span>
+                      <Input
+                        type="date"
+                        value={draft.estEndDate}
+                        onChange={(event) => setDraft({ ...draft, estEndDate: event.target.value })}
+                        disabled={!writable}
+                        className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                        style={{ borderRadius: 0, boxShadow: "none" }}
+                      />
+                    </div>
+                  </section>
 
-                <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                    Rango estimado
-                  </p>
-                  <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                    <Input
-                      type="date"
-                      value={draft.estStartDate}
-                      onChange={(event) => setDraft({ ...draft, estStartDate: event.target.value })}
+                  <section className="rounded-[4px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Descripcion
+                    </p>
+                    <Textarea
+                      rows={7}
+                      value={draft.description}
+                      onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                       disabled={!writable}
-                      className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                      className="mt-3 min-h-[220px] resize-y rounded-none border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] shadow-none"
                       style={{ borderRadius: 0, boxShadow: "none" }}
                     />
-                    <span className="text-[11px] font-bold text-[#516f90]">al</span>
-                    <Input
-                      type="date"
-                      value={draft.estEndDate}
-                      onChange={(event) => setDraft({ ...draft, estEndDate: event.target.value })}
-                      disabled={!writable}
-                      className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
-                      style={{ borderRadius: 0, boxShadow: "none" }}
-                    />
-                  </div>
-                </section>
-
-                <section>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                    Descripcion
-                  </p>
-                  <Textarea
-                    rows={4}
-                    value={draft.description}
-                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-                    disabled={!writable}
-                    className="mt-3 min-h-[72px] rounded-none border-[#cbd6e2] bg-white px-3 py-2 text-[12px] text-[#516f90] shadow-none"
-                    style={{ borderRadius: 0, boxShadow: "none" }}
-                  />
-                </section>
+                  </section>
+                </div>
 
                 <section className="rounded-[4px] border border-[#dfe3eb] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                   <div className="flex items-center justify-between gap-3">
