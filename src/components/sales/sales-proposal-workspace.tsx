@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import {
+  SALES_PROPOSAL_BASE_CREDITS,
   SALES_PROPOSAL_BASE_PRICE,
   SALES_PROPOSAL_UPSELL_OPTIONS,
   STATUS_META,
@@ -97,7 +98,7 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
-const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog"];
+const summaryStatuses: InitiativeStatus[] = boardStatuses;
 const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,
@@ -363,6 +364,33 @@ function getSuggestedInitiativeDurationDays(initiative: SalesProposalInitiativeD
   return Math.max(3, Math.min(7, Math.max(creditsDuration, subitemsDuration)));
 }
 
+function getCurrentHubspotUpsellCount(
+  proposal: Pick<SalesProposalDraft, "contractedCredits" | "quotedPrice">,
+  option: Pick<(typeof SALES_PROPOSAL_UPSELL_OPTIONS)[number], "credits" | "price">,
+) {
+  const extraCredits = Math.max(0, proposal.contractedCredits - SALES_PROPOSAL_BASE_CREDITS);
+  const extraPrice = Math.max(0, proposal.quotedPrice - SALES_PROPOSAL_BASE_PRICE);
+
+  if (extraCredits === 0 && extraPrice === 0) {
+    return 0;
+  }
+
+  const creditCount = extraCredits / option.credits;
+  const priceCount = extraPrice / option.price;
+  const roundedCreditCount = Number.isInteger(creditCount) ? creditCount : null;
+  const roundedPriceCount = Number.isInteger(priceCount) ? priceCount : null;
+
+  if (
+    roundedCreditCount !== null &&
+    roundedPriceCount !== null &&
+    roundedCreditCount === roundedPriceCount
+  ) {
+    return Math.max(0, roundedCreditCount);
+  }
+
+  return 0;
+}
+
 function getInitiativeDurationDays(initiative: SalesProposalInitiativeDraft) {
   if (initiative.estStartDate && initiative.estEndDate) {
     const start = parseCalendarDate(initiative.estStartDate);
@@ -429,11 +457,12 @@ function scheduleRecommendedInitiatives(
   initiatives: SalesProposalInitiativeDraft[],
   targetInitiativeIds: string[],
   proposalStartDate: string,
-  options?: { preserveBacklogDates?: boolean },
+  options?: { preserveBacklogDates?: boolean; autoFillBacklogDates?: boolean },
 ) {
   const nextInitiatives = initiatives.map((initiative) => createEditorDraft(initiative));
   const targetIds = new Set(targetInitiativeIds);
   const preserveBacklogDates = options?.preserveBacklogDates ?? false;
+  const autoFillBacklogDates = options?.autoFillBacklogDates ?? false;
   const kickoffTitle = normalizeCatalogText("Sesión Kickoff");
   const kickoff = nextInitiatives.find(
     (initiative) => normalizeCatalogText(initiative.title) === kickoffTitle,
@@ -467,6 +496,15 @@ function scheduleRecommendedInitiatives(
     .forEach((initiative) => {
       if (preserveBacklogDates) {
         if (!initiative.estStartDate) {
+          if (initiative.estEndDate) {
+            initiative.estStartDate = initiative.estEndDate;
+            return;
+          }
+
+          if (!autoFillBacklogDates) {
+            return;
+          }
+
           const durationDays = getSuggestedInitiativeDurationDays(initiative);
           initiative.estStartDate = toIsoDate(cursorDate);
           initiative.estEndDate = toIsoDate(addCalendarDays(cursorDate, durationDays - 1));
@@ -526,6 +564,9 @@ export function SalesProposalWorkspace({
     Array<{ id: string; label: string; description: string; keywords: string[] }>
   > = {};
   const isDinterwebVariant = variant === "dinterweb";
+  const stageSchedulingOptions = isDinterwebVariant
+    ? { preserveBacklogDates: true, autoFillBacklogDates: true }
+    : { preserveBacklogDates: true, autoFillBacklogDates: false };
   const newProposalHref = `${routeBase}/new`;
   const workspaceHomeHref = isDinterwebVariant ? "/sales/dinterweb" : newProposalHref;
   const packageOptions = SALES_PROPOSAL_UPSELL_OPTIONS;
@@ -840,7 +881,7 @@ export function SalesProposalWorkspace({
         [...current.initiatives, next],
         [next.id],
         current.startDate,
-        { preserveBacklogDates: isDinterwebVariant },
+        stageSchedulingOptions,
       );
 
       return {
@@ -949,7 +990,7 @@ export function SalesProposalWorkspace({
         nextInitiatives,
         [initiative.id],
         current.startDate,
-        { preserveBacklogDates: isDinterwebVariant },
+        stageSchedulingOptions,
       );
 
       return {
@@ -1008,7 +1049,7 @@ export function SalesProposalWorkspace({
         nextInitiatives,
         [initiativeDraft.id],
         current.startDate,
-        { preserveBacklogDates: isDinterwebVariant },
+        stageSchedulingOptions,
       );
 
       return {
@@ -1065,8 +1106,9 @@ export function SalesProposalWorkspace({
       return;
     }
 
-    setUpsellPackageCredits(packageOptions[0].credits);
-    setUpsellCartCount(0);
+    const defaultPackageOption = packageOptions[0];
+    setUpsellPackageCredits(defaultPackageOption.credits);
+    setUpsellCartCount(getCurrentHubspotUpsellCount(proposal, defaultPackageOption));
     setIsUpsellModalOpen(true);
   }
 
@@ -1080,6 +1122,20 @@ export function SalesProposalWorkspace({
 
   function removeUpsellPackage() {
     setUpsellCartCount((current) => Math.max(0, current - 1));
+  }
+
+  function removeHubspotUpsell() {
+    setProposal((current) => ({
+      ...current,
+      contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
+      quotedPrice: SALES_PROPOSAL_BASE_PRICE,
+    }));
+    setUpsellCartCount(0);
+    setFeedback({
+      tone: "success",
+      message: "El paquete adicional fue eliminado y el plan volvio a la base.",
+    });
+    closeUpsellModal();
   }
 
   function removeDinterwebCustomPackage() {
@@ -1127,22 +1183,19 @@ export function SalesProposalWorkspace({
       return;
     }
 
-    if (!upsellCartCount) {
-      closeUpsellModal();
-      return;
-    }
-
     const addedCredits = upsellPackageCredits * upsellCartCount;
     const addedPrice = upsellPackagePrice * upsellCartCount;
 
     setProposal((current) => ({
       ...current,
-      contractedCredits: current.contractedCredits + addedCredits,
-      quotedPrice: current.quotedPrice + addedPrice,
+      contractedCredits: SALES_PROPOSAL_BASE_CREDITS + addedCredits,
+      quotedPrice: SALES_PROPOSAL_BASE_PRICE + addedPrice,
     }));
     setFeedback({
       tone: "success",
-      message: `Capacidad incrementada en ${addedCredits} creditos.`,
+      message: upsellCartCount
+        ? `Capacidad actualizada con ${addedCredits} creditos adicionales.`
+        : "El plan volvio al paquete base sin creditos adicionales.",
     });
     closeUpsellModal();
   }
@@ -1248,7 +1301,7 @@ function createInitiativeFromGroup(
         [...current.initiatives, next],
         [next.id],
         current.startDate,
-        { preserveBacklogDates: isDinterwebVariant },
+        stageSchedulingOptions,
       );
 
       return {
@@ -1373,7 +1426,7 @@ function mergeRecommendedGroups(
           nextInitiatives,
           addedInitiativeIds,
           proposal.startDate,
-          { preserveBacklogDates: isDinterwebVariant },
+          stageSchedulingOptions,
         );
 
     setProposal((current) => ({
@@ -2009,7 +2062,10 @@ function mergeRecommendedGroups(
     packageOptions.find((option) => option.credits === upsellPackageCredits)?.price ??
     packageOptions[0].price;
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
-  const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
+  const upsellTotalPrice = SALES_PROPOSAL_BASE_PRICE + upsellPackagePrice * upsellCartCount;
+  const hasHubspotUpsell =
+    proposal.contractedCredits > SALES_PROPOSAL_BASE_CREDITS ||
+    proposal.quotedPrice > SALES_PROPOSAL_BASE_PRICE;
   const activationValidation = getSalesProposalActivationValidation(proposal);
   const hasClientEmail = proposal.clientEmail.trim().length > 0;
   const hasValidClientEmail = isValidSalesProposalClientEmail(proposal.clientEmail);
@@ -3740,9 +3796,9 @@ function mergeRecommendedGroups(
 
               <div className="mt-4 space-y-3 text-[13px] text-[#33475b]">
                 <div className="flex items-center justify-between gap-4">
-                  <span className="font-bold">Plan base {proposal.contractedCredits} CR:</span>
+                  <span className="font-bold">Plan base {SALES_PROPOSAL_BASE_CREDITS} CR:</span>
                   <span className="font-bold">
-                    {formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}
+                    {formatCurrency(SALES_PROPOSAL_BASE_PRICE, proposal.currency.toUpperCase())}
                   </span>
                 </div>
 
@@ -3778,7 +3834,7 @@ function mergeRecommendedGroups(
                 <div className="border-t border-[#99f6e4] pt-3">
                   <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">
                     <span>Créditos totales:</span>
-                    <span>{proposal.contractedCredits + upsellCreditsAdded} CR</span>
+                    <span>{SALES_PROPOSAL_BASE_CREDITS + upsellCreditsAdded} CR</span>
                   </div>
                 </div>
 
@@ -3801,6 +3857,15 @@ function mergeRecommendedGroups(
               >
                 Cancelar
               </button>
+              {hasHubspotUpsell ? (
+                <button
+                  type="button"
+                  onClick={removeHubspotUpsell}
+                  className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#fecaca] bg-[#fff1f2] px-4 text-[13px] font-bold text-[#be123c] transition hover:bg-[#ffe4e6]"
+                >
+                  Quitar paquete
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={confirmUpsell}
