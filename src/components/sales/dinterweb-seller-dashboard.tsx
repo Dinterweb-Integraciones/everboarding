@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/utils";
 type DinterwebSellerDashboardProps = {
   sellerName: string;
   proposals: SalesProposalRecord[];
+  isGlobalView?: boolean;
 };
 
 const STATUS_COPY: Record<SalesProposalRecord["status"], string> = {
@@ -39,6 +40,7 @@ function formatTimestamp(value: string) {
 export function DinterwebSellerDashboard({
   sellerName,
   proposals,
+  isGlobalView = false,
 }: DinterwebSellerDashboardProps) {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f3fbf9_0%,#fcfcfc_38%)] px-4 py-6 sm:px-6">
@@ -50,11 +52,14 @@ export function DinterwebSellerDashboard({
                 Ventas Dinterweb
               </p>
               <h1 className="mt-3 text-3xl font-semibold tracking-[-0.03em] text-slate-950">
-                {sellerName}, aqui estan tus prospectos y propuestas
+                {isGlobalView
+                  ? "Aqui tienes la vista global de propuestas Dinterweb"
+                  : `${sellerName}, aqui estan tus prospectos y propuestas`}
               </h1>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Desde aqui puedes retomar boards comerciales existentes o abrir una propuesta nueva
-                para otro prospecto, sin mezclar nada del flujo de HubSpot.
+                {isGlobalView
+                  ? "Desde aqui puedes revisar todas las propuestas comerciales del flujo Dinterweb y abrir cualquiera para seguimiento o supervision."
+                  : "Desde aqui puedes retomar boards comerciales existentes o abrir una propuesta nueva para otro prospecto, sin mezclar nada del flujo de HubSpot."}
               </p>
             </div>
 
@@ -117,10 +122,15 @@ export function DinterwebSellerDashboard({
 
         {!proposals.length ? (
           <Card className="border-dashed border-[#cfe5df] px-6 py-10 text-center">
-            <p className="text-lg font-semibold text-slate-900">Todavia no tienes prospectos cargados</p>
+            <p className="text-lg font-semibold text-slate-900">
+              {isGlobalView
+                ? "Todavia no hay propuestas cargadas en Dinterweb"
+                : "Todavia no tienes prospectos cargados"}
+            </p>
             <p className="mt-2 text-sm text-slate-600">
-              Crea tu primera propuesta de Dinterweb y desde ahi arma el board comercial del
-              prospecto.
+              {isGlobalView
+                ? "Cuando el equipo comercial cree propuestas Dinterweb, apareceran aqui para seguimiento."
+                : "Crea tu primera propuesta de Dinterweb y desde ahi arma el board comercial del prospecto."}
             </p>
             <div className="mt-5">
               <Link

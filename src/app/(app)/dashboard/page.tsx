@@ -3,18 +3,28 @@ import { redirect } from "next/navigation";
 import { ClientsDashboard } from "@/components/dashboard/clients-dashboard";
 import { requireUser } from "@/lib/auth";
 import { fetchUserMemberships } from "@/lib/membership-access";
+import { getPlatformDefaultPath } from "@/lib/platform-access";
 import { resolveStageFromProfileRole, type ClientSummary } from "@/lib/onboarding";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/types/database";
 
 export default async function DashboardPage() {
-  const { supabase, user } = await requireUser();
+  const { supabase, user, platformProfile } = await requireUser();
+  const platformRole = platformProfile?.platform_role ?? null;
+  const canSeeAllClients = platformRole === "admin" || platformRole === "superadmin";
+
+  if (platformRole === "sales") {
+    redirect(getPlatformDefaultPath(platformRole));
+  }
+
+  const clientReader = canSeeAllClients ? createSupabaseAdminClient() : supabase;
 
   const [
     { data: clientRows, error: clientsError },
     { data: membershipRows, error: membershipError },
   ] =
     await Promise.all([
-      supabase.from("clients").select("*").order("updated_at", { ascending: false }),
+      clientReader.from("clients").select("*").order("updated_at", { ascending: false }),
       fetchUserMemberships(supabase, user.id),
     ]);
 
@@ -50,7 +60,18 @@ export default async function DashboardPage() {
     membershipRecords.map((membership) => [membership.client_id, membership.access_role]),
   );
 
-  const clients: ClientSummary[] = clientRecords.map((client) => ({
+  const visibleClientRecords =
+    platformRole === "csm"
+      ? clientRecords.filter(
+          (client) =>
+            client.csm_user_id === user.id ||
+            membershipRecords.some(
+              (membership) => membership.client_id === client.id && membership.profile_role === "csm",
+            ),
+        )
+      : clientRecords;
+
+  const clients: ClientSummary[] = visibleClientRecords.map((client) => ({
     ...client,
     access_role: client.owner_user_id === user.id ? "owner" : membershipMap.get(client.id) ?? "viewer",
   }));

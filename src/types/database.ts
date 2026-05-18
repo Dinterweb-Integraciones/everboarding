@@ -14,6 +14,11 @@ export type Database = {
           id: string;
           email: string;
           full_name: string | null;
+          platform_role: Database["public"]["Enums"]["platform_role"] | null;
+          is_platform_active: boolean;
+          platform_invited_by_user_id: string | null;
+          platform_invited_at: string | null;
+          platform_activated_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -21,6 +26,11 @@ export type Database = {
           id: string;
           email: string;
           full_name?: string | null;
+          platform_role?: Database["public"]["Enums"]["platform_role"] | null;
+          is_platform_active?: boolean;
+          platform_invited_by_user_id?: string | null;
+          platform_invited_at?: string | null;
+          platform_activated_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -28,6 +38,49 @@ export type Database = {
           id?: string;
           email?: string;
           full_name?: string | null;
+          platform_role?: Database["public"]["Enums"]["platform_role"] | null;
+          is_platform_active?: boolean;
+          platform_invited_by_user_id?: string | null;
+          platform_invited_at?: string | null;
+          platform_activated_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      platform_user_invites: {
+        Row: {
+          id: string;
+          email: string;
+          full_name: string | null;
+          role: Database["public"]["Enums"]["platform_role"];
+          invited_by_user_id: string | null;
+          invited_user_id: string | null;
+          accepted_at: string | null;
+          revoked_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          full_name?: string | null;
+          role: Database["public"]["Enums"]["platform_role"];
+          invited_by_user_id?: string | null;
+          invited_user_id?: string | null;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          full_name?: string | null;
+          role?: Database["public"]["Enums"]["platform_role"];
+          invited_by_user_id?: string | null;
+          invited_user_id?: string | null;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -780,6 +833,7 @@ export type Database = {
     Enums: {
       client_access_role: "viewer" | "editor" | "owner";
       client_profile_role: "sales" | "csm" | "client" | "stakeholder";
+      platform_role: "superadmin" | "admin" | "sales" | "csm";
       initiative_status: "backlog" | "planned" | "executing" | "completed";
       initiative_task_status: "pending" | "in_progress" | "blocked" | "completed";
       custom_plan_type: "mensual" | "proyecto";

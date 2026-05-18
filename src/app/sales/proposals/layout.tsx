@@ -1,17 +1,17 @@
 import { redirect } from "next/navigation";
 
 import { requireUser } from "@/lib/auth";
-import { canAccessDinterwebSales, getPlatformDefaultPath } from "@/lib/platform-access";
+import { canAccessHubspotSales, getPlatformDefaultPath } from "@/lib/platform-access";
 
-export default async function DinterwebSalesLayout({
+export default async function HubspotSalesLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { platformProfile } = await requireUser("/sales/dinterweb");
+  const { platformProfile } = await requireUser("/sales/proposals");
   const platformRole = platformProfile?.platform_role ?? null;
 
-  if (!canAccessDinterwebSales(platformRole)) {
+  if (!canAccessHubspotSales(platformRole)) {
     redirect(getPlatformDefaultPath(platformRole));
   }
 

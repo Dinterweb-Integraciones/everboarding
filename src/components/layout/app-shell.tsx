@@ -1,3 +1,4 @@
+import type { PlatformRole } from "@/lib/platform-access";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { PrimaryNavigation } from "@/components/layout/primary-navigation";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -7,6 +8,7 @@ type AppShellProps = {
   email: string;
   homeHref: string;
   showDashboardLink: boolean;
+  platformRole: PlatformRole | null;
 };
 
 export function AppShell({
@@ -14,17 +16,18 @@ export function AppShell({
   email,
   homeHref,
   showDashboardLink,
+  platformRole,
 }: AppShellProps) {
   return (
     <div className="min-h-screen bg-[#fcfcfc]">
       <header className="sticky top-0 z-30 border-b border-[#dfe3eb] bg-white">
         <div className="flex w-full items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <BrandLogo href={homeHref} priority />
-          <UserMenu email={email} />
+          <UserMenu email={email} platformRole={platformRole} />
         </div>
         {showDashboardLink ? (
           <div className="border-t border-[#eef2f7] px-4 py-3 sm:px-6">
-            <PrimaryNavigation />
+            <PrimaryNavigation platformRole={platformRole} />
           </div>
         ) : null}
       </header>

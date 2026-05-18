@@ -2,6 +2,7 @@ create extension if not exists pgcrypto;
 
 create type public.client_access_role as enum ('viewer', 'editor', 'owner');
 create type public.client_profile_role as enum ('sales', 'csm', 'client', 'stakeholder');
+create type public.platform_role as enum ('superadmin', 'admin', 'sales', 'csm');
 create type public.initiative_status as enum ('backlog', 'planned', 'executing', 'completed');
 create type public.initiative_task_status as enum ('pending', 'in_progress', 'blocked', 'completed');
 create type public.custom_plan_type as enum ('mensual', 'proyecto');
@@ -23,6 +24,24 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
   full_name text,
+  platform_role public.platform_role,
+  is_platform_active boolean not null default false,
+  platform_invited_by_user_id uuid references auth.users(id) on delete set null,
+  platform_invited_at timestamptz,
+  platform_activated_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.platform_user_invites (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  full_name text,
+  role public.platform_role not null,
+  invited_by_user_id uuid references auth.users(id) on delete set null,
+  invited_user_id uuid references auth.users(id) on delete set null,
+  accepted_at timestamptz,
+  revoked_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -380,6 +399,11 @@ on public.managed_prompts (singleton_key);
 drop trigger if exists set_profiles_updated_at on public.profiles;
 create trigger set_profiles_updated_at
 before update on public.profiles
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_platform_user_invites_updated_at on public.platform_user_invites;
+create trigger set_platform_user_invites_updated_at
+before update on public.platform_user_invites
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_clients_updated_at on public.clients;

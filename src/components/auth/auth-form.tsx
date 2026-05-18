@@ -17,9 +17,12 @@ type AuthFormProps = {
 export function AuthForm({ mode }: AuthFormProps) {
   const supabase = createSupabaseBrowserClient();
   const searchParams = useSearchParams();
+  const authError = searchParams.get("error");
   const [error, setError] = useState<string | null>(
-    searchParams.get("error") === "domain"
+    authError === "domain"
       ? `Solo puedes ingresar con una cuenta @${DINTERWEB_EMAIL_DOMAIN}.`
+      : authError === "invite"
+        ? "Tu correo corporativo aun no tiene acceso habilitado. Pide a un superadmin que te invite dentro de la plataforma."
       : null,
   );
   const [isLoading, setIsLoading] = useState(false);
@@ -73,7 +76,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       <div className="space-y-5 px-6 py-6">
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
           Usa tu cuenta corporativa de Google para entrar. Si tu correo no pertenece a
-          Dinterweb, el acceso sera rechazado.
+          Dinterweb o aun no fue habilitado por un superadmin, el acceso sera rechazado.
         </div>
 
         {error ? (

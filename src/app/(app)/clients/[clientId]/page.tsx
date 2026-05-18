@@ -31,10 +31,13 @@ export default async function ClientDetailPage({
 }: ClientDetailPageProps) {
   const { clientId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const { supabase, user } = await requireUser();
+  const { supabase, user, platformProfile } = await requireUser();
   const admin = createSupabaseAdminClient();
+  const platformRole = platformProfile?.platform_role ?? null;
+  const canBypassClientMembership = platformRole === "admin" || platformRole === "superadmin";
+  const clientReader = canBypassClientMembership ? admin : supabase;
 
-  const { data: client, error: clientError } = await supabase
+  const { data: client, error: clientError } = await clientReader
     .from("clients")
     .select("*")
     .eq("id", clientId)
@@ -51,17 +54,19 @@ export default async function ClientDetailPage({
   }
 
   const membershipLookup =
-    clientRecord.owner_user_id === user.id
+    canBypassClientMembership || clientRecord.owner_user_id === user.id
       ? null
       : await fetchClientMembership(supabase, clientRecord.id, user.id);
 
   const accessRole =
-    clientRecord.owner_user_id === user.id
+    canBypassClientMembership
+      ? "viewer"
+      : clientRecord.owner_user_id === user.id
       ? "owner"
       : ((membershipLookup?.data as { access_role?: "viewer" | "editor" | "owner" } | null)
           ?.access_role ?? null);
   const membershipProfileRole =
-    clientRecord.owner_user_id === user.id
+    canBypassClientMembership || clientRecord.owner_user_id === user.id
       ? null
       : ((membershipLookup?.data as {
           profile_role?: "sales" | "csm" | "client" | "stakeholder";
@@ -71,13 +76,13 @@ export default async function ClientDetailPage({
     notFound();
   }
 
-  const { data: configRow } = await supabase
+  const { data: configRow } = await clientReader
     .from("onboarding_configs")
     .select("*")
     .eq("client_id", clientRecord.id)
     .maybeSingle();
 
-  const { data: initiativeRows } = await supabase
+  const { data: initiativeRows } = await clientReader
     .from("onboarding_initiatives")
     .select("*")
     .eq("client_id", clientRecord.id)
@@ -92,13 +97,13 @@ export default async function ClientDetailPage({
     { data: catalogRows, error: catalogError },
   ] = await Promise.all([
     initiativeIds.length
-      ? supabase
+      ? clientReader
           .from("onboarding_initiative_subitems")
           .select("*")
           .in("initiative_id", initiativeIds)
       : Promise.resolve({ data: [], error: null }),
     initiativeIds.length
-      ? supabase
+      ? clientReader
           .from("onboarding_activity_logs")
           .select("*")
           .in("initiative_id", initiativeIds)
@@ -211,7 +216,7 @@ export default async function ClientDetailPage({
   const billingStatusArgs: Database["public"]["Functions"]["get_client_billing_status"]["Args"] = {
     p_client_id: clientRecord.id,
   };
-  const { data: billingRow } = (await supabase.rpc(
+  const { data: billingRow } = (await clientReader.rpc(
     "get_client_billing_status" as never,
     billingStatusArgs as never,
   )) as {

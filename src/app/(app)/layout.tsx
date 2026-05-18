@@ -1,14 +1,21 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { requireUser } from "@/lib/auth";
 import { fetchUserMemberships } from "@/lib/membership-access";
+import { getPlatformDefaultPath } from "@/lib/platform-access";
 import { resolveStageFromProfileRole } from "@/lib/onboarding";
+import { redirect } from "next/navigation";
 
 export default async function ProtectedLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { supabase, user } = await requireUser();
+  const { supabase, user, platformProfile } = await requireUser();
+  const platformRole = platformProfile?.platform_role ?? null;
+
+  if (platformRole === "sales") {
+    redirect(getPlatformDefaultPath(platformRole));
+  }
 
   const [{ data: ownedClients }, membershipLookup] = await Promise.all([
     supabase.from("clients").select("id").eq("owner_user_id", user.id),
@@ -24,6 +31,7 @@ export default async function ProtectedLayout({
     client_id: string;
     profile_role: "sales" | "csm" | "client" | "stakeholder";
   }>;
+
   const clientOnlyMode =
     !hasOwnedClients &&
     membershipRecords.length > 0 &&
@@ -40,6 +48,7 @@ export default async function ProtectedLayout({
       email={user.email ?? "usuario@local"}
       homeHref={homeHref}
       showDashboardLink={!clientOnlyMode}
+      platformRole={platformRole}
     >
       {children}
     </AppShell>

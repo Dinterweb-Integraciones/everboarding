@@ -1,6 +1,7 @@
 import { DinterwebSellerDashboard } from "@/components/sales/dinterweb-seller-dashboard";
 import { requireUser } from "@/lib/auth";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
+import { canManagePlatformUsers } from "@/lib/platform-access";
 import { mapSalesProposalRow, type SalesProposalRecord } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/types/database";
@@ -11,14 +12,17 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function DinterwebSalesIndexPage() {
-  const { user } = await requireUser("/sales/dinterweb");
+  const { user, platformProfile } = await requireUser("/sales/dinterweb");
   const seller = getDinterwebSellerIdentity(user);
+  const isGlobalView = canManagePlatformUsers(platformProfile?.platform_role ?? null);
   const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("sales_proposals")
-    .select("*")
-    .eq("seller_email", seller.email)
-    .order("updated_at", { ascending: false });
+  let query = admin.from("sales_proposals").select("*").order("updated_at", { ascending: false });
+
+  if (!isGlobalView) {
+    query = query.eq("seller_email", seller.email);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error("No pudimos cargar tus propuestas de Dinterweb.");
@@ -28,5 +32,11 @@ export default async function DinterwebSalesIndexPage() {
     .map((row) => mapSalesProposalRow(row))
     .filter((proposal) => proposal.workspaceVariant === "dinterweb") as SalesProposalRecord[];
 
-  return <DinterwebSellerDashboard sellerName={seller.name} proposals={proposals} />;
+  return (
+    <DinterwebSellerDashboard
+      sellerName={seller.name}
+      proposals={proposals}
+      isGlobalView={isGlobalView}
+    />
+  );
 }

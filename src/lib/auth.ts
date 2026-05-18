@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
+import { syncPlatformAccessForUser } from "@/lib/platform-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function buildLoginHref(nextPath?: string) {
@@ -27,7 +28,15 @@ export async function requireUser(nextPath?: string) {
     redirect(loginHref.includes("?") ? `${loginHref}&error=domain` : `${loginHref}?error=domain`);
   }
 
-  return { supabase, user };
+  const platformAccess = await syncPlatformAccessForUser(user);
+
+  if (!platformAccess.hasAccess) {
+    await supabase.auth.signOut();
+    const loginHref = buildLoginHref(nextPath);
+    redirect(loginHref.includes("?") ? `${loginHref}&error=invite` : `${loginHref}?error=invite`);
+  }
+
+  return { supabase, user, platformProfile: platformAccess.profile };
 }
 
 export async function getOptionalUser() {
@@ -38,8 +47,18 @@ export async function getOptionalUser() {
 
   if (user && !isAllowedDinterwebUser(user)) {
     await supabase.auth.signOut();
-    return { supabase, user: null };
+    return { supabase, user: null, platformProfile: null };
   }
 
-  return { supabase, user };
+  if (!user) {
+    return { supabase, user: null, platformProfile: null };
+  }
+
+  const platformAccess = await syncPlatformAccessForUser(user);
+  if (!platformAccess.hasAccess) {
+    await supabase.auth.signOut();
+    return { supabase, user: null, platformProfile: null };
+  }
+
+  return { supabase, user, platformProfile: platformAccess.profile };
 }

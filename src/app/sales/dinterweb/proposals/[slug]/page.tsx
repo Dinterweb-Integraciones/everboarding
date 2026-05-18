@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
 import { requireUser } from "@/lib/auth";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
+import { canManagePlatformUsers } from "@/lib/platform-access";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -27,8 +28,9 @@ export const revalidate = 0;
 export default async function DinterwebSalesProposalPage({
   params,
 }: DinterwebSalesProposalPageProps) {
-  const { user } = await requireUser("/sales/dinterweb");
+  const { user, platformProfile } = await requireUser("/sales/dinterweb");
   const seller = getDinterwebSellerIdentity(user);
+  const isGlobalView = canManagePlatformUsers(platformProfile?.platform_role ?? null);
   const { slug } = await params;
   let proposalRow: SalesProposalRow | null = null;
   let catalogRows: CreditCatalogItem[] = [];
@@ -116,7 +118,8 @@ export default async function DinterwebSalesProposalPage({
 
   if (
     initialProposal.workspaceVariant !== "dinterweb" ||
-    (initialProposal.sellerEmail.trim() &&
+    (!isGlobalView &&
+      initialProposal.sellerEmail.trim() &&
       initialProposal.sellerEmail.trim().toLowerCase() !== seller.email)
   ) {
     notFound();
