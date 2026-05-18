@@ -30,6 +30,8 @@ import {
   TASK_STATUS_META,
 } from "@/lib/constants";
 import {
+  buildCatalogGroupOptions,
+  buildCatalogModalGroups,
   calculateCredits,
   calculateInitiativeProgress,
   calculateMetrics,
@@ -44,8 +46,7 @@ import {
   getPlanCadenceLabel,
   getPlanPeriodLabel,
   suggestPlanPrice,
-  type CreditCatalogGroupItem,
-  type CreditCatalogItem,
+  type CatalogModalGroup,
   type CustomPlanBillingMode,
   type PlanPeriodMonths,
   type InitiativeEditorDraft,
@@ -62,18 +63,6 @@ type OnboardingClientPageProps = {
   initialData: OnboardingSnapshot;
   initialStage?: ProjectStage;
   userId: string;
-};
-
-type CatalogModalGroup = {
-  id: string;
-  name: string;
-  description: string;
-  modalCategoryId: string | null;
-  modalCategory: string;
-  priorityStatus: "normal" | "prioritario";
-  credits: number;
-  sortOrder: number;
-  items: CreditCatalogItem[];
 };
 
 function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
@@ -158,10 +147,6 @@ function normalizeCatalogText(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
-}
-
-function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
-  return priorityStatus === "prioritario" ? 0 : 1;
 }
 
 function getCustomerSuccessTimelineBarClass(status: InitiativeStatus) {
@@ -453,98 +438,17 @@ export function OnboardingClientPage({
   const currentExtraCapacityCredits = useMemo(() => getExtraCapacityCredits(config), [config]);
 
   const catalogGroups = useMemo(() => {
-    const itemById = new Map(initialData.catalog.map((item) => [item.id, item]));
-    const groupCategoriesById = new Map(
-      initialData.catalogGroupCategories.map((category) => [category.id, category] as const),
-    );
-    const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
-
-    initialData.catalogGroupMemberships.forEach((membership) => {
-      const bucket = membershipsByGroup.get(membership.group_id) ?? [];
-      bucket.push(membership);
-      membershipsByGroup.set(membership.group_id, bucket);
+    return buildCatalogModalGroups({
+      groups: initialData.catalogGroups,
+      categories: initialData.catalogGroupCategories,
+      categoryLinks: initialData.catalogGroupCategoryLinks,
+      memberships: initialData.catalogGroupMemberships,
+      items: initialData.catalog,
     });
-
-    return initialData.catalogGroups
-      .filter((group) => group.is_active)
-      .map((group) => {
-        const selectedCategory = group.modal_category_id
-          ? groupCategoriesById.get(group.modal_category_id) ?? null
-          : null;
-        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
-        const items = (membershipsByGroup.get(group.id) ?? [])
-          .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
-          .map((membership) => itemById.get(membership.catalog_item_id))
-          .filter((item): item is CreditCatalogItem => Boolean(item));
-        const credits = items.length
-          ? items.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
-          : Math.max(0, safeParseNumber(group.credits));
-
-        return {
-          id: group.id,
-          name: group.name,
-          description: group.description?.trim() || "",
-          modalCategoryId: selectedCategory?.id ?? null,
-          modalCategory,
-          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
-          credits,
-          sortOrder: safeParseNumber(group.sort_order),
-          items,
-        } satisfies CatalogModalGroup;
-      })
-      .sort(
-        (left, right) =>
-          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-      );
   }, [initialData]);
 
   const catalogGroupOptions = useMemo(() => {
-    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
-    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
-
-    catalogGroups.forEach((group) => {
-      if (group.modalCategoryId) {
-        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
-        bucket.push(group);
-        groupedByCategoryId.set(group.modalCategoryId, bucket);
-        return;
-      }
-
-      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
-      bucket.push(group);
-      groupedLegacy.set(group.modalCategory, bucket);
-    });
-
-    const orderedCategoryTabs = initialData.catalogGroupCategories
-      .filter((category) => category.is_active)
-      .map((category) => ({
-        id: category.id,
-        label: category.name,
-        sortOrder: safeParseNumber(category.sort_order),
-        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-        ),
-      }))
-      .filter((category) => category.groups.length > 0)
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
-
-    const legacyTabs = Array.from(groupedLegacy.entries())
-      .map(([category, groups]) => ({
-        id: `legacy:${category}`,
-        label: category,
-        sortOrder: Number.MAX_SAFE_INTEGER,
-        groups: [...groups].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-        ),
-      }))
-      .sort((left, right) => left.label.localeCompare(right.label, "es"));
-
-    return [...orderedCategoryTabs, ...legacyTabs];
+    return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData]);
   const catalogTabs = useMemo(
     () => [
@@ -563,7 +467,9 @@ export function OnboardingClientPage({
 
   const visibleCatalogGroups = useMemo(() => {
     const sourceGroups = isGlobalCatalogSearch
-      ? catalogGroupOptions.flatMap((category) => category.groups)
+      ? Array.from(
+        new Map(catalogGroupOptions.flatMap((category) => category.groups).map((group) => [group.id, group])).values(),
+      )
       : (activeCatalogCategory?.groups ?? []);
 
     return sourceGroups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));

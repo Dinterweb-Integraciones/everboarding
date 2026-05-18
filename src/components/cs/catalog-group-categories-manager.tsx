@@ -7,12 +7,12 @@ import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { CreditCatalogGroup, CreditCatalogGroupCategory } from "@/lib/onboarding";
+import type { CreditCatalogGroupCategory, CreditCatalogGroupCategoryLink } from "@/lib/onboarding";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type CatalogGroupCategoriesManagerProps = {
   initialCategories: CreditCatalogGroupCategory[];
-  initialGroups: CreditCatalogGroup[];
+  initialCategoryLinks: CreditCatalogGroupCategoryLink[];
 };
 
 type CatalogGroupCategoryForm = {
@@ -31,10 +31,10 @@ const emptyForm: CatalogGroupCategoryForm = {
 
 export function CatalogGroupCategoriesManager({
   initialCategories,
-  initialGroups,
+  initialCategoryLinks,
 }: CatalogGroupCategoriesManagerProps) {
   const [categories, setCategories] = useState(initialCategories);
-  const [groups] = useState(initialGroups);
+  const [categoryLinks] = useState(initialCategoryLinks);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<CatalogGroupCategoryForm>(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
@@ -53,9 +53,13 @@ export function CatalogGroupCategoriesManager({
         )
         .map((category) => ({
           ...category,
-          groupCount: groups.filter((group) => group.modal_category_id === category.id).length,
+          groupCount: new Set(
+            categoryLinks
+              .filter((link) => link.category_id === category.id)
+              .map((link) => link.group_id),
+          ).size,
         })),
-    [categories, groups],
+    [categories, categoryLinks],
   );
 
   function resetForm() {

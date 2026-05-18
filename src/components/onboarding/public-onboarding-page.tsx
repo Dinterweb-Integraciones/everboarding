@@ -11,15 +11,16 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PUBLIC_EXTRA_CREDIT_PACKAGE, STATUS_META, STAGE_META } from "@/lib/constants";
 import {
+  buildCatalogGroupOptions,
+  buildCatalogModalGroups,
   calculateMetrics,
   formatDateRange,
   getEstimatedStatus,
   getPlanCadenceLabel,
   resolveStageFromPublicAudience,
   suggestPlanPrice,
+  type CatalogModalGroup,
   type ClientBillingStatus,
-  type CreditCatalogGroupItem,
-  type CreditCatalogItem,
   type InitiativeRecord,
   type InitiativeStatus,
   type PublicOnboardingAudience,
@@ -31,18 +32,6 @@ type PublicOnboardingPageProps = {
   audience: PublicOnboardingAudience;
   publicSlug: string;
   initialData: PublicOnboardingSnapshot;
-};
-
-type CatalogModalGroup = {
-  id: string;
-  name: string;
-  description: string;
-  modalCategoryId: string | null;
-  modalCategory: string;
-  priorityStatus: "normal" | "prioritario";
-  credits: number;
-  sortOrder: number;
-  items: CreditCatalogItem[];
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
@@ -68,10 +57,6 @@ function normalizeCatalogText(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
-}
-
-function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
-  return priorityStatus === "prioritario" ? 0 : 1;
 }
 
 function parseCalendarDate(value: string) {
@@ -251,97 +236,16 @@ export function PublicOnboardingPage({
     [initialData.catalog],
   );
   const catalogGroups = useMemo(() => {
-    const itemById = new Map(initialData.catalog.map((item) => [item.id, item]));
-    const groupCategoriesById = new Map(
-      initialData.catalogGroupCategories.map((category) => [category.id, category] as const),
-    );
-    const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
-
-    initialData.catalogGroupMemberships.forEach((membership) => {
-      const bucket = membershipsByGroup.get(membership.group_id) ?? [];
-      bucket.push(membership);
-      membershipsByGroup.set(membership.group_id, bucket);
+    return buildCatalogModalGroups({
+      groups: initialData.catalogGroups,
+      categories: initialData.catalogGroupCategories,
+      categoryLinks: initialData.catalogGroupCategoryLinks,
+      memberships: initialData.catalogGroupMemberships,
+      items: initialData.catalog,
     });
-
-    return initialData.catalogGroups
-      .filter((group) => group.is_active)
-      .map((group) => {
-        const selectedCategory = group.modal_category_id
-          ? groupCategoriesById.get(group.modal_category_id) ?? null
-          : null;
-        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
-        const items = (membershipsByGroup.get(group.id) ?? [])
-          .sort((left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0))
-          .map((membership) => itemById.get(membership.catalog_item_id))
-          .filter((item): item is CreditCatalogItem => Boolean(item));
-        const credits = items.length
-          ? items.reduce((sum, item) => sum + Number(item.credits ?? 0), 0)
-          : Math.max(0, Number(group.credits ?? 0));
-
-        return {
-          id: group.id,
-          name: group.name,
-          description: group.description?.trim() || "",
-          modalCategoryId: selectedCategory?.id ?? null,
-          modalCategory,
-          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
-          credits,
-          sortOrder: Number(group.sort_order ?? 0),
-          items,
-        } satisfies CatalogModalGroup;
-      })
-      .sort(
-        (left, right) =>
-          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
-      );
-  }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupMemberships, initialData.catalogGroups]);
+  }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupCategoryLinks, initialData.catalogGroupMemberships, initialData.catalogGroups]);
   const catalogGroupOptions = useMemo(() => {
-    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
-    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
-
-    catalogGroups.forEach((group) => {
-      if (group.modalCategoryId) {
-        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
-        bucket.push(group);
-        groupedByCategoryId.set(group.modalCategoryId, bucket);
-        return;
-      }
-
-      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
-      bucket.push(group);
-      groupedLegacy.set(group.modalCategory, bucket);
-    });
-
-    const orderedCategoryTabs = initialData.catalogGroupCategories
-      .filter((category) => category.is_active)
-      .map((category) => ({
-        id: category.id,
-        label: category.name,
-        sortOrder: Number(category.sort_order ?? 0),
-        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
-        ),
-      }))
-      .filter((category) => category.groups.length > 0)
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
-
-    const legacyTabs = Array.from(groupedLegacy.entries())
-      .map(([category, groups]) => ({
-        id: `legacy:${category}`,
-        label: category,
-        sortOrder: Number.MAX_SAFE_INTEGER,
-        groups: [...groups].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "es"),
-        ),
-      }))
-      .sort((left, right) => left.label.localeCompare(right.label, "es"));
-
-    return [...orderedCategoryTabs, ...legacyTabs];
+    return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData.catalogGroupCategories]);
   const defaultCatalogLibraryTab = catalogGroupOptions[0]?.id ?? "";
   const selectedCatalogItems = useMemo(
@@ -900,12 +804,16 @@ export function PublicOnboardingPage({
         <div className="flex flex-col gap-3 px-5 py-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-4">
             <BrandLogo href="/" priority />
-            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
-              Vista publica
-            </span>
-            <span className="rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-              {audience === "prospect" ? "Prospecto" : "Cliente"}
-            </span>
+            {audience !== "prospect" ? (
+              <>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#516f90]">
+                  Vista publica
+                </span>
+                <span className="rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Cliente
+                </span>
+              </>
+            ) : null}
           </div>
 
         </div>
@@ -957,7 +865,9 @@ export function PublicOnboardingPage({
                       {cycleDaysRemaining ?? 0} d restantes del ciclo
                     </Badge>
                   ) : null}
-                  <Badge className="bg-[#e6fffb] text-[#00a88f]">Vista {stageMeta.shortLabel}</Badge>
+                  {audience !== "prospect" ? (
+                    <Badge className="bg-[#e6fffb] text-[#00a88f]">Vista {stageMeta.shortLabel}</Badge>
+                  ) : null}
                 </div>
                 <p className="mt-4 max-w-4xl text-sm text-[#516f90]">
                   {initialData.client.description || stageMeta.description}

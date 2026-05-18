@@ -35,6 +35,7 @@ export type AssignableUser = {
 
 export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
 export type CreditCatalogGroupCategory = Tables<"credit_catalog_group_categories">;
+export type CreditCatalogGroupCategoryLink = Tables<"credit_catalog_group_category_links">;
 export type CreditCatalogCategory = Tables<"credit_catalog_categories">;
 export type CreditCatalogGroupItem = Tables<"credit_catalog_group_items">;
 export type CreditCatalogItem = Tables<"credit_catalog_items">;
@@ -78,6 +79,7 @@ export type OnboardingSnapshot = {
   catalog: CreditCatalogItem[];
   catalogGroups: CreditCatalogGroup[];
   catalogGroupCategories: CreditCatalogGroupCategory[];
+  catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
@@ -92,8 +94,30 @@ export type PublicOnboardingSnapshot = {
   catalogCategories: CreditCatalogCategory[];
   catalogGroups: CreditCatalogGroup[];
   catalogGroupCategories: CreditCatalogGroupCategory[];
+  catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
   paymentEmail: string | null;
+};
+
+export type CatalogModalGroup = {
+  id: string;
+  name: string;
+  description: string;
+  modalCategoryId: string | null;
+  modalCategory: string;
+  modalCategoryIds: string[];
+  modalCategoryNames: string[];
+  priorityStatus: "normal" | "prioritario";
+  credits: number;
+  sortOrder: number;
+  items: CreditCatalogItem[];
+};
+
+export type CatalogModalCategoryOption = {
+  id: string;
+  label: string;
+  sortOrder: number;
+  groups: CatalogModalGroup[];
 };
 
 export type OnboardingMetrics = {
@@ -237,6 +261,165 @@ export function calculateCredits(
     (total, item) => total + safeParseNumber(item.unit_credits) * safeParseNumber(item.quantity),
     0,
   );
+}
+
+export function buildCatalogModalGroups({
+  groups,
+  categories,
+  categoryLinks,
+  memberships,
+  items,
+}: {
+  groups: CreditCatalogGroup[];
+  categories: CreditCatalogGroupCategory[];
+  categoryLinks: CreditCatalogGroupCategoryLink[];
+  memberships: CreditCatalogGroupItem[];
+  items: CreditCatalogItem[];
+}) {
+  const itemById = new Map(items.map((item) => [item.id, item] as const));
+  const groupCategoriesById = new Map(categories.map((category) => [category.id, category] as const));
+  const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
+  const categoryLinksByGroup = new Map<string, CreditCatalogGroupCategoryLink[]>();
+
+  memberships.forEach((membership) => {
+    const bucket = membershipsByGroup.get(membership.group_id) ?? [];
+    bucket.push(membership);
+    membershipsByGroup.set(membership.group_id, bucket);
+  });
+
+  categoryLinks.forEach((link) => {
+    const bucket = categoryLinksByGroup.get(link.group_id) ?? [];
+    bucket.push(link);
+    categoryLinksByGroup.set(link.group_id, bucket);
+  });
+
+  return groups
+    .filter((group) => group.is_active)
+    .map((group) => {
+      const assignedCategories = (categoryLinksByGroup.get(group.id) ?? [])
+        .map((link) => groupCategoriesById.get(link.category_id) ?? null)
+        .filter((category): category is CreditCatalogGroupCategory => Boolean(category))
+        .sort(
+          (left, right) =>
+            safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+            || left.name.localeCompare(right.name, "es"),
+        );
+
+      const uniqueAssignedCategories = assignedCategories.filter(
+        (category, index, current) =>
+          current.findIndex((entry) => entry.id === category.id) === index,
+      );
+
+      const fallbackCategory =
+        !uniqueAssignedCategories.length && group.modal_category_id
+          ? groupCategoriesById.get(group.modal_category_id) ?? null
+          : null;
+
+      const categoryIds = uniqueAssignedCategories.length
+        ? uniqueAssignedCategories.map((category) => category.id)
+        : fallbackCategory
+          ? [fallbackCategory.id]
+          : [];
+      const legacyCategoryName = (group.modal_category ?? "").trim();
+      const categoryNames = uniqueAssignedCategories.length
+        ? uniqueAssignedCategories.map((category) => category.name)
+        : fallbackCategory
+          ? [fallbackCategory.name]
+          : (legacyCategoryName ? [legacyCategoryName] : []);
+
+      const resolvedCategoryId = categoryIds[0] ?? null;
+      const resolvedCategoryName = categoryNames[0] ?? group.name.trim();
+      const groupItems = (membershipsByGroup.get(group.id) ?? [])
+        .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
+        .map((membership) => itemById.get(membership.catalog_item_id))
+        .filter((item): item is CreditCatalogItem => Boolean(item));
+      const credits = groupItems.length
+        ? groupItems.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
+        : Math.max(0, safeParseNumber(group.credits));
+
+      return {
+        id: group.id,
+        name: group.name,
+        description: group.description?.trim() || "",
+        modalCategoryId: resolvedCategoryId,
+        modalCategory: resolvedCategoryName,
+        modalCategoryIds: categoryIds,
+        modalCategoryNames: categoryNames,
+        priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
+        credits,
+        sortOrder: safeParseNumber(group.sort_order),
+        items: groupItems,
+      } satisfies CatalogModalGroup;
+    })
+    .sort(
+      (left, right) =>
+        (left.priorityStatus === "prioritario" ? 0 : 1) - (right.priorityStatus === "prioritario" ? 0 : 1)
+        || left.sortOrder - right.sortOrder
+        || left.name.localeCompare(right.name, "es"),
+    );
+}
+
+export function buildCatalogGroupOptions(
+  groups: CatalogModalGroup[],
+  categories: CreditCatalogGroupCategory[],
+) {
+  const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
+  const groupedLegacy = new Map<string, CatalogModalGroup[]>();
+
+  groups.forEach((group) => {
+    if (group.modalCategoryIds.length) {
+      group.modalCategoryIds.forEach((categoryId, index) => {
+        const categoryName = group.modalCategoryNames[index] ?? group.modalCategory;
+        const bucket = groupedByCategoryId.get(categoryId) ?? [];
+        bucket.push({
+          ...group,
+          modalCategoryId: categoryId,
+          modalCategory: categoryName,
+        });
+        groupedByCategoryId.set(categoryId, bucket);
+      });
+      return;
+    }
+
+    const bucket = groupedLegacy.get(group.modalCategory) ?? [];
+    bucket.push(group);
+    groupedLegacy.set(group.modalCategory, bucket);
+  });
+
+  const orderedCategoryTabs = categories
+    .filter((category) => category.is_active)
+    .map((category) => ({
+      id: category.id,
+      label: category.name,
+      sortOrder: safeParseNumber(category.sort_order),
+      groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
+        (left, right) =>
+          (left.priorityStatus === "prioritario" ? 0 : 1) - (right.priorityStatus === "prioritario" ? 0 : 1)
+          || left.sortOrder - right.sortOrder
+          || left.name.localeCompare(right.name, "es"),
+      ),
+    }))
+    .filter((category) => category.groups.length > 0)
+    .sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"),
+    );
+
+  const legacyTabs = Array.from(groupedLegacy.entries())
+    .map(([category, legacyGroups]) => ({
+      id: `legacy:${category}`,
+      label: category,
+      sortOrder: Number.MAX_SAFE_INTEGER,
+      groups: [...legacyGroups].sort(
+        (left, right) =>
+          (left.priorityStatus === "prioritario" ? 0 : 1) - (right.priorityStatus === "prioritario" ? 0 : 1)
+          || left.sortOrder - right.sortOrder
+          || left.name.localeCompare(right.name, "es"),
+      ),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, "es"));
+
+  return [...orderedCategoryTabs, ...legacyTabs] satisfies CatalogModalCategoryOption[];
 }
 
 export function calculateInitiativeProgress(

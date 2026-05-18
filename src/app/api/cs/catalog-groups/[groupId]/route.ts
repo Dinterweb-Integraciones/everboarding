@@ -14,6 +14,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
+      modalCategoryIds?: string[] | null;
       modalCategoryId?: string | null;
       modalCategory?: string | null;
       credits?: number;
@@ -25,6 +26,9 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
+    const requestedModalCategoryIds = Array.isArray(body.modalCategoryIds)
+      ? [...new Set(body.modalCategoryIds.map((categoryId) => categoryId.trim()).filter(Boolean))]
+      : [];
     const requestedModalCategoryId = body.modalCategoryId?.trim() || null;
     const requestedModalCategoryName = body.modalCategory?.trim() || null;
     const credits = Math.max(0, safeParseNumber(body.credits));
@@ -46,21 +50,31 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       );
     }
 
-    let selectedCategory: { id: string; name: string } | null = null;
+    let selectedCategories: Array<{ id: string; name: string }> = [];
+    const normalizedRequestedCategoryIds = requestedModalCategoryIds.length
+      ? requestedModalCategoryIds
+      : requestedModalCategoryId
+        ? [requestedModalCategoryId]
+        : [];
 
-    if (requestedModalCategoryId) {
-      const { data: categoryRow, error: categoryError } = await supabase
+    if (normalizedRequestedCategoryIds.length) {
+      const { data: categoryRows, error: categoryError } = await supabase
         .from("credit_catalog_group_categories")
         .select("id, name")
-        .eq("id", requestedModalCategoryId)
-        .maybeSingle();
+        .in("id", normalizedRequestedCategoryIds);
 
       if (categoryError) throw categoryError;
-      if (!categoryRow) {
-        return NextResponse.json({ message: "La categoria del grupo ya no existe." }, { status: 400 });
-      }
+      const categoryRowsById = new Map((categoryRows ?? []).map((category) => [category.id, category]));
+      selectedCategories = normalizedRequestedCategoryIds
+        .map((categoryId) => categoryRowsById.get(categoryId) ?? null)
+        .filter((category): category is { id: string; name: string } => Boolean(category));
 
-      selectedCategory = categoryRow;
+      if (selectedCategories.length !== normalizedRequestedCategoryIds.length) {
+        return NextResponse.json(
+          { message: "Una o mas categorias del caso de uso ya no existen." },
+          { status: 400 },
+        );
+      }
     } else if (requestedModalCategoryName) {
       const { data: categoryRow, error: categoryError } = await supabase
         .from("credit_catalog_group_categories")
@@ -69,8 +83,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         .maybeSingle();
 
       if (categoryError) throw categoryError;
-      selectedCategory = categoryRow;
+      selectedCategories = categoryRow ? [categoryRow] : [];
     }
+
+    const primaryCategory = selectedCategories[0] ?? null;
 
     const { data: currentGroup, error: currentError } = await supabase
       .from("credit_catalog_groups")
@@ -87,8 +103,8 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .update({
         name,
         description,
-        modal_category: selectedCategory?.name ?? null,
-        modal_category_id: selectedCategory?.id ?? null,
+        modal_category: primaryCategory?.name ?? null,
+        modal_category_id: primaryCategory?.id ?? null,
         credits,
         priority_status: priorityStatus,
         sort_order: sortOrder,
@@ -99,6 +115,30 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .single();
 
     if (error || !data) throw error ?? new Error("No pudimos actualizar el grupo.");
+    const { error: deleteCategoryLinksError } = await supabase
+      .from("credit_catalog_group_category_links")
+      .delete()
+      .eq("group_id", groupId);
+
+    if (deleteCategoryLinksError) {
+      throw deleteCategoryLinksError;
+    }
+
+    if (selectedCategories.length) {
+      const { error: insertCategoryLinksError } = await supabase
+        .from("credit_catalog_group_category_links")
+        .insert(
+          selectedCategories.map((category) => ({
+            group_id: groupId,
+            category_id: category.id,
+          })),
+        );
+
+      if (insertCategoryLinksError) {
+        throw insertCategoryLinksError;
+      }
+    }
+
     const { error: deleteLinksError } = await supabase
       .from("credit_catalog_group_items")
       .delete()
@@ -135,6 +175,13 @@ export async function DELETE(_: Request, { params }: GroupRouteProps) {
   try {
     const { groupId } = await params;
     const { supabase } = await requireUser();
+
+    const { error: detachCategoryLinksError } = await supabase
+      .from("credit_catalog_group_category_links")
+      .delete()
+      .eq("group_id", groupId);
+
+    if (detachCategoryLinksError) throw detachCategoryLinksError;
 
     const { error: detachError } = await supabase
       .from("credit_catalog_group_items")

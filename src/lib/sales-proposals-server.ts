@@ -8,6 +8,7 @@ import {
 } from "@/lib/hubspot";
 import {
   getSalesProposalActivationValidation,
+  isValidSalesProposalClientEmail,
   mapSalesProposalRow,
   serializeSalesProposalDraft,
   type SalesProposalDraft,
@@ -261,6 +262,11 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
     // Preserve the existing assignee unless another internal flow updates it explicitly.
     assignedCsmUserId: input.assignedCsmUserId || existingRow?.assigned_csm_user_id || "",
   };
+
+  if (!isValidSalesProposalClientEmail(draftToPersist.clientEmail)) {
+    throw new Error("Ingresa un correo valido del cliente antes de guardar la propuesta.");
+  }
+
   const serialized = serializeSalesProposalDraft(draftToPersist);
 
   let hubspotDealId: string | null = existingRow?.hubspot_deal_id ?? null;

@@ -7,7 +7,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import {
-  PLAN_PRICE_FACTOR,
   SALES_PROPOSAL_BASE_PRICE,
   SALES_PROPOSAL_UPSELL_OPTIONS,
   STATUS_META,
@@ -20,6 +19,7 @@ import {
   createLocalId,
   getSalesProposalActivationValidation,
   generateSalesProposalSlug,
+  isValidSalesProposalClientEmail,
   normalizeSalesProposalDraft,
   type SalesProposalDraft,
   type SalesProposalInitiativeDraft,
@@ -29,9 +29,13 @@ import {
   calculateSalesProposalMetrics,
 } from "@/lib/sales-proposals";
 import {
+  buildCatalogGroupOptions,
+  buildCatalogModalGroups,
   formatDateRange,
+  type CatalogModalGroup,
   type CreditCatalogGroup,
   type CreditCatalogGroupCategory,
+  type CreditCatalogGroupCategoryLink,
   type CreditCatalogGroupItem,
   type CreditCatalogItem,
   type InitiativeStatus,
@@ -42,6 +46,7 @@ type SalesProposalWorkspaceProps = {
   initialCatalog: CreditCatalogItem[];
   initialGroups: CreditCatalogGroup[];
   initialGroupCategories: CreditCatalogGroupCategory[];
+  initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   initialGroupMemberships: CreditCatalogGroupItem[];
   initialProposal?: SalesProposalRecord | null;
   variant?: "hubspot" | "dinterweb";
@@ -51,18 +56,6 @@ type SalesProposalWorkspaceProps = {
     email: string;
     company: string;
   } | null;
-};
-
-type CatalogModalGroup = {
-  id: string;
-  name: string;
-  description: string;
-  modalCategoryId: string | null;
-  modalCategory: string;
-  priorityStatus: "normal" | "prioritario";
-  credits: number;
-  sortOrder: number;
-  items: CreditCatalogItem[];
 };
 
 function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
@@ -109,10 +102,6 @@ const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,
 } as const;
-const DINTERWEB_EXTRA_PACKAGE_OPTIONS = [
-  { id: "60", credits: 60, price: SALES_PROPOSAL_BASE_PRICE },
-  { id: "80", credits: 80, price: Math.round(80 * PLAN_PRICE_FACTOR) },
-] as const;
 const WIZARD_HUB_OPTIONS = ["Sales", "Marketing", "Service", "Content"] as const;
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
@@ -136,10 +125,6 @@ async function parseJsonResponse<T>(response: Response) {
       `La API devolvio JSON invalido (${response.status}). Respuesta inicial: ${trimmed.slice(0, 400)}`,
     );
   }
-}
-
-function getCatalogGroupPriorityRank(priorityStatus: string | null | undefined) {
-  return priorityStatus === "prioritario" ? 0 : 1;
 }
 
 function getDinterwebChargeMultiplier(
@@ -230,11 +215,11 @@ function normalizeBoardSortOrders(initiatives: SalesProposalInitiativeDraft[]) {
 
 function hasSalesProposalIdentity(value: Pick<SalesProposalDraft, "clientName" | "clientEmail">) {
   const normalizedName = value.clientName.trim().toLowerCase();
-  return normalizedName !== "" && normalizedName !== "cliente" || value.clientEmail.trim() !== "";
+  return normalizedName !== "" && normalizedName !== "cliente" || isValidSalesProposalClientEmail(value.clientEmail);
 }
 
 function canPersistSalesProposal(value: Pick<SalesProposalDraft, "slug" | "clientName" | "clientEmail">) {
-  return Boolean(value.slug) || hasSalesProposalIdentity(value);
+  return isValidSalesProposalClientEmail(value.clientEmail) && (Boolean(value.slug) || hasSalesProposalIdentity(value));
 }
 
 function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
@@ -529,6 +514,7 @@ export function SalesProposalWorkspace({
   initialCatalog,
   initialGroups,
   initialGroupCategories,
+  initialGroupCategoryLinks,
   initialGroupMemberships,
   initialProposal,
   variant = "hubspot",
@@ -643,100 +629,17 @@ export function SalesProposalWorkspace({
   }, [initialCatalog]);
 
   const catalogGroups = useMemo(() => {
-    const itemById = new Map(initialCatalog.map((item) => [item.id, item]));
-    const groupCategoriesById = new Map(initialGroupCategories.map((category) => [category.id, category]));
-    const membershipsByGroup = new Map<string, CreditCatalogGroupItem[]>();
-
-    initialGroupMemberships.forEach((membership) => {
-      const bucket = membershipsByGroup.get(membership.group_id) ?? [];
-      bucket.push(membership);
-      membershipsByGroup.set(membership.group_id, bucket);
+    return buildCatalogModalGroups({
+      groups: initialGroups,
+      categories: initialGroupCategories,
+      categoryLinks: initialGroupCategoryLinks,
+      memberships: initialGroupMemberships,
+      items: initialCatalog,
     });
-
-    return initialGroups
-      .filter((group) => group.is_active)
-      .map((group) => {
-        const selectedCategory = group.modal_category_id
-          ? groupCategoriesById.get(group.modal_category_id) ?? null
-          : null;
-        const modalCategory = selectedCategory?.name ?? ((group.modal_category ?? "").trim() || group.name.trim());
-        const items = (membershipsByGroup.get(group.id) ?? [])
-          .sort(
-            (left, right) =>
-              safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order),
-          )
-          .map((membership) => itemById.get(membership.catalog_item_id))
-          .filter((item): item is CreditCatalogItem => Boolean(item));
-
-        const credits = items.length
-          ? items.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
-          : Math.max(0, safeParseNumber(group.credits));
-
-        return {
-          id: group.id,
-          name: group.name,
-          description: group.description?.trim() || "",
-          modalCategoryId: selectedCategory?.id ?? null,
-          modalCategory,
-          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
-          credits,
-          sortOrder: safeParseNumber(group.sort_order),
-          items,
-        } satisfies CatalogModalGroup;
-      })
-      .sort(
-        (left, right) =>
-          getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-          || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-      );
-  }, [initialCatalog, initialGroupCategories, initialGroups, initialGroupMemberships]);
+  }, [initialCatalog, initialGroupCategories, initialGroupCategoryLinks, initialGroups, initialGroupMemberships]);
 
   const catalogGroupOptions = useMemo(() => {
-    const groupedByCategoryId = new Map<string, CatalogModalGroup[]>();
-    const groupedLegacy = new Map<string, CatalogModalGroup[]>();
-
-    catalogGroups.forEach((group) => {
-      if (group.modalCategoryId) {
-        const bucket = groupedByCategoryId.get(group.modalCategoryId) ?? [];
-        bucket.push(group);
-        groupedByCategoryId.set(group.modalCategoryId, bucket);
-        return;
-      }
-
-      const bucket = groupedLegacy.get(group.modalCategory) ?? [];
-      bucket.push(group);
-      groupedLegacy.set(group.modalCategory, bucket);
-    });
-
-    const orderedCategoryTabs = initialGroupCategories
-      .filter((category) => category.is_active)
-      .map((category) => ({
-        id: category.id,
-        label: category.name,
-        sortOrder: safeParseNumber(category.sort_order),
-        groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-        ),
-      }))
-      .filter((category) => category.groups.length > 0)
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label, "es"));
-
-    const legacyTabs = Array.from(groupedLegacy.entries())
-      .map(([category, groups]) => ({
-        id: `legacy:${category}`,
-        label: category,
-        sortOrder: Number.MAX_SAFE_INTEGER,
-        groups: [...groups].sort(
-          (left, right) =>
-            getCatalogGroupPriorityRank(left.priorityStatus) - getCatalogGroupPriorityRank(right.priorityStatus)
-            || left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
-        ),
-      }))
-      .sort((left, right) => left.label.localeCompare(right.label, "es"));
-
-    return [...orderedCategoryTabs, ...legacyTabs];
+    return buildCatalogGroupOptions(catalogGroups, initialGroupCategories);
   }, [catalogGroups, initialGroupCategories]);
 
   const catalogTabs = useMemo(
@@ -756,7 +659,9 @@ export function SalesProposalWorkspace({
 
   const visibleCatalogGroups = useMemo(() => {
     const sourceGroups = isGlobalCatalogSearch
-      ? catalogGroupOptions.flatMap((category) => category.groups)
+      ? Array.from(
+        new Map(catalogGroupOptions.flatMap((category) => category.groups).map((group) => [group.id, group])).values(),
+      )
       : (activeCatalogCategory?.groups ?? []);
 
     return sourceGroups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
@@ -1175,6 +1080,22 @@ export function SalesProposalWorkspace({
 
   function removeUpsellPackage() {
     setUpsellCartCount((current) => Math.max(0, current - 1));
+  }
+
+  function removeDinterwebCustomPackage() {
+    applyDinterwebCommercialTerms(
+      DINTERWEB_BASE_PACKAGE.credits,
+      DINTERWEB_BASE_PACKAGE.price,
+      proposal.billingMode,
+      proposal.periodMonths,
+    );
+    setDinterwebExtraCreditsDraft("0");
+    setDinterwebExtraPriceDraft("0");
+    setFeedback({
+      tone: "success",
+      message: "El paquete volvio a la base de 60 creditos.",
+    });
+    closeUpsellModal();
   }
 
   function confirmUpsell() {
@@ -1863,10 +1784,10 @@ function mergeRecommendedGroups(
 
   async function copyProspectShareLink() {
     if (isDinterwebVariant) {
-      if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
+      if (!hasValidClientEmail) {
         setFeedback({
           tone: "error",
-          message: "Ingresa el nombre o email del prospecto para generar primero la URL publica.",
+          message: "Ingresa un correo valido del prospecto para generar primero la URL publica.",
         });
         return;
       }
@@ -1880,10 +1801,10 @@ function mergeRecommendedGroups(
       return;
     }
 
-    if (!proposal.slug && !hasSalesProposalIdentity(proposal)) {
+    if (!hasValidClientEmail) {
       setFeedback({
         tone: "error",
-        message: "Ingresa el nombre o email del cliente para generar primero la URL de la propuesta.",
+        message: "Ingresa un correo valido del cliente para generar primero la URL de la propuesta.",
       });
       return;
     }
@@ -2039,7 +1960,7 @@ function mergeRecommendedGroups(
     if (!canPersistSalesProposal(nextProposal)) {
       setFeedback({
         tone: "success",
-        message: `Fechas ajustadas localmente: ${formatDateRange(startDate, endDate)}. Agrega nombre o email del cliente para guardarlas con URL.`,
+        message: `Fechas ajustadas localmente: ${formatDateRange(startDate, endDate)}. Agrega un correo valido del cliente para guardarlas con URL.`,
       });
       return;
     }
@@ -2081,12 +2002,18 @@ function mergeRecommendedGroups(
   const remainingRecommendationCredits = Math.max(0, proposal.contractedCredits - currentPlanCredits);
   const dinterwebMonthlyCredits = getDinterwebMonthlyCredits(proposal);
   const dinterwebMonthlyPrice = getDinterwebMonthlyPrice(proposal);
+  const hasDinterwebCustomPackage =
+    dinterwebMonthlyCredits > DINTERWEB_BASE_PACKAGE.credits ||
+    dinterwebMonthlyPrice > DINTERWEB_BASE_PACKAGE.price;
   const upsellPackagePrice =
     packageOptions.find((option) => option.credits === upsellPackageCredits)?.price ??
     packageOptions[0].price;
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
   const upsellTotalPrice = proposal.quotedPrice + upsellPackagePrice * upsellCartCount;
   const activationValidation = getSalesProposalActivationValidation(proposal);
+  const hasClientEmail = proposal.clientEmail.trim().length > 0;
+  const hasValidClientEmail = isValidSalesProposalClientEmail(proposal.clientEmail);
+  const showClientEmailError = hasClientEmail && !hasValidClientEmail;
   const hasAppliedCoupon = Boolean(proposal.appliedCouponCode.trim());
   const appliedCouponLabel = hasAppliedCoupon
     ? `Cupon aplicado: ${proposal.appliedCouponCode} · ${proposal.contractedCredits} CR · ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}`
@@ -2278,7 +2205,12 @@ function mergeRecommendedGroups(
                     type="email"
                     value={proposal.clientEmail}
                     onChange={(event) => setProposal({ ...proposal, clientEmail: event.target.value })}
-                    className="w-full border-0 border-b border-transparent bg-transparent p-0 text-[13px] font-medium leading-none text-[#516f90] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#00bda5]"
+                    aria-invalid={showClientEmailError}
+                    className={`w-full border-0 border-b bg-transparent p-0 text-[13px] font-medium leading-none outline-none transition placeholder:text-[#9cb1c6] ${
+                      showClientEmailError
+                        ? "border-[#dc2626] text-[#b91c1c] focus:border-[#dc2626]"
+                        : "border-transparent text-[#516f90] focus:border-[#00bda5]"
+                    }`}
                     placeholder="cliente@empresa.com"
                   />
                 </div>
@@ -3667,7 +3599,7 @@ function mergeRecommendedGroups(
             <div className="text-center">
               <h3 className="text-[18px] font-bold text-[#33475b]">Expandir paquete base</h3>
               <p className="mt-2 text-[13px] text-[#516f90]">
-                El paquete base incluye 60 creditos. Desde aqui puedes sumarle 60, 80 o un ajuste personalizado.
+                El paquete base incluye 60 creditos. Desde aqui puedes sumarle creditos e inversion de forma personalizada.
               </p>
             </div>
 
@@ -3684,29 +3616,6 @@ function mergeRecommendedGroups(
                   Fijo
                 </span>
               </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 md:grid-cols-2">
-              {DINTERWEB_EXTRA_PACKAGE_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => {
-                    setDinterwebExtraCreditsDraft((current) =>
-                      String(Math.max(0, safeParseNumber(current)) + option.credits),
-                    );
-                    setDinterwebExtraPriceDraft((current) =>
-                      String(Math.max(0, safeParseNumber(current)) + option.price),
-                    );
-                  }}
-                  className="rounded-[6px] border border-[#dfe3eb] bg-white px-4 py-4 text-left transition hover:border-[#14b8a6] hover:bg-[#ecfffb]"
-                >
-                  <p className="text-[14px] font-bold text-[#33475b]">Agregar +{option.credits} CR</p>
-                  <p className="mt-1 text-[12px] text-[#516f90]">
-                    Suma {formatCurrency(option.price, proposal.currency.toUpperCase())} al valor por periodo base.
-                  </p>
-                </button>
-              ))}
             </div>
 
             <div className="mt-5 grid gap-3 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbfd] p-4 sm:grid-cols-2">
@@ -3767,6 +3676,15 @@ function mergeRecommendedGroups(
               >
                 Cancelar
               </button>
+              {hasDinterwebCustomPackage ? (
+                <button
+                  type="button"
+                  onClick={removeDinterwebCustomPackage}
+                  className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#fecaca] bg-[#fff1f2] px-4 text-[13px] font-bold text-[#be123c] transition hover:bg-[#ffe4e6]"
+                >
+                  Quitar ajuste
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={confirmUpsell}

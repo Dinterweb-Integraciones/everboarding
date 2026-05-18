@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Eye, Layers3, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, Eye, Layers3, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
+  CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
@@ -19,6 +20,7 @@ import { formatUserError, safeParseNumber } from "@/lib/utils";
 type CatalogGroupsManagerProps = {
   initialGroups: CreditCatalogGroup[];
   initialGroupCategories: CreditCatalogGroupCategory[];
+  initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   initialItems: CreditCatalogItem[];
   initialMemberships: CreditCatalogGroupItem[];
 };
@@ -26,7 +28,7 @@ type CatalogGroupsManagerProps = {
 type CatalogGroupForm = {
   name: string;
   description: string;
-  modalCategoryId: string;
+  modalCategoryIds: string[];
   priorityStatus: "normal" | "prioritario";
   credits: string;
   sortOrder: string;
@@ -36,7 +38,7 @@ type CatalogGroupForm = {
 const emptyForm: CatalogGroupForm = {
   name: "",
   description: "",
-  modalCategoryId: "",
+  modalCategoryIds: [],
   priorityStatus: "normal",
   credits: "0",
   sortOrder: "0",
@@ -46,11 +48,13 @@ const emptyForm: CatalogGroupForm = {
 export function CatalogGroupsManager({
   initialGroups,
   initialGroupCategories,
+  initialGroupCategoryLinks,
   initialItems,
   initialMemberships,
 }: CatalogGroupsManagerProps) {
   const [groups, setGroups] = useState(initialGroups);
   const [groupCategories] = useState(initialGroupCategories);
+  const [groupCategoryLinks, setGroupCategoryLinks] = useState(initialGroupCategoryLinks);
   const [items] = useState(initialItems);
   const [memberships, setMemberships] = useState(initialMemberships);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -58,6 +62,7 @@ export function CatalogGroupsManager({
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupsPageSize, setGroupsPageSize] = useState(10);
   const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
@@ -67,6 +72,7 @@ export function CatalogGroupsManager({
     message: string;
   } | null>(null);
   const deferredGroupSearchQuery = useDeferredValue(groupSearchQuery);
+  const categoryMenuRef = useRef<HTMLDivElement | null>(null);
 
   const groupCategoriesById = useMemo(
     () => new Map(groupCategories.map((category) => [category.id, category])),
@@ -82,6 +88,26 @@ export function CatalogGroupsManager({
       ),
     [groupCategories],
   );
+
+  const selectedCategorySummary = useMemo(() => {
+    if (!form.modalCategoryIds.length) {
+      return "Selecciona una o varias categorias";
+    }
+
+    const selectedNames = form.modalCategoryIds
+      .map((categoryId) => groupCategoriesById.get(categoryId)?.name ?? null)
+      .filter((categoryName): categoryName is string => Boolean(categoryName));
+
+    if (!selectedNames.length) {
+      return "Selecciona una o varias categorias";
+    }
+
+    if (selectedNames.length <= 2) {
+      return selectedNames.join(", ");
+    }
+
+    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2}`;
+  }, [form.modalCategoryIds, groupCategoriesById]);
 
   const sortedItems = useMemo(
     () =>
@@ -169,6 +195,10 @@ export function CatalogGroupsManager({
   const groupsTableRows = useMemo(
     () =>
       sortedGroups.map((group) => {
+        const selectedCategoryIds = groupCategoryLinks
+          .filter((link) => link.group_id === group.id)
+          .map((link) => link.category_id);
+        const uniqueSelectedCategoryIds = [...new Set(selectedCategoryIds)];
         const taskIds = memberships
           .filter((membership) => membership.group_id === group.id)
           .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
@@ -180,11 +210,18 @@ export function CatalogGroupsManager({
 
         return {
           ...group,
-          modalCategoryId: group.modal_category_id ?? "",
-          modalCategoryName:
-            groupCategoriesById.get(group.modal_category_id ?? "")?.name
-            ?? group.modal_category
-            ?? "",
+          modalCategoryIds: uniqueSelectedCategoryIds.length
+            ? uniqueSelectedCategoryIds
+            : group.modal_category_id
+              ? [group.modal_category_id]
+              : [],
+          modalCategoryNames: uniqueSelectedCategoryIds.length
+            ? uniqueSelectedCategoryIds
+              .map((categoryId) => groupCategoriesById.get(categoryId)?.name ?? null)
+              .filter((categoryName): categoryName is string => Boolean(categoryName))
+            : group.modal_category_id
+              ? [groupCategoriesById.get(group.modal_category_id)?.name ?? group.modal_category ?? ""].filter(Boolean)
+              : (group.modal_category ? [group.modal_category] : []),
           priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
           taskCount: groupTasks.length,
           totalCredits: groupTasks.length
@@ -194,7 +231,7 @@ export function CatalogGroupsManager({
           taskCategories: [...new Set(groupTasks.map((item) => item.category))],
         };
       }),
-    [groupCategoriesById, items, memberships, sortedGroups],
+    [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups],
   );
 
   const filteredGroupsTableRows = useMemo(() => {
@@ -207,7 +244,7 @@ export function CatalogGroupsManager({
       [
         group.name,
         group.description ?? "",
-        group.modalCategoryName,
+        group.modalCategoryNames.join(" "),
         group.priorityStatus,
         group.priorityStatus === "prioritario" ? "prioritario" : "normal",
         group.is_active ? "activo" : "inactivo",
@@ -226,6 +263,32 @@ export function CatalogGroupsManager({
     setCurrentGroupsPage((currentPage) => Math.min(currentPage, totalGroupsPages));
   }, [totalGroupsPages]);
 
+  useEffect(() => {
+    if (!isCategoryMenuOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!categoryMenuRef.current?.contains(event.target as Node)) {
+        setIsCategoryMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsCategoryMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isCategoryMenuOpen]);
+
   const paginatedGroupsTableRows = useMemo(() => {
     const startIndex = (visibleGroupsPage - 1) * groupsPageSize;
     return filteredGroupsTableRows.slice(startIndex, startIndex + groupsPageSize);
@@ -243,14 +306,24 @@ export function CatalogGroupsManager({
     setForm(emptyForm);
     setSelectedTaskIds([]);
     setTaskToAdd("");
+    setIsCategoryMenuOpen(false);
   }
 
   function startEdit(group: CreditCatalogGroup) {
+    const selectedCategoryIds = groupCategoryLinks
+      .filter((link) => link.group_id === group.id)
+      .map((link) => link.category_id)
+      .filter((categoryId, index, current) => current.indexOf(categoryId) === index);
+
     setEditingId(group.id);
     setForm({
       name: group.name,
       description: group.description ?? "",
-      modalCategoryId: group.modal_category_id ?? "",
+      modalCategoryIds: selectedCategoryIds.length
+        ? selectedCategoryIds
+        : group.modal_category_id
+          ? [group.modal_category_id]
+          : [],
       priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
       credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
@@ -263,6 +336,7 @@ export function CatalogGroupsManager({
         .map((membership) => membership.catalog_item_id),
     );
     setTaskToAdd("");
+    setIsCategoryMenuOpen(false);
   }
 
   function attachTaskToDraft() {
@@ -273,6 +347,15 @@ export function CatalogGroupsManager({
 
   function detachTaskFromDraft(taskId: string) {
     setSelectedTaskIds((current) => current.filter((currentId) => currentId !== taskId));
+  }
+
+  function toggleModalCategory(categoryId: string) {
+    setForm((current) => ({
+      ...current,
+      modalCategoryIds: current.modalCategoryIds.includes(categoryId)
+        ? current.modalCategoryIds.filter((currentId) => currentId !== categoryId)
+        : [...current.modalCategoryIds, categoryId],
+    }));
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -300,7 +383,7 @@ export function CatalogGroupsManager({
           body: JSON.stringify({
             name: form.name,
             description: form.description,
-            modalCategoryId: form.modalCategoryId || null,
+            modalCategoryIds: form.modalCategoryIds,
             priorityStatus: form.priorityStatus,
             credits: manualCredits,
             sortOrder: safeParseNumber(form.sortOrder),
@@ -322,11 +405,21 @@ export function CatalogGroupsManager({
         sort_order: index,
         created_at: new Date().toISOString(),
       })) satisfies CreditCatalogGroupItem[];
+      const nextCategoryLinks = form.modalCategoryIds.map((categoryId) => ({
+        id: crypto.randomUUID(),
+        group_id: payload.id,
+        category_id: categoryId,
+        created_at: new Date().toISOString(),
+      })) satisfies CreditCatalogGroupCategoryLink[];
 
       if (editingId) {
         setGroups((current) =>
           current.map((group) => (group.id === editingId ? { ...group, ...payload } : group)),
         );
+        setGroupCategoryLinks((current) => [
+          ...current.filter((link) => link.group_id !== editingId),
+          ...nextCategoryLinks,
+        ]);
         setMemberships((current) => [
           ...current.filter((membership) => membership.group_id !== editingId),
           ...nextMemberships,
@@ -334,6 +427,7 @@ export function CatalogGroupsManager({
         setFeedback({ tone: "success", message: "Grupo actualizado." });
       } else {
         setGroups((current) => [...current, payload]);
+        setGroupCategoryLinks((current) => [...current, ...nextCategoryLinks]);
         setMemberships((current) => [...current, ...nextMemberships]);
         setFeedback({ tone: "success", message: "Grupo creado." });
       }
@@ -367,6 +461,7 @@ export function CatalogGroupsManager({
       }
 
       setGroups((current) => current.filter((item) => item.id !== group.id));
+      setGroupCategoryLinks((current) => current.filter((link) => link.group_id !== group.id));
       setMemberships((current) => current.filter((membership) => membership.group_id !== group.id));
       if (editingId === group.id) {
         resetForm();
@@ -455,19 +550,74 @@ export function CatalogGroupsManager({
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Categoria visible en guía inteligente
                 </label>
-                <Select
-                  value={form.modalCategoryId}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, modalCategoryId: event.target.value }))
-                  }
-                >
-                  <option value="">Sin categoria</option>
-                  {availableGroupCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </Select>
+                <div ref={categoryMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryMenuOpen((current) => !current)}
+                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm leading-5 text-slate-900 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_oklab,var(--accent)_20%,white)]"
+                  >
+                    <span className={form.modalCategoryIds.length ? "text-slate-900" : "text-slate-400"}>
+                      {selectedCategorySummary}
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-slate-400 transition ${isCategoryMenuOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+
+                  {isCategoryMenuOpen ? (
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-20 overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.12)]">
+                      <div className="max-h-72 overflow-y-auto p-2">
+                        {availableGroupCategories.length ? (
+                          availableGroupCategories.map((category) => {
+                            const selected = form.modalCategoryIds.includes(category.id);
+
+                            return (
+                              <button
+                                key={category.id}
+                                type="button"
+                                onClick={() => toggleModalCategory(category.id)}
+                                className={`flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-sm transition ${
+                                  selected
+                                    ? "bg-[color-mix(in_oklab,var(--accent)_10%,white)] text-slate-900"
+                                    : "text-slate-700 hover:bg-slate-50"
+                                }`}
+                              >
+                                <span
+                                  className={`flex h-4 w-4 items-center justify-center rounded border text-[11px] ${
+                                    selected
+                                      ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                                      : "border-slate-300 bg-white text-transparent"
+                                  }`}
+                                >
+                                  ✓
+                                </span>
+                                <span>{category.name}</span>
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <div className="rounded-[12px] px-3 py-4 text-sm text-slate-500">
+                            No hay categorias disponibles todavia.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {form.modalCategoryIds.length ? (
+                    form.modalCategoryIds.map((categoryId) => (
+                      <span
+                        key={categoryId}
+                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700"
+                      >
+                        {groupCategoriesById.get(categoryId)?.name ?? categoryId}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-400">Sin categorias asignadas.</span>
+                  )}
+                </div>
                 <p className="mt-2 text-xs text-slate-500">
                   Esta categoria define en qué pestaña del modal comercial aparecerá el grupo.
                 </p>
@@ -690,7 +840,7 @@ export function CatalogGroupsManager({
                       Creditos
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Categoria modal
+                      Categorias visibles
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Prioridad
@@ -714,7 +864,20 @@ export function CatalogGroupsManager({
                           </td>
                           <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
                           <td className="px-4 py-4 text-slate-600">
-                            {group.modalCategoryName || "Sin categoria"}
+                            <div className="flex flex-wrap gap-2">
+                              {group.modalCategoryNames.length ? (
+                                group.modalCategoryNames.map((categoryName) => (
+                                  <span
+                                    key={`${group.id}-${categoryName}`}
+                                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                  >
+                                    {categoryName}
+                                  </span>
+                                ))
+                              ) : (
+                                <span>Sin categoria</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-4">
                             <span
@@ -788,6 +951,26 @@ export function CatalogGroupsManager({
                                       >
                                         {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
                                       </span>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                      Categorias visibles
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {group.modalCategoryNames.length ? (
+                                        group.modalCategoryNames.map((categoryName) => (
+                                          <span
+                                            key={`${group.id}-visible-${categoryName}`}
+                                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                          >
+                                            {categoryName}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-sm text-slate-400">Sin categorias</span>
+                                      )}
                                     </div>
                                   </div>
 

@@ -278,6 +278,11 @@ function isMissingClientName(value: string) {
   return !normalized || normalized === "cliente";
 }
 
+export function isValidSalesProposalClientEmail(value: string) {
+  const normalized = value.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
 function formatActivationFieldList(fields: string[]) {
   if (fields.length <= 1) {
     return fields[0] ?? "";
@@ -309,8 +314,8 @@ export function getSalesProposalActivationValidation(
     missingFields.push("el nombre del cliente");
   }
 
-  if (!draft.clientEmail.trim()) {
-    missingFields.push("el email del cliente");
+  if (!isValidSalesProposalClientEmail(draft.clientEmail)) {
+    missingFields.push("un correo valido del cliente");
   }
 
   if (!draft.startDate.trim()) {

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Pencil, Share2, Trash2 } from "lucide-react";
+import { ArrowRight, CalendarDays, Share2, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import { formatDate } from "@/lib/utils";
 
 type ClientCardProps = {
   client: ClientSummary;
-  onEdit: (client: ClientSummary) => void;
   onDelete: (client: ClientSummary) => void;
   onShare: (client: ClientSummary) => void;
   onGameplan: (client: ClientSummary) => void;
@@ -20,7 +19,6 @@ type ClientCardProps = {
 
 export function ClientCard({
   client,
-  onEdit,
   onDelete,
   onShare,
   onGameplan,
@@ -53,10 +51,6 @@ export function ClientCard({
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </Link>
-        <Button variant="secondary" onClick={() => onEdit(client)}>
-          <Pencil className="mr-2 h-4 w-4" />
-          Editar
-        </Button>
         <Button variant="secondary" onClick={() => onGameplan(client)}>
           <CalendarDays className="mr-2 h-4 w-4" />
           Gameplan

@@ -114,10 +114,12 @@ export default async function ClientDetailPage({
   const [
     { data: catalogGroupRows, error: catalogGroupsError },
     { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
+    { data: catalogGroupCategoryLinkRows, error: catalogGroupCategoryLinksError },
     { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
   ] = await Promise.all([
     admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
     admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
+    admin.from("credit_catalog_group_category_links").select("*").order("created_at"),
     admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
   ]);
 
@@ -139,6 +141,10 @@ export default async function ClientDetailPage({
 
   if (catalogGroupCategoriesError) {
     throw new Error("No pudimos cargar las categorias de grupos del catalogo.");
+  }
+
+  if (catalogGroupCategoryLinksError) {
+    throw new Error("No pudimos cargar la relacion entre grupos y categorias del catalogo.");
   }
 
   if (catalogGroupMembershipsError) {
@@ -227,6 +233,7 @@ export default async function ClientDetailPage({
         catalog: catalogRows ?? [],
         catalogGroups: catalogGroupRows ?? [],
         catalogGroupCategories: catalogGroupCategoryRows ?? [],
+        catalogGroupCategoryLinks: catalogGroupCategoryLinkRows ?? [],
         catalogGroupMemberships: catalogGroupMembershipRows ?? [],
         shareLinks,
         members,

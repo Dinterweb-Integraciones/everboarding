@@ -646,6 +646,26 @@ export type Database = {
           updated_at?: string;
         };
       };
+      credit_catalog_group_category_links: {
+        Row: {
+          id: string;
+          group_id: string;
+          category_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          category_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          group_id?: string;
+          category_id?: string;
+          created_at?: string;
+        };
+      };
       credit_catalog_categories: {
         Row: {
           id: string;

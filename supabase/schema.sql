@@ -184,6 +184,14 @@ create table if not exists public.credit_catalog_group_items (
 alter table public.credit_catalog_groups
 add column if not exists modal_category_id uuid references public.credit_catalog_group_categories(id) on delete set null;
 
+create table if not exists public.credit_catalog_group_category_links (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.credit_catalog_groups(id) on delete cascade,
+  category_id uuid not null references public.credit_catalog_group_categories(id) on delete cascade,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (group_id, category_id)
+);
+
 create table if not exists public.managed_prompts (
   id uuid primary key default gen_random_uuid(),
   singleton_key text not null default 'default',
@@ -360,6 +368,10 @@ create index if not exists credit_catalog_group_items_group_idx
 on public.credit_catalog_group_items (group_id, sort_order);
 create index if not exists credit_catalog_group_items_item_idx
 on public.credit_catalog_group_items (catalog_item_id);
+create index if not exists credit_catalog_group_category_links_group_idx
+on public.credit_catalog_group_category_links (group_id);
+create index if not exists credit_catalog_group_category_links_category_idx
+on public.credit_catalog_group_category_links (category_id);
 create index if not exists managed_prompts_updated_idx
 on public.managed_prompts (updated_at desc, created_at desc);
 create unique index if not exists managed_prompts_singleton_key_idx
@@ -1498,6 +1510,7 @@ alter table public.credit_catalog_group_categories enable row level security;
 alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
 alter table public.credit_catalog_group_items enable row level security;
+alter table public.credit_catalog_group_category_links enable row level security;
 alter table public.managed_prompts enable row level security;
 alter table public.onboarding_configs enable row level security;
 alter table public.client_billing_cycles enable row level security;
@@ -1527,6 +1540,8 @@ drop policy if exists "catalog_read_authenticated" on public.credit_catalog_item
 drop policy if exists "catalog_manage_authenticated" on public.credit_catalog_items;
 drop policy if exists "catalog_group_items_read_authenticated" on public.credit_catalog_group_items;
 drop policy if exists "catalog_group_items_manage_authenticated" on public.credit_catalog_group_items;
+drop policy if exists "catalog_group_category_links_read_authenticated" on public.credit_catalog_group_category_links;
+drop policy if exists "catalog_group_category_links_manage_authenticated" on public.credit_catalog_group_category_links;
 drop policy if exists "managed_prompts_read_authenticated" on public.managed_prompts;
 drop policy if exists "managed_prompts_manage_authenticated" on public.managed_prompts;
 drop policy if exists "onboarding_configs_select_accessible" on public.onboarding_configs;
@@ -1666,6 +1681,19 @@ using (true);
 
 create policy "catalog_group_items_manage_authenticated"
 on public.credit_catalog_group_items
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_category_links_read_authenticated"
+on public.credit_catalog_group_category_links
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_category_links_manage_authenticated"
+on public.credit_catalog_group_category_links
 for all
 to authenticated
 using (true)
@@ -1894,3 +1922,9 @@ where nullif(trim(groups.modal_category), '') is not null
     end
   ) = lower(categories.name)
   and groups.modal_category_id is distinct from categories.id;
+
+insert into public.credit_catalog_group_category_links (group_id, category_id)
+select groups.id, groups.modal_category_id
+from public.credit_catalog_groups as groups
+where groups.modal_category_id is not null
+on conflict (group_id, category_id) do nothing;

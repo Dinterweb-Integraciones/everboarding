@@ -1,123 +1,22 @@
 "use client";
 
-import { FolderKanban, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { ClientCard } from "@/components/dashboard/client-card";
 import { ClientGameplanModal } from "@/components/dashboard/client-gameplan-modal";
 import { ClientShareModal } from "@/components/dashboard/client-share-modal";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import type { AssignableUser, ClientSummary } from "@/lib/onboarding";
-import { formatUserError, slugify } from "@/lib/utils";
+import type { ClientSummary } from "@/lib/onboarding";
 
 type ClientsDashboardProps = {
   initialClients: ClientSummary[];
-  assignableUsers: AssignableUser[];
 };
 
-type FormState = {
-  id?: string;
-  name: string;
-  description: string;
-  sellerUserId: string;
-  csmUserId: string;
-};
-
-const emptyForm: FormState = {
-  name: "",
-  description: "",
-  sellerUserId: "",
-  csmUserId: "",
-};
-
-export function ClientsDashboard({
-  initialClients,
-  assignableUsers,
-}: ClientsDashboardProps) {
+export function ClientsDashboard({ initialClients }: ClientsDashboardProps) {
   const [clients, setClients] = useState(initialClients);
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sharingClient, setSharingClient] = useState<ClientSummary | null>(null);
   const [gameplanClient, setGameplanClient] = useState<ClientSummary | null>(null);
-
-  const heading = useMemo(() => {
-    if (!clients.length) {
-      return "Empieza creando tu primer cliente.";
-    }
-
-    return `${clients.length} cliente${clients.length === 1 ? "" : "s"} disponible${clients.length === 1 ? "" : "s"}.`;
-  }, [clients.length]);
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setIsSaving(true);
-
-    try {
-      if (form.id) {
-        const response = await fetch("/api/clients", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            id: form.id,
-            name: form.name.trim(),
-            description: form.description.trim() || null,
-            sellerUserId: form.sellerUserId || null,
-            csmUserId: form.csmUserId || null,
-          }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.message || "No fue posible actualizar el cliente.");
-        }
-
-        setClients((current) =>
-          current.map((client) =>
-            client.id === form.id ? { ...client, ...payload } : client,
-          ),
-        );
-      } else {
-        const baseSlug = slugify(form.name);
-        const response = await fetch("/api/clients", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: form.name.trim(),
-            description: form.description.trim() || null,
-            sellerUserId: form.sellerUserId || null,
-            csmUserId: form.csmUserId || null,
-            slug: `${baseSlug || "cliente"}-${Date.now().toString(36)}`,
-          }),
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.message || "No fue posible crear el cliente.");
-        }
-
-        setClients((current) => [{ ...payload, access_role: "owner" }, ...current]);
-      }
-
-      setForm(emptyForm);
-    } catch (caughtError) {
-      setError(formatUserError(caughtError, "No fue posible guardar el cliente."));
-    } finally {
-      setIsSaving(false);
-    }
-  }
 
   async function handleDelete(client: ClientSummary) {
     const confirmed = window.confirm(
@@ -144,121 +43,35 @@ export function ClientsDashboard({
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6">
-      <Card className="overflow-hidden">
-        <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div>
-            <Badge className="bg-[var(--accent)]/10 text-[var(--accent)]">
-              Customer Success workspace
-            </Badge>
-            <h2 className="mt-4 text-3xl font-semibold text-slate-950">
-              Administra clientes y sigue el roadmap operativo de CS.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{heading}</p>
-            <div className="mt-5 flex items-center gap-3 text-sm text-slate-500">
-              <FolderKanban className="h-4 w-4" />
-              Gestiona el seguimiento de clientes, tareas y visibilidad del equipo desde un mismo lugar.
-            </div>
+      {error ? (
+        <Card className="p-6">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-slate-100 bg-slate-50/80 p-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-900">
-                {form.id ? "Editar cliente" : "Nuevo cliente"}
-              </h3>
-              {form.id ? (
-                <Button variant="ghost" onClick={() => setForm(emptyForm)}>
-                  Cancelar
-                </Button>
-              ) : null}
-            </div>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-slate-700">Nombre</span>
-              <Input
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                placeholder="Acme Corp"
-                required
-              />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-slate-700">Descripcion</span>
-              <Textarea
-                rows={4}
-                value={form.description}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, description: event.target.value }))
-                }
-                placeholder="Contexto del cliente, equipo, alcance o prioridad."
-              />
-            </label>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-slate-700">Vendedor</span>
-                <Select
-                  value={form.sellerUserId}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, sellerUserId: event.target.value }))
-                  }
-                >
-                  <option value="">Sin asignar</option>
-                  {assignableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.full_name || user.email}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-slate-700">CS</span>
-                <Select
-                  value={form.csmUserId}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, csmUserId: event.target.value }))
-                  }
-                >
-                  <option value="">Sin asignar</option>
-                  {assignableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.full_name || user.email}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-            </div>
-            {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : null}
-            <Button disabled={isSaving || !form.name.trim()} type="submit" className="w-full">
-              <Plus className="mr-2 h-4 w-4" />
-              {isSaving ? "Guardando..." : form.id ? "Actualizar cliente" : "Crear cliente"}
-            </Button>
-          </form>
-        </div>
-      </Card>
+        </Card>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {clients.map((client) => (
-          <ClientCard
-            key={client.id}
-            client={client}
-            onEdit={(selectedClient) =>
-              setForm({
-                id: selectedClient.id,
-                name: selectedClient.name,
-                description: selectedClient.description ?? "",
-                sellerUserId: selectedClient.seller_user_id ?? "",
-                csmUserId: selectedClient.csm_user_id ?? "",
-              })
-            }
-            onDelete={handleDelete}
-            onShare={setSharingClient}
-            onGameplan={setGameplanClient}
-            canDelete={client.access_role === "owner"}
-            canShare={client.access_role === "owner"}
-          />
-        ))}
+        {clients.length ? (
+          clients.map((client) => (
+            <ClientCard
+              key={client.id}
+              client={client}
+              onDelete={handleDelete}
+              onShare={setSharingClient}
+              onGameplan={setGameplanClient}
+              canDelete={client.access_role === "owner"}
+              canShare={client.access_role === "owner"}
+            />
+          ))
+        ) : (
+          <Card className="p-6 md:col-span-2 xl:col-span-3">
+            <h3 className="text-lg font-semibold text-slate-950">Aun no hay clientes en CS</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
+              Cuando una venta se cierre y el cliente entre al flujo comercial, lo veras reflejado aqui para continuar su onboarding.
+            </p>
+          </Card>
+        )}
       </section>
 
       {sharingClient ? (

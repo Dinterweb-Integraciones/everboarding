@@ -6,6 +6,7 @@ import {
   calculateInitiativeProgress,
   type CreditCatalogGroup,
   type CreditCatalogGroupCategory,
+  type CreditCatalogGroupCategoryLink,
   type CreditCatalogCategory,
   type CreditCatalogGroupItem,
   type CreditCatalogItem,
@@ -41,6 +42,7 @@ type PublicOnboardingRpcResponse = {
   catalog_categories: CreditCatalogCategory[];
   catalog_groups: CreditCatalogGroup[];
   catalog_group_categories: CreditCatalogGroupCategory[];
+  catalog_group_category_links: CreditCatalogGroupCategoryLink[];
   catalog_group_memberships: CreditCatalogGroupItem[];
   payment_email: string | null;
 };
@@ -71,6 +73,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     { data: catalogCategoryRows, error: catalogCategoriesError },
     { data: catalogGroupRows, error: catalogGroupsError },
     { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
+    { data: catalogGroupCategoryLinkRows, error: catalogGroupCategoryLinksError },
     { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
   ] = await Promise.all([
     audience === "prospect" ? getSalesProposalBySlug(slug) : Promise.resolve(null),
@@ -99,6 +102,10 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
     admin
+      .from("credit_catalog_group_category_links")
+      .select("*")
+      .order("created_at", { ascending: true }),
+    admin
       .from("credit_catalog_group_items")
       .select("*")
       .order("sort_order", { ascending: true })
@@ -121,6 +128,10 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     throw new Error("No pudimos cargar las categorias de grupos del catalogo publico.");
   }
 
+  if (catalogGroupCategoryLinksError) {
+    throw new Error("No pudimos cargar la relacion entre grupos y categorias del catalogo publico.");
+  }
+
   if (catalogGroupMembershipsError) {
     throw new Error("No pudimos cargar la relacion entre grupos y tareas del catalogo publico.");
   }
@@ -130,6 +141,8 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
   const typedCatalogGroupRows = (catalogGroupRows ?? []) as CreditCatalogGroup[];
   const typedCatalogGroupCategoryRows =
     (catalogGroupCategoryRows ?? []) as CreditCatalogGroupCategory[];
+  const typedCatalogGroupCategoryLinkRows =
+    (catalogGroupCategoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[];
   const typedCatalogGroupMembershipRows =
     (catalogGroupMembershipRows ?? []) as CreditCatalogGroupItem[];
 
@@ -155,6 +168,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
         ...category,
         sort_order: Number(category.sort_order ?? 0),
       })),
+      catalogGroupCategoryLinks: typedCatalogGroupCategoryLinkRows,
       catalogGroupMemberships: typedCatalogGroupMembershipRows.map((membership) => ({
         ...membership,
         sort_order: Number(membership.sort_order ?? 0),
@@ -249,6 +263,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       ...category,
       sort_order: Number(category.sort_order ?? 0),
     })),
+    catalogGroupCategoryLinks: typedCatalogGroupCategoryLinkRows,
     catalogGroupMemberships: typedCatalogGroupMembershipRows.map((membership) => ({
       ...membership,
       sort_order: Number(membership.sort_order ?? 0),

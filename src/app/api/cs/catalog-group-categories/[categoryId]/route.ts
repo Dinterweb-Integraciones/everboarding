@@ -58,9 +58,9 @@ export async function DELETE(_: Request, { params }: CategoryRouteProps) {
     const { supabase } = await requireUser();
 
     const { data: usageRows, error: usageError } = await supabase
-      .from("credit_catalog_groups")
+      .from("credit_catalog_group_category_links")
       .select("id")
-      .eq("modal_category_id", categoryId)
+      .eq("category_id", categoryId)
       .limit(1);
 
     if (usageError) throw usageError;

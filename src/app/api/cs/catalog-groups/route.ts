@@ -9,6 +9,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
+      modalCategoryIds?: string[] | null;
       modalCategoryId?: string | null;
       modalCategory?: string | null;
       credits?: number;
@@ -20,6 +21,9 @@ export async function POST(request: Request) {
 
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
+    const requestedModalCategoryIds = Array.isArray(body.modalCategoryIds)
+      ? [...new Set(body.modalCategoryIds.map((categoryId) => categoryId.trim()).filter(Boolean))]
+      : [];
     const requestedModalCategoryId = body.modalCategoryId?.trim() || null;
     const requestedModalCategoryName = body.modalCategory?.trim() || null;
     const credits = Math.max(0, safeParseNumber(body.credits));
@@ -41,21 +45,31 @@ export async function POST(request: Request) {
       );
     }
 
-    let selectedCategory: { id: string; name: string } | null = null;
+    let selectedCategories: Array<{ id: string; name: string }> = [];
+    const normalizedRequestedCategoryIds = requestedModalCategoryIds.length
+      ? requestedModalCategoryIds
+      : requestedModalCategoryId
+        ? [requestedModalCategoryId]
+        : [];
 
-    if (requestedModalCategoryId) {
-      const { data: categoryRow, error: categoryError } = await supabase
+    if (normalizedRequestedCategoryIds.length) {
+      const { data: categoryRows, error: categoryError } = await supabase
         .from("credit_catalog_group_categories")
         .select("id, name")
-        .eq("id", requestedModalCategoryId)
-        .maybeSingle();
+        .in("id", normalizedRequestedCategoryIds);
 
       if (categoryError) throw categoryError;
-      if (!categoryRow) {
-        return NextResponse.json({ message: "La categoria del grupo ya no existe." }, { status: 400 });
-      }
+      const categoryRowsById = new Map((categoryRows ?? []).map((category) => [category.id, category]));
+      selectedCategories = normalizedRequestedCategoryIds
+        .map((categoryId) => categoryRowsById.get(categoryId) ?? null)
+        .filter((category): category is { id: string; name: string } => Boolean(category));
 
-      selectedCategory = categoryRow;
+      if (selectedCategories.length !== normalizedRequestedCategoryIds.length) {
+        return NextResponse.json(
+          { message: "Una o mas categorias del caso de uso ya no existen." },
+          { status: 400 },
+        );
+      }
     } else if (requestedModalCategoryName) {
       const { data: categoryRow, error: categoryError } = await supabase
         .from("credit_catalog_group_categories")
@@ -64,16 +78,18 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (categoryError) throw categoryError;
-      selectedCategory = categoryRow;
+      selectedCategories = categoryRow ? [categoryRow] : [];
     }
+
+    const primaryCategory = selectedCategories[0] ?? null;
 
     const { data, error } = await supabase
       .from("credit_catalog_groups")
       .insert({
         name,
         description,
-        modal_category: selectedCategory?.name ?? null,
-        modal_category_id: selectedCategory?.id ?? null,
+        modal_category: primaryCategory?.name ?? null,
+        modal_category_id: primaryCategory?.id ?? null,
         credits,
         priority_status: priorityStatus,
         sort_order: sortOrder,
@@ -84,6 +100,21 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    if (selectedCategories.length) {
+      const { error: categoryLinksError } = await supabase
+        .from("credit_catalog_group_category_links")
+        .insert(
+          selectedCategories.map((category) => ({
+            group_id: data.id,
+            category_id: category.id,
+          })),
+        );
+
+      if (categoryLinksError) {
+        throw categoryLinksError;
+      }
+    }
 
     if (taskIds.length) {
       const { error: linkError } = await supabase.from("credit_catalog_group_items").insert(

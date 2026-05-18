@@ -6,6 +6,7 @@ import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
+  CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
@@ -33,6 +34,7 @@ export default async function DinterwebSalesProposalPage({
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
   let groupCategoryRows: CreditCatalogGroupCategory[] = [];
+  let groupCategoryLinkRows: CreditCatalogGroupCategoryLink[] = [];
   let membershipRows: CreditCatalogGroupItem[] = [];
 
   try {
@@ -42,6 +44,7 @@ export default async function DinterwebSalesProposalPage({
       { data: fetchedCatalog, error: catalogError },
       { data: fetchedGroups, error: groupsError },
       { data: fetchedGroupCategories, error: groupCategoriesError },
+      { data: fetchedGroupCategoryLinks, error: groupCategoryLinksError },
       { data: fetchedMemberships, error: membershipsError },
     ] = await Promise.all([
       admin.from("sales_proposals").select("*").eq("slug", slug).maybeSingle(),
@@ -53,6 +56,7 @@ export default async function DinterwebSalesProposalPage({
         .order("sort_order"),
       admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
       admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
+      admin.from("credit_catalog_group_category_links").select("*").order("created_at"),
       admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
     ]);
 
@@ -75,6 +79,13 @@ export default async function DinterwebSalesProposalPage({
       });
     }
 
+    if (groupCategoryLinksError) {
+      console.error("dinterweb_sales_proposal_group_category_links_load_failed", {
+        slug,
+        error: groupCategoryLinksError,
+      });
+    }
+
     if (membershipsError) {
       console.error("dinterweb_sales_proposal_group_memberships_load_failed", {
         slug,
@@ -86,6 +97,7 @@ export default async function DinterwebSalesProposalPage({
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     groupCategoryRows = fetchedGroupCategories ?? [];
+    groupCategoryLinkRows = fetchedGroupCategoryLinks ?? [];
     membershipRows = fetchedMemberships ?? [];
   } catch (error) {
     console.error("dinterweb_sales_proposal_workspace_bootstrap_failed", { slug, error });
@@ -115,6 +127,7 @@ export default async function DinterwebSalesProposalPage({
       initialCatalog={catalogRows ?? []}
       initialGroups={groupRows ?? []}
       initialGroupCategories={groupCategoryRows ?? []}
+      initialGroupCategoryLinks={groupCategoryLinkRows ?? []}
       initialGroupMemberships={membershipRows ?? []}
       initialProposal={initialProposal}
       variant="dinterweb"
