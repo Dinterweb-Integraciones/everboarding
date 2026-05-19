@@ -4260,44 +4260,49 @@ export function OnboardingClientPage({
 
             <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
               <div className="space-y-6">
-                <div className="grid gap-6 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] xl:items-start">
-                  <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                <div className="grid gap-6">
+                  <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                       Rango estimado
                     </p>
-                    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
                       <Input
                         type="date"
                         value={draft.estStartDate}
                         onChange={(event) => setDraft({ ...draft, estStartDate: event.target.value })}
                         disabled={!writable}
-                        className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                        className="h-9 min-w-0 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
                         style={{ borderRadius: 0, boxShadow: "none" }}
                       />
-                      <span className="text-[11px] font-bold text-[#516f90]">al</span>
+                      <span className="text-[11px] font-bold text-[#516f90] sm:text-center">al</span>
                       <Input
                         type="date"
                         value={draft.estEndDate}
                         onChange={(event) => setDraft({ ...draft, estEndDate: event.target.value })}
                         disabled={!writable}
-                        className="h-9 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
+                        className="h-9 min-w-0 rounded-none border-[#cbd6e2] bg-white px-3 text-[12px] text-[#33475b] shadow-none"
                         style={{ borderRadius: 0, boxShadow: "none" }}
                       />
                     </div>
                   </section>
 
-                  <section className="rounded-[4px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
+                  <section className="min-w-0 rounded-[4px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
                     <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                       Descripcion
                     </p>
-                    <Textarea
-                      rows={7}
-                      value={draft.description}
-                      onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-                      disabled={!writable}
-                      className="mt-3 min-h-[220px] resize-y rounded-none border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] shadow-none"
-                      style={{ borderRadius: 0, boxShadow: "none" }}
-                    />
+                    {writable ? (
+                      <Textarea
+                        rows={7}
+                        value={draft.description}
+                        onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                        className="mt-3 min-h-[220px] resize-y rounded-none border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] shadow-none"
+                        style={{ borderRadius: 0, boxShadow: "none" }}
+                      />
+                    ) : (
+                      <div className="mt-3 min-h-[220px] whitespace-pre-wrap rounded-none border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b]">
+                        {draft.description?.trim() || "Sin descripcion ejecutiva."}
+                      </div>
+                    )}
                   </section>
                 </div>
 
