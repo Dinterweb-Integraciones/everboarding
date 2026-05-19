@@ -23,19 +23,19 @@ export default async function CatalogTasksPage() {
   ]);
 
   if (itemsError) {
-    throw new Error("No pudimos cargar el catálogo de tareas.");
+    throw new Error("No pudimos cargar el catalogo de actividades.");
   }
 
   if (groupsError) {
-    throw new Error("No pudimos cargar los grupos del catálogo.");
+    throw new Error("No pudimos cargar los grupos del catalogo.");
   }
 
   if (membershipsError) {
-    throw new Error("No pudimos cargar la relación entre grupos y tareas.");
+    throw new Error("No pudimos cargar la relacion entre grupos y actividades.");
   }
 
   if (categoriesError) {
-    throw new Error("No pudimos cargar las categorías de tareas.");
+    throw new Error("No pudimos cargar las categorias de actividades.");
   }
 
   return (

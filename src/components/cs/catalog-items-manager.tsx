@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckSquare, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -30,6 +30,16 @@ const emptyForm = {
   isActive: true,
 };
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 export function CatalogItemsManager({
   initialItems,
   groups,
@@ -40,6 +50,9 @@ export function CatalogItemsManager({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -65,8 +78,8 @@ export function CatalogItemsManager({
         .filter((item): item is CreditCatalogItem => Boolean(item));
 
       const allTasksMatchCategory = taskRows.length > 0 && taskRows.every((item) => item.category === group.name);
-      const sameCountAsCategory = taskRows.length > 0
-        && taskRows.length === items.filter((item) => item.category === group.name).length;
+      const sameCountAsCategory =
+        taskRows.length > 0 && taskRows.length === items.filter((item) => item.category === group.name).length;
 
       const looksLikeLegacyMirror =
         !group.created_by_user_id &&
@@ -102,6 +115,72 @@ export function CatalogItemsManager({
       ),
     [items],
   );
+
+  const itemGroupsByItemId = useMemo(() => {
+    const nextMap = new Map<string, string[]>();
+
+    for (const membership of memberships) {
+      const groupName = visibleGroupMap.get(membership.group_id)?.name;
+      if (!groupName) {
+        continue;
+      }
+
+      const currentNames = nextMap.get(membership.catalog_item_id) ?? [];
+      currentNames.push(groupName);
+      nextMap.set(membership.catalog_item_id, currentNames);
+    }
+
+    return nextMap;
+  }, [memberships, visibleGroupMap]);
+
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(searchQuery);
+    if (!normalizedQuery) {
+      return sortedItems;
+    }
+
+    return sortedItems.filter((item) => {
+      const itemGroups = itemGroupsByItemId.get(item.id) ?? [];
+      const searchableText = [
+        item.label,
+        item.category,
+        itemGroups.join(" "),
+        `${item.credits} cr`,
+        item.is_active ? "activa" : "inactiva",
+      ].join(" ");
+
+      return normalizeSearchText(searchableText).includes(normalizedQuery);
+    });
+  }, [itemGroupsByItemId, searchQuery, sortedItems]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+
+  const paginatedItems = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredItems.slice(startIndex, startIndex + pageSize);
+  }, [currentPage, filteredItems, pageSize]);
+
+  const visiblePageNumbers = useMemo(() => {
+    const maxVisiblePages = 5;
+    const halfWindow = Math.floor(maxVisiblePages / 2);
+    let startPage = Math.max(1, currentPage - halfWindow);
+    const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+
+    return Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  }, [currentPage, totalPages]);
+
+  const pageRangeStart = filteredItems.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageRangeEnd = Math.min(currentPage * pageSize, filteredItems.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pageSize, searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
 
   function resetForm() {
     setEditingId(null);
@@ -142,24 +221,24 @@ export function CatalogItemsManager({
 
       const payload = (await response.json()) as CreditCatalogItem & { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos guardar la tarea.");
+        throw new Error(payload.message || "No pudimos guardar la actividad.");
       }
 
       if (editingId) {
         setItems((current) =>
           current.map((item) => (item.id === editingId ? { ...item, ...payload } : item)),
         );
-        setFeedback({ tone: "success", message: "Tarea actualizada." });
+        setFeedback({ tone: "success", message: "Actividad actualizada." });
       } else {
         setItems((current) => [...current, payload]);
-        setFeedback({ tone: "success", message: "Tarea creada." });
+        setFeedback({ tone: "success", message: "Actividad creada." });
       }
 
       resetForm();
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos guardar la tarea."),
+        message: formatUserError(caughtError, "No pudimos guardar la actividad."),
       });
     } finally {
       setIsSaving(false);
@@ -167,7 +246,7 @@ export function CatalogItemsManager({
   }
 
   async function handleDelete(item: CreditCatalogItem) {
-    const confirmed = window.confirm(`Eliminar "${item.label}" del catálogo?`);
+    const confirmed = window.confirm(`Eliminar "${item.label}" del catalogo de actividades?`);
     if (!confirmed) return;
 
     try {
@@ -176,18 +255,18 @@ export function CatalogItemsManager({
       });
       const payload = (await response.json()) as { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos eliminar la tarea.");
+        throw new Error(payload.message || "No pudimos eliminar la actividad.");
       }
 
       setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
       if (editingId === item.id) {
         resetForm();
       }
-      setFeedback({ tone: "success", message: "Tarea eliminada." });
+      setFeedback({ tone: "success", message: "Actividad eliminada." });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos eliminar la tarea."),
+        message: formatUserError(caughtError, "No pudimos eliminar la actividad."),
       });
     }
   }
@@ -204,19 +283,19 @@ export function CatalogItemsManager({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                 CRUD CS
               </p>
-              <h1 className="text-2xl font-black text-slate-900">Gestión de tareas</h1>
+              <h1 className="text-2xl font-black text-slate-900">Gestion de actividades</h1>
             </div>
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aquí registras tareas base.
+            Aqui registras actividades base.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_140px]">
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Nombre de la tarea
+                  Nombre de la actividad
                 </label>
                 <Input
                   value={form.label}
@@ -226,7 +305,7 @@ export function CatalogItemsManager({
               </div>
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Categoría
+                  Categoria
                 </label>
                 <Select
                   value={form.category}
@@ -241,7 +320,7 @@ export function CatalogItemsManager({
               </div>
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Créditos
+                  Creditos
                 </label>
                 <Input
                   type="number"
@@ -264,15 +343,14 @@ export function CatalogItemsManager({
                   }
                   className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
-                Tarea activa
+                Actividad activa
               </label>
-
             </div>
 
             <div className="flex flex-wrap gap-3">
               <Button type="submit" disabled={isSaving}>
                 <Plus className="mr-2 h-4 w-4" />
-                {isSaving ? "Guardando..." : editingId ? "Actualizar tarea" : "Crear tarea"}
+                {isSaving ? "Guardando..." : editingId ? "Actualizar actividad" : "Crear actividad"}
               </Button>
               <Button type="button" variant="secondary" onClick={resetForm} disabled={isSaving}>
                 Limpiar
@@ -287,11 +365,46 @@ export function CatalogItemsManager({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                 Tabla CRUD
               </p>
-              <h2 className="mt-1 text-xl font-black text-slate-900">Tareas registradas</h2>
+              <h2 className="mt-1 text-xl font-black text-slate-900">Actividades registradas</h2>
             </div>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-              {sortedItems.length} tareas
+              {filteredItems.length} {filteredItems.length === 1 ? "actividad" : "actividades"}
             </span>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-4 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-xl">
+              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Buscar actividad
+              </label>
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Buscar por actividad, categoria, grupo, creditos o estado"
+              />
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="min-w-[140px]">
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Por pagina
+                </label>
+                <Select
+                  value={String(pageSize)}
+                  onChange={(event) => setPageSize(safeParseNumber(event.target.value) || 10)}
+                >
+                  {PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <p className="text-sm text-slate-600">
+                Mostrando {pageRangeStart}-{pageRangeEnd} de {filteredItems.length} actividades
+              </p>
+            </div>
           </div>
 
           <div className="mt-5 overflow-hidden rounded-[14px] border border-slate-200">
@@ -299,16 +412,16 @@ export function CatalogItemsManager({
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Tarea
+                    Actividad
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Categoría
+                    Categoria
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     En grupos
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Créditos
+                    Creditos
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Estado
@@ -319,12 +432,9 @@ export function CatalogItemsManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {sortedItems.length ? (
-                  sortedItems.map((item) => {
-                    const itemGroups = memberships
-                      .filter((membership) => membership.catalog_item_id === item.id)
-                      .map((membership) => visibleGroupMap.get(membership.group_id)?.name)
-                      .filter((groupName): groupName is string => Boolean(groupName));
+                {paginatedItems.length ? (
+                  paginatedItems.map((item) => {
+                    const itemGroups = itemGroupsByItemId.get(item.id) ?? [];
 
                     return (
                       <tr key={item.id}>
@@ -375,12 +485,52 @@ export function CatalogItemsManager({
                 ) : (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Aún no hay tareas registradas.
+                      {filteredItems.length === 0 && searchQuery
+                        ? "No encontramos actividades con ese criterio de busqueda."
+                        : "Aun no hay actividades registradas."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-sm text-slate-600">
+              Pagina {currentPage} de {totalPages}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCurrentPage((current) => Math.max(1, current - 1))}
+                disabled={currentPage === 1}
+              >
+                Anterior
+              </Button>
+
+              {visiblePageNumbers.map((pageNumber) => (
+                <Button
+                  key={pageNumber}
+                  type="button"
+                  variant={pageNumber === currentPage ? "primary" : "secondary"}
+                  onClick={() => setCurrentPage(pageNumber)}
+                  className="min-w-[44px] px-3"
+                >
+                  {pageNumber}
+                </Button>
+              ))}
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCurrentPage((current) => Math.min(totalPages, current + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Siguiente
+              </Button>
+            </div>
           </div>
         </section>
       </div>
