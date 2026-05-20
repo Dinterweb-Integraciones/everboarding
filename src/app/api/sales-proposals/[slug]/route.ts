@@ -13,9 +13,12 @@ type SalesProposalRouteProps = {
 };
 
 export async function PUT(request: Request, { params }: SalesProposalRouteProps) {
+  let requestBody: unknown;
+
   try {
     const { slug } = await params;
-    let body = normalizeSalesProposalDraft(await request.json());
+    requestBody = await request.json();
+    let body = normalizeSalesProposalDraft(requestBody as Record<string, unknown>);
     const proposalAccess = await getSalesProposalMutationAccess(slug);
 
     if (!proposalAccess.ok) {
@@ -64,6 +67,18 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
 
     return NextResponse.json(proposal);
   } catch (caughtError) {
+    const typedBody =
+      requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+        ? (requestBody as { initiatives?: unknown[] })
+        : null;
+    const initiativeCount = Array.isArray(typedBody?.initiatives) ? typedBody.initiatives.length : null;
+
+    console.error("sales_proposal_update_failed", {
+      error: caughtError,
+      initiativeCount,
+      requestBodySize: requestBody ? JSON.stringify(requestBody).length : 0,
+    });
+
     return NextResponse.json(
       {
         message: formatUserError(

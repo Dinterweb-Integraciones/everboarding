@@ -247,6 +247,10 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
   const normalized = normalizeSalesProposalDraft(draft);
   const clientName = normalized.clientName.trim();
   const clientCompany = normalized.clientCompany.trim() || clientName;
+  const snapshot: Partial<SalesProposalDraft> = {
+    workspaceVariant: normalized.workspaceVariant,
+    initiatives: normalized.initiatives,
+  };
 
   return {
     title: normalized.title.trim() || "Propuesta comercial",
@@ -269,7 +273,7 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     applied_coupon_id: normalized.appliedCouponId,
     applied_coupon_code: normalized.appliedCouponCode.trim() || null,
     coupon_applied_at: normalized.couponAppliedAt,
-    snapshot: normalized,
+    snapshot,
   };
 }
 
