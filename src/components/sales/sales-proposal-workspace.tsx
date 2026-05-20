@@ -611,6 +611,7 @@ export function SalesProposalWorkspace({
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
+  const [catalogTagFilter, setCatalogTagFilter] = useState<string | null>(null);
   const [wizardHubs, setWizardHubs] = useState<string[]>([]);
   const [wizardPortalState, setWizardPortalState] = useState<"new" | "optimize">("new");
   const [wizardChallenge, setWizardChallenge] = useState<string>("");
@@ -699,14 +700,18 @@ export function SalesProposalWorkspace({
   const isGlobalCatalogSearch = catalogSearchQuery.trim().length > 0;
 
   const visibleCatalogGroups = useMemo(() => {
-    const sourceGroups = isGlobalCatalogSearch
+    const sourceGroups = (isGlobalCatalogSearch || catalogTagFilter)
       ? Array.from(
         new Map(catalogGroupOptions.flatMap((category) => category.groups).map((group) => [group.id, group])).values(),
       )
       : (activeCatalogCategory?.groups ?? []);
 
-    return sourceGroups.filter((group) => matchesCatalogGroupSearch(group, catalogSearchQuery));
-  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, isGlobalCatalogSearch]);
+    return sourceGroups.filter(
+      (group) =>
+        matchesCatalogGroupSearch(group, catalogSearchQuery) &&
+        (!catalogTagFilter || group.tags.includes(catalogTagFilter)),
+    );
+  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
 
   const wizardOptionLabels = useMemo(() => {
     return [...WIZARD_HUB_OPTIONS];
@@ -3396,16 +3401,34 @@ function mergeRecommendedGroups(
                 ) : (
                   <div className="space-y-5">
                     <div className="rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm">
-                      <label className="relative ml-auto block w-full lg:max-w-[360px]">
-                        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
-                        <input
-                          type="search"
-                          value={catalogSearchQuery}
-                          onChange={(event) => setCatalogSearchQuery(event.target.value)}
-                          placeholder="Buscar grupo, caso de uso o tarea..."
-                          className="h-11 w-full rounded-[8px] border border-[#cbd6e2] bg-[#fbfcfe] pl-11 pr-4 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6] focus:bg-white"
-                        />
-                      </label>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="relative block flex-1 min-w-[200px]">
+                          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
+                          <input
+                            type="search"
+                            value={catalogSearchQuery}
+                            onChange={(event) => setCatalogSearchQuery(event.target.value)}
+                            placeholder="Buscar grupo, caso de uso o tarea..."
+                            className="h-11 w-full rounded-[8px] border border-[#cbd6e2] bg-[#fbfcfe] pl-11 pr-4 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6] focus:bg-white"
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {["Inmobiliaria", "Salud", "Ecommerce"].map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => setCatalogTagFilter((current) => (current === tag ? null : tag))}
+                              className={`rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
+                                catalogTagFilter === tag
+                                  ? "bg-[#14b8a6] text-white"
+                                  : "border border-[#14b8a6]/40 bg-[#f0fdfa] text-[#0e9488] hover:bg-[#ccfbf1]"
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
 
                     {visibleCatalogGroups.length ? (

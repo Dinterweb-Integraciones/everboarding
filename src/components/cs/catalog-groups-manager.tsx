@@ -25,6 +25,9 @@ type CatalogGroupsManagerProps = {
   initialMemberships: CreditCatalogGroupItem[];
 };
 
+const AVAILABLE_TAGS = ["Inmobiliaria", "Salud", "Ecommerce"] as const;
+type AvailableTag = (typeof AVAILABLE_TAGS)[number];
+
 type CatalogGroupForm = {
   name: string;
   description: string;
@@ -33,6 +36,7 @@ type CatalogGroupForm = {
   credits: string;
   sortOrder: string;
   isActive: boolean;
+  tags: AvailableTag[];
 };
 
 const emptyForm: CatalogGroupForm = {
@@ -43,6 +47,7 @@ const emptyForm: CatalogGroupForm = {
   credits: "0",
   sortOrder: "0",
   isActive: true,
+  tags: [],
 };
 
 export function CatalogGroupsManager({
@@ -229,6 +234,7 @@ export function CatalogGroupsManager({
             : safeParseNumber(group.credits),
           taskNames: groupTasks.map((item) => item.label),
           taskCategories: [...new Set(groupTasks.map((item) => item.category))],
+          tags: Array.isArray(group.tags) ? group.tags : [],
         };
       }),
     [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups],
@@ -252,6 +258,7 @@ export function CatalogGroupsManager({
         `${group.taskCount} tareas`,
         group.taskNames.join(" "),
         group.taskCategories.join(" "),
+        group.tags.join(" "),
       ].some((value) => value.toLowerCase().includes(normalizedQuery)),
     );
   }, [deferredGroupSearchQuery, groupsTableRows]);
@@ -328,6 +335,9 @@ export function CatalogGroupsManager({
       credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
+      tags: Array.isArray(group.tags)
+        ? (group.tags.filter((tag): tag is AvailableTag => (AVAILABLE_TAGS as readonly string[]).includes(tag)))
+        : [],
     });
     setSelectedTaskIds(
       memberships
@@ -389,6 +399,7 @@ export function CatalogGroupsManager({
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
             taskIds: selectedTaskIds,
+            tags: form.tags.length ? form.tags : null,
           }),
         },
       );
@@ -659,6 +670,43 @@ export function CatalogGroupsManager({
               />
             </div>
 
+            <div>
+              <label className="mb-3 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Etiquetas de industria
+              </label>
+              <div className="flex flex-wrap gap-3">
+                {AVAILABLE_TAGS.map((tag) => {
+                  const selected = form.tags.includes(tag);
+                  return (
+                    <label
+                      key={tag}
+                      className={`flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                        selected
+                          ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_10%,white)] text-[var(--accent)]"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() =>
+                          setForm((current) => ({
+                            ...current,
+                            tags: current.tags.includes(tag)
+                              ? current.tags.filter((t) => t !== tag)
+                              : [...current.tags, tag],
+                          }))
+                        }
+                        className="sr-only"
+                      />
+                      {tag}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-slate-400">Opcional. Permite filtrar grupos por industria.</p>
+            </div>
+
             <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-4">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-dashed border-slate-200 bg-white px-4 py-3">
                 <div>
@@ -861,6 +909,18 @@ export function CatalogGroupsManager({
                           <td className="px-4 py-4">
                             <div className="font-semibold text-slate-900">{group.name}</div>
                             <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
+                            {group.tags.length ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {group.tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="rounded-full bg-[color-mix(in_oklab,var(--accent)_10%,white)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
                           <td className="px-4 py-4 text-slate-600">
@@ -952,6 +1012,23 @@ export function CatalogGroupsManager({
                                         {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
                                       </span>
                                     </div>
+                                    {group.tags.length ? (
+                                      <div className="mt-4">
+                                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                          Etiquetas de industria
+                                        </p>
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                          {group.tags.map((tag) => (
+                                            <span
+                                              key={tag}
+                                              className="rounded-full bg-[color-mix(in_oklab,var(--accent)_10%,white)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]"
+                                            >
+                                              {tag}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
                                   </div>
 
                                   <div>

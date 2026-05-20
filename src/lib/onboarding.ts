@@ -111,6 +111,7 @@ export type CatalogModalGroup = {
   credits: number;
   sortOrder: number;
   items: CreditCatalogItem[];
+  tags: string[];
 };
 
 export type CatalogModalCategoryOption = {
@@ -349,6 +350,7 @@ export function buildCatalogModalGroups({
         credits,
         sortOrder: safeParseNumber(group.sort_order),
         items: groupItems,
+        tags: Array.isArray(group.tags) ? group.tags : [],
       } satisfies CatalogModalGroup;
     })
     .sort(

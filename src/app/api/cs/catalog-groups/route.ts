@@ -17,6 +17,7 @@ export async function POST(request: Request) {
       sortOrder?: number;
       isActive?: boolean;
       taskIds?: string[];
+      tags?: string[] | null;
     };
 
     const name = body.name?.trim();
@@ -33,6 +34,10 @@ export async function POST(request: Request) {
     const taskIds = Array.isArray(body.taskIds)
       ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
       : [];
+    const allowedTags = ["Inmobiliaria", "Salud", "Ecommerce"];
+    const tags = Array.isArray(body.tags)
+      ? body.tags.filter((tag): tag is string => allowedTags.includes(tag))
+      : null;
 
     if (!name) {
       return NextResponse.json({ message: "El nombre del grupo es requerido." }, { status: 400 });
@@ -94,6 +99,7 @@ export async function POST(request: Request) {
         priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
+        tags: tags?.length ? tags : null,
         created_by_user_id: user.id,
       })
       .select("*")

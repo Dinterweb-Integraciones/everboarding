@@ -22,6 +22,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       sortOrder?: number;
       isActive?: boolean;
       taskIds?: string[];
+      tags?: string[] | null;
     };
 
     const name = body.name?.trim();
@@ -38,6 +39,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const taskIds = Array.isArray(body.taskIds)
       ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
       : [];
+    const allowedTags = ["Inmobiliaria", "Salud", "Ecommerce"];
+    const tags = Array.isArray(body.tags)
+      ? body.tags.filter((tag): tag is string => allowedTags.includes(tag))
+      : null;
 
     if (!name) {
       return NextResponse.json({ message: "El nombre del grupo es requerido." }, { status: 400 });
@@ -109,6 +114,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
+        tags: tags?.length ? tags : null,
       })
       .eq("id", groupId)
       .select("*")
