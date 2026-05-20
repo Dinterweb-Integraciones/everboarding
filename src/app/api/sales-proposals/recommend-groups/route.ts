@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError, isMissingSupabaseTable, safeParseNumber } from "@/lib/utils";
 
 type RecommendationGroup = {
@@ -20,6 +22,7 @@ type RecommendationGroup = {
 
 type RecommendationRequestBody = {
   startDate?: string;
+  workspaceVariant?: "hubspot" | "dinterweb";
   selectedHubs?: string[];
   portalState?: "new" | "optimize";
   context?: string;
@@ -318,6 +321,21 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as RecommendationRequestBody;
+
+    if (body.workspaceVariant === "dinterweb") {
+      const supabase = await createSupabaseServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user || !isAllowedDinterwebUser(user)) {
+        return NextResponse.json(
+          { message: "Necesitas iniciar sesion con tu correo de Dinterweb." },
+          { status: 401 },
+        );
+      }
+    }
+
     const selectedHubs = Array.isArray(body.selectedHubs)
       ? body.selectedHubs.map((hub) => hub.trim()).filter(Boolean)
       : [];

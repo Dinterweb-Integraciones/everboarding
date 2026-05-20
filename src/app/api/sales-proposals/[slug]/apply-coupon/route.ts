@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
 import { applySalesCouponToProposal } from "@/lib/sales-proposals-server";
 import { formatCurrency, formatUserError } from "@/lib/utils";
 
@@ -10,6 +11,12 @@ type SalesProposalApplyCouponRouteProps = {
 export async function POST(request: Request, { params }: SalesProposalApplyCouponRouteProps) {
   try {
     const { slug } = await params;
+    const proposalAccess = await getSalesProposalMutationAccess(slug);
+
+    if (!proposalAccess.ok) {
+      return NextResponse.json({ message: proposalAccess.message }, { status: proposalAccess.status });
+    }
+
     const body = (await request.json()) as {
       code?: string;
     };

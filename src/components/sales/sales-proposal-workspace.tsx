@@ -1514,6 +1514,7 @@ function mergeRecommendedGroups(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          workspaceVariant: variant,
           startDate: proposal.startDate,
           selectedHubs: wizardHubs,
           portalState: wizardPortalState,
@@ -1915,7 +1916,7 @@ function mergeRecommendedGroups(
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ code: normalizedCode }),
+        body: JSON.stringify({ code: normalizedCode, workspaceVariant: variant }),
       });
       const validationPayload = (await validationResponse.json()) as {
         ok?: boolean;

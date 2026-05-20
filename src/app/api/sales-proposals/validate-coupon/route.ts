@@ -1,13 +1,31 @@
 import { NextResponse } from "next/server";
 
+import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getActiveSalesCouponByCode } from "@/lib/sales-proposals-server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       code?: string;
+      workspaceVariant?: "hubspot" | "dinterweb";
     };
+
+    if (body.workspaceVariant === "dinterweb") {
+      const supabase = await createSupabaseServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user || !isAllowedDinterwebUser(user)) {
+        return NextResponse.json(
+          { message: "Necesitas iniciar sesion con tu correo de Dinterweb." },
+          { status: 401 },
+        );
+      }
+    }
+
     const code = body.code?.trim() || "";
 
     if (!code) {

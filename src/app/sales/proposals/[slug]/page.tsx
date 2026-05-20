@@ -8,6 +8,7 @@ import type {
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
+import { getSalesProposalBySlug } from "@/lib/sales-proposal-access";
 import { mapSalesProposalRow } from "@/lib/sales-proposals";
 import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -33,8 +34,14 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
 
   try {
     const admin = createSupabaseAdminClient();
+    const storedProposal = await getSalesProposalBySlug(slug);
+
+    if (!storedProposal || storedProposal.proposal.workspaceVariant !== "hubspot") {
+      notFound();
+    }
+
+    proposalRow = storedProposal.proposalRow;
     const [
-      { data: fetchedProposal, error: proposalError },
       { data: fetchedCatalog, error: catalogError },
       { data: fetchedGroups, error: groupsError },
       { data: fetchedGroupCategories, error: groupCategoriesError },
@@ -42,7 +49,6 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
       { data: fetchedMemberships, error: membershipsError },
     ] =
       await Promise.all([
-        admin.from("sales_proposals").select("*").eq("slug", slug).maybeSingle(),
         admin
           .from("credit_catalog_items")
           .select("*")
@@ -54,10 +60,6 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
         admin.from("credit_catalog_group_category_links").select("*").order("created_at"),
         admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
       ]);
-
-    if (proposalError) {
-      console.error("sales_proposal_load_failed", { slug, error: proposalError });
-    }
 
     if (catalogError) {
       console.error("sales_proposal_catalog_load_failed", { slug, error: catalogError });
@@ -78,8 +80,6 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
     if (membershipsError) {
       console.error("sales_proposal_group_memberships_load_failed", { slug, error: membershipsError });
     }
-
-    proposalRow = (fetchedProposal as SalesProposalRow | null) ?? null;
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     groupCategoryRows = fetchedGroupCategories ?? [];

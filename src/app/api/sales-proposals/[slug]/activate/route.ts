@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
 import { activateSalesProposal } from "@/lib/sales-proposals-server";
-import { mapSalesProposalRow } from "@/lib/sales-proposals";
 import { formatUserError } from "@/lib/utils";
 
 type SalesProposalActivateRouteProps = {
@@ -12,21 +11,13 @@ type SalesProposalActivateRouteProps = {
 export async function POST(request: Request, { params }: SalesProposalActivateRouteProps) {
   try {
     const { slug } = await params;
-    const admin = createSupabaseAdminClient();
-    const { data: proposalRow, error } = await admin
-      .from("sales_proposals")
-      .select("*")
-      .eq("slug", slug)
-      .single();
+    const proposalAccess = await getSalesProposalMutationAccess(slug);
 
-    if (error || !proposalRow) {
-      return NextResponse.json(
-        { message: "No encontramos la propuesta que quieres activar." },
-        { status: 404 },
-      );
+    if (!proposalAccess.ok) {
+      return NextResponse.json({ message: proposalAccess.message }, { status: proposalAccess.status });
     }
 
-    const activationResult = await activateSalesProposal(request, mapSalesProposalRow(proposalRow));
+    const activationResult = await activateSalesProposal(request, proposalAccess.proposal);
 
     return NextResponse.json(activationResult);
   } catch (caughtError) {

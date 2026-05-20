@@ -2,32 +2,28 @@ import { NextResponse } from "next/server";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
-import { mapSalesProposalRow, normalizeSalesProposalDraft } from "@/lib/sales-proposals";
+import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
+import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
 import { saveSalesProposal } from "@/lib/sales-proposals-server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
-import type { Database } from "@/types/database";
 
 type SalesProposalRouteProps = {
   params: Promise<{ slug: string }>;
 };
 
-type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
-
 export async function PUT(request: Request, { params }: SalesProposalRouteProps) {
   try {
     const { slug } = await params;
     let body = normalizeSalesProposalDraft(await request.json());
-    const admin = createSupabaseAdminClient();
-    const { data: proposalRow } = await admin
-      .from("sales_proposals")
-      .select("*")
-      .eq("slug", slug)
-      .maybeSingle();
-    const existingProposal = proposalRow ? mapSalesProposalRow(proposalRow as SalesProposalRow) : null;
-    const isDinterwebProposal =
-      body.workspaceVariant === "dinterweb" || existingProposal?.workspaceVariant === "dinterweb";
+    const proposalAccess = await getSalesProposalMutationAccess(slug);
+
+    if (!proposalAccess.ok) {
+      return NextResponse.json({ message: proposalAccess.message }, { status: proposalAccess.status });
+    }
+
+    const existingProposal = proposalAccess.proposal;
+    const isDinterwebProposal = existingProposal.workspaceVariant === "dinterweb";
 
     if (isDinterwebProposal) {
       const supabase = await createSupabaseServerClient();
