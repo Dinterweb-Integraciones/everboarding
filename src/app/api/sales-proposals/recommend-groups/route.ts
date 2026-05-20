@@ -377,7 +377,7 @@ export async function POST(request: Request) {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), 55000);
 
     const userPayload = {
       start_date: body.startDate ?? null,
