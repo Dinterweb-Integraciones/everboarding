@@ -262,20 +262,25 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
   }
 
   const serialized = serializeSalesProposalDraft(draftToPersist);
-
-  const { data, error } = await admin
-    .from("sales_proposals")
-    .upsert(
-      ({
-        slug: proposalSlug,
-        ...serialized,
-      }) as never,
-      { onConflict: "slug" },
-    )
+  const payload = ({
+    slug: proposalSlug,
+    ...serialized,
+  }) as never;
+  const query = existingRow
+    ? admin.from("sales_proposals").update(payload).eq("id", existingRow.id)
+    : admin.from("sales_proposals").insert(payload);
+  const { data, error } = await query
     .select("*")
     .single();
 
   if (error || !data) {
+    console.error("sales_proposal_save_failed", {
+      slug: proposalSlug,
+      existingProposalId: existingRow?.id ?? null,
+      initiativeCount: draftToPersist.initiatives.length,
+      payloadSize: JSON.stringify(payload).length,
+      error,
+    });
     throw error ?? new Error("No pudimos guardar la propuesta comercial.");
   }
 

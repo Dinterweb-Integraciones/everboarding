@@ -1315,6 +1315,7 @@ function createInitiativeFromGroup(
     };
 
     setProposal(nextProposal);
+    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
     void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
     setCatalogPreviewGroup(null);
     setFeedback({
@@ -1445,6 +1446,7 @@ function mergeRecommendedGroups(
     };
 
     setProposal(nextProposal);
+    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
     void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
     setActiveCatalogTab(defaultCatalogLibraryTab);
     setIsCatalogModalOpen(false);
