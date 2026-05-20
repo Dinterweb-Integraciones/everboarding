@@ -79,6 +79,20 @@ function normalizeGroupLookupName(name: string) {
   return name.trim().toLocaleLowerCase("es");
 }
 
+function coerceClaudeParsedPayload(value: unknown) {
+  if (Array.isArray(value)) {
+    return {
+      recommendations: value,
+    } as ClaudeParsedPayload;
+  }
+
+  if (value && typeof value === "object") {
+    return value as ClaudeParsedPayload;
+  }
+
+  throw new Error("Claude no devolvio un objeto JSON reconocible.");
+}
+
 function extractJsonPayload(text: string) {
   const normalizedText = text.replace(/^\uFEFF/, "").trim();
   const fencedMatch =
@@ -87,23 +101,33 @@ function extractJsonPayload(text: string) {
   const candidate = (fencedMatch?.[1] ?? normalizedText).trim();
 
   try {
-    return JSON.parse(candidate) as ClaudeParsedPayload;
+    return coerceClaudeParsedPayload(JSON.parse(candidate));
   } catch {
-    const balancedObject = extractFirstBalancedJsonObject(candidate);
-    if (!balancedObject) {
+    const balancedJsonValue = extractFirstBalancedJsonValue(candidate);
+    if (!balancedJsonValue) {
       throw new Error("Claude no devolvio un objeto JSON reconocible.");
     }
 
-    return JSON.parse(balancedObject) as ClaudeParsedPayload;
+    return coerceClaudeParsedPayload(JSON.parse(balancedJsonValue));
   }
 }
 
-function extractFirstBalancedJsonObject(text: string) {
-  const startIndex = text.indexOf("{");
+function extractFirstBalancedJsonValue(text: string) {
+  const objectStartIndex = text.indexOf("{");
+  const arrayStartIndex = text.indexOf("[");
+  const startIndex =
+    objectStartIndex === -1
+      ? arrayStartIndex
+      : arrayStartIndex === -1
+        ? objectStartIndex
+        : Math.min(objectStartIndex, arrayStartIndex);
+
   if (startIndex === -1) {
     return null;
   }
 
+  const openingCharacter = text[startIndex];
+  const closingCharacter = openingCharacter === "[" ? "]" : "}";
   let depth = 0;
   let inString = false;
   let escaping = false;
@@ -130,12 +154,12 @@ function extractFirstBalancedJsonObject(text: string) {
       continue;
     }
 
-    if (character === "{") {
+    if (character === openingCharacter) {
       depth += 1;
       continue;
     }
 
-    if (character === "}") {
+    if (character === closingCharacter) {
       depth -= 1;
       if (depth === 0) {
         return text.slice(startIndex, index + 1);
@@ -464,13 +488,21 @@ export async function POST(request: Request) {
         responseTextPreview: responseText.slice(0, 2000),
         rawClaudeBodyPreview: rawClaudeBody.slice(0, 2000),
       });
-      throw parseError;
+      return NextResponse.json({
+        summary: "",
+        recommendations: [],
+        fallbackReason: "claude_invalid_json",
+      });
     }
 
     const recommendations = buildPromptDrivenRecommendations(parsed, groups);
 
     if (!recommendations.length) {
-      throw new Error("Claude no devolvio recomendaciones validas usando el catalogo enviado.");
+      return NextResponse.json({
+        summary: parsed.summary ?? "",
+        recommendations: [],
+        fallbackReason: "claude_empty_recommendations",
+      });
     }
 
     return NextResponse.json({
