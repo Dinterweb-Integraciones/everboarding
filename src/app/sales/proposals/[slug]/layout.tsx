@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canAccessHubspotSales, getPlatformDefaultPath } from "@/lib/platform-access";
 
-export default async function HubspotSalesLayout({
+export default async function HubspotSalesProposalLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;

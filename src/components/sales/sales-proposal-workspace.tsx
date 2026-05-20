@@ -637,6 +637,7 @@ export function SalesProposalWorkspace({
   const [isSavingTimelineDates, setIsSavingTimelineDates] = useState(false);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
+  const persistProposalRef = useRef<((draftOverride?: SalesProposalDraft, options?: { mergeWithCurrent?: boolean }) => Promise<SalesProposalDraft>) | null>(null);
 
   function applyDinterwebCommercialTerms(
     monthlyCredits: number,
@@ -1301,19 +1302,20 @@ function createInitiativeFromGroup(
       groupedInitiatives[status].length,
     );
 
-    setProposal((current) => {
-      const scheduledInitiatives = scheduleRecommendedInitiatives(
-        [...current.initiatives, next],
-        [next.id],
-        current.startDate,
-        stageSchedulingOptions,
-      );
+    const scheduledInitiatives = scheduleRecommendedInitiatives(
+      [...proposal.initiatives, next],
+      [next.id],
+      proposal.startDate,
+      stageSchedulingOptions,
+    );
 
-      return {
-        ...current,
-        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
-      };
-    });
+    const nextProposal = {
+      ...proposal,
+      initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+    };
+
+    setProposal(nextProposal);
+    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
     setCatalogPreviewGroup(null);
     setFeedback({
       tone: "success",
@@ -1434,13 +1436,16 @@ function mergeRecommendedGroups(
           stageSchedulingOptions,
         );
 
-    setProposal((current) => ({
-      ...current,
+    const nextProposal = {
+      ...proposal,
       initiatives: scheduledInitiatives.map((initiative, index) => ({
         ...initiative,
         sortOrder: index,
       })),
-    }));
+    };
+
+    setProposal(nextProposal);
+    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
     setActiveCatalogTab(defaultCatalogLibraryTab);
     setIsCatalogModalOpen(false);
     setFeedback({
@@ -1698,6 +1703,7 @@ function mergeRecommendedGroups(
 
     return resultPromise;
   }, [proposal, routeBase, router]);
+  persistProposalRef.current = persistProposal;
 
   async function activatePlan() {
     if (!activationValidation.isValid) {

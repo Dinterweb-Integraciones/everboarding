@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { requireUser } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError, isMissingSupabaseTable, safeParseNumber } from "@/lib/utils";
 
@@ -311,8 +310,6 @@ function buildPromptDrivenRecommendations(parsed: ClaudeParsedPayload, groups: R
 
 export async function POST(request: Request) {
   try {
-    await requireUser();
-
     if (!process.env.CLAUDE_API_KEY) {
       return NextResponse.json(
         { message: "Falta configurar CLAUDE_API_KEY en el servidor." },
@@ -377,7 +374,7 @@ export async function POST(request: Request) {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55000);
+    const timeout = setTimeout(() => controller.abort(), 180000);
 
     const userPayload = {
       start_date: body.startDate ?? null,
