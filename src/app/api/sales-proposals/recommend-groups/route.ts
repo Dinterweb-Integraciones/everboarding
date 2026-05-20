@@ -34,6 +34,12 @@ type RecommendationRequestBody = {
 
 type ClaudeRecommendation = {
   group_id?: string;
+  id?: string;
+  nombre?: string;
+  name?: string;
+  title?: string;
+  modal_category?: string;
+  category?: string;
   status?: string;
   reason?: string;
   start_date?: string;
@@ -76,7 +82,13 @@ function resolveClaudeMessagesUrl() {
 }
 
 function normalizeGroupLookupName(name: string) {
-  return name.trim().toLocaleLowerCase("es");
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/["'`]+/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLocaleLowerCase("es");
 }
 
 function coerceClaudeParsedPayload(value: unknown) {
@@ -226,6 +238,110 @@ function sanitizeRecommendationReason(reason: string | undefined, group: Recomme
   return `Prioridad para ${group.name}.`.slice(0, 140);
 }
 
+function normalizeRecommendationStatus(
+  status: string | undefined,
+): FinalRecommendation["status"] | null {
+  const normalized = normalizeGroupLookupName(status ?? "");
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (
+    [
+      "executing",
+      "execution",
+      "in progress",
+      "in_progress",
+      "implementing",
+      "ejecutando",
+      "en progreso",
+      "en curso",
+      "implementacion",
+      "implementando",
+    ].includes(normalized)
+  ) {
+    return "executing";
+  }
+
+  if (["planned", "planning", "planificado", "planeado", "por ejecutar"].includes(normalized)) {
+    return "planned";
+  }
+
+  if (["backlog", "evaluacion", "en evaluacion", "pendiente", "later"].includes(normalized)) {
+    return "backlog";
+  }
+
+  return null;
+}
+
+function findMatchingGroup(
+  recommendation: ClaudeRecommendation | ClaudeLegacyGroup,
+  groups: RecommendationGroup[],
+  usedGroupIds = new Set<string>(),
+) {
+  const candidateIds = [recommendation.group_id, recommendation.id].filter(Boolean) as string[];
+  const candidateNames = [
+    "name" in recommendation ? recommendation.name : undefined,
+    "nombre" in recommendation ? recommendation.nombre : undefined,
+    "title" in recommendation ? recommendation.title : undefined,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeGroupLookupName(value as string));
+  const candidateCategories = [
+    "modal_category" in recommendation ? recommendation.modal_category : undefined,
+    "category" in recommendation ? recommendation.category : undefined,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeGroupLookupName(value as string));
+
+  for (const groupId of candidateIds) {
+    const matchedGroup = groups.find((group) => group.id === groupId && !usedGroupIds.has(group.id));
+    if (matchedGroup) {
+      return matchedGroup;
+    }
+  }
+
+  for (const candidateName of candidateNames) {
+    const exactMatch = groups.find(
+      (group) => !usedGroupIds.has(group.id) && normalizeGroupLookupName(group.name) === candidateName,
+    );
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  for (const candidateName of candidateNames) {
+    const fuzzyMatch = groups.find((group) => {
+      if (usedGroupIds.has(group.id)) {
+        return false;
+      }
+
+      const normalizedGroupName = normalizeGroupLookupName(group.name);
+      return (
+        normalizedGroupName.includes(candidateName) || candidateName.includes(normalizedGroupName)
+      );
+    });
+
+    if (fuzzyMatch) {
+      return fuzzyMatch;
+    }
+  }
+
+  for (const candidateCategory of candidateCategories) {
+    const categoryMatch = groups.find(
+      (group) =>
+        !usedGroupIds.has(group.id) &&
+        normalizeGroupLookupName(group.modalCategory) === candidateCategory,
+    );
+    if (categoryMatch) {
+      return categoryMatch;
+    }
+  }
+
+  return null;
+}
+
 function mapLegacyGroupsToRecommendations(
   entries: ClaudeLegacyGroup[] | undefined,
   status: "planned" | "backlog",
@@ -234,47 +350,47 @@ function mapLegacyGroupsToRecommendations(
   if (!Array.isArray(entries)) {
     return [];
   }
-
-  const groupsById = new Map(groups.map((group) => [group.id, group]));
-  const groupsByName = new Map(groups.map((group) => [normalizeGroupLookupName(group.name), group]));
+  const usedGroupIds = new Set<string>();
 
   return entries.flatMap((entry) => {
-    const groupId = entry.group_id || entry.id;
-    const namedGroup = entry.nombre || entry.name;
-
-    if (groupId && groupsById.has(groupId)) {
-      return [
-        {
-          group_id: groupId,
-          status,
-          reason: entry.reason,
-          start_date: entry.start_date,
-          end_date: entry.end_date,
-        },
-      ];
+    const matchedGroup = findMatchingGroup(entry, groups, usedGroupIds);
+    if (!matchedGroup) {
+      return [];
     }
 
-    if (namedGroup) {
-      const matchedGroup = groupsByName.get(normalizeGroupLookupName(namedGroup));
-      if (matchedGroup) {
-        return [
-          {
-            group_id: matchedGroup.id,
-            status,
-            reason: entry.reason,
-            start_date: entry.start_date,
-            end_date: entry.end_date,
-          },
-        ];
-      }
-    }
+    usedGroupIds.add(matchedGroup.id);
 
-    return [];
+    return [
+      {
+        group_id: matchedGroup.id,
+        status,
+        reason: entry.reason,
+        start_date: entry.start_date,
+        end_date: entry.end_date,
+      },
+    ];
   });
 }
 
 function normalizeClaudeRecommendations(parsed: ClaudeParsedPayload, groups: RecommendationGroup[]) {
-  const directRecommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
+  const usedDirectGroupIds = new Set<string>();
+  const directRecommendations = (Array.isArray(parsed.recommendations) ? parsed.recommendations : []).flatMap(
+    (recommendation) => {
+      const matchedGroup = findMatchingGroup(recommendation, groups, usedDirectGroupIds);
+      if (!matchedGroup) {
+        return [];
+      }
+
+      usedDirectGroupIds.add(matchedGroup.id);
+
+      return [
+        {
+          ...recommendation,
+          group_id: matchedGroup.id,
+        },
+      ];
+    },
+  );
   const plannedRecommendations = mapLegacyGroupsToRecommendations(parsed.planificado, "planned", groups);
   const backlogRecommendations = mapLegacyGroupsToRecommendations(parsed.en_evaluacion, "backlog", groups);
   const seenGroupIds = new Set<string>();
@@ -304,16 +420,7 @@ function buildPromptDrivenRecommendations(parsed: ClaudeParsedPayload, groups: R
       return [];
     }
 
-    const normalizedStatus =
-      recommendation.status === "executing" ||
-      recommendation.status === "planned" ||
-      recommendation.status === "backlog"
-        ? recommendation.status
-        : null;
-
-    if (!normalizedStatus) {
-      return [];
-    }
+    const normalizedStatus = normalizeRecommendationStatus(recommendation.status) ?? "planned";
 
     const normalizedRecommendation: FinalRecommendation = {
       group_id: recommendation.group_id,
@@ -333,6 +440,80 @@ function buildPromptDrivenRecommendations(parsed: ClaudeParsedPayload, groups: R
 
     return [normalizedRecommendation];
   });
+}
+
+function fitRecommendationsToCreditBudget(
+  recommendations: FinalRecommendation[],
+  groups: RecommendationGroup[],
+  creditBudget: number,
+) {
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  let usedCredits = 0;
+
+  return recommendations.filter((recommendation) => {
+    const group = groupsById.get(recommendation.group_id);
+    if (!group) {
+      return false;
+    }
+
+    const groupCredits = Math.max(0, safeParseNumber(group.credits));
+    if (groupCredits === 0) {
+      return true;
+    }
+
+    if (usedCredits + groupCredits > creditBudget) {
+      return false;
+    }
+
+    usedCredits += groupCredits;
+    return true;
+  });
+}
+
+function buildDefaultRecommendations(
+  groups: RecommendationGroup[],
+  selectedHubs: string[],
+  portalState: RecommendationRequestBody["portalState"],
+  creditBudget: number,
+) {
+  const recommendations: FinalRecommendation[] = [];
+  const usedGroupIds = new Set<string>();
+
+  const findCategoryGroups = (category: string) =>
+    groups.filter(
+      (group) => normalizeGroupLookupName(group.modalCategory) === normalizeGroupLookupName(category),
+    );
+
+  const pushGroup = (group: RecommendationGroup, status: FinalRecommendation["status"]) => {
+    if (usedGroupIds.has(group.id)) {
+      return;
+    }
+
+    usedGroupIds.add(group.id);
+    recommendations.push({
+      group_id: group.id,
+      status,
+      reason: sanitizeRecommendationReason(undefined, group),
+    });
+  };
+
+  findCategoryGroups("Fundamentales")
+    .slice(0, 2)
+    .forEach((group) => {
+      pushGroup(group, "planned");
+    });
+
+  selectedHubs.forEach((hub, index) => {
+    const categoryGroups = findCategoryGroups(hub);
+    const preferredCount = portalState === "optimize" ? (index === 0 ? 3 : 2) : 2;
+
+    categoryGroups.slice(0, preferredCount).forEach((group, itemIndex) => {
+      pushGroup(group, index === 0 && itemIndex < 2 ? "planned" : "backlog");
+    });
+  });
+
+  const budgetAwareRecommendations = fitRecommendationsToCreditBudget(recommendations, groups, creditBudget);
+  return budgetAwareRecommendations.length ? budgetAwareRecommendations : recommendations.slice(0, 3);
 }
 
 export async function POST(request: Request) {
@@ -479,6 +660,7 @@ export async function POST(request: Request) {
     }
 
     let parsed: ClaudeParsedPayload;
+    let fallbackReason: string | undefined;
 
     try {
       parsed = extractJsonPayload(responseText);
@@ -488,26 +670,29 @@ export async function POST(request: Request) {
         responseTextPreview: responseText.slice(0, 2000),
         rawClaudeBodyPreview: rawClaudeBody.slice(0, 2000),
       });
-      return NextResponse.json({
-        summary: "",
-        recommendations: [],
-        fallbackReason: "claude_invalid_json",
-      });
+      parsed = {};
+      fallbackReason = "claude_invalid_json";
     }
 
-    const recommendations = buildPromptDrivenRecommendations(parsed, groups);
+    const promptDrivenRecommendations = buildPromptDrivenRecommendations(parsed, groups);
+    const recommendations = promptDrivenRecommendations.length
+      ? promptDrivenRecommendations
+      : buildDefaultRecommendations(groups, selectedHubs, body.portalState, remainingRecommendationCredits);
 
-    if (!recommendations.length) {
-      return NextResponse.json({
+    if (!promptDrivenRecommendations.length && !fallbackReason) {
+      console.warn("sales_wizard_claude_recommendations_fallback", {
         summary: parsed.summary ?? "",
-        recommendations: [],
-        fallbackReason: "claude_empty_recommendations",
+        parsedRecommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.length : 0,
+        parsedPlanificado: Array.isArray(parsed.planificado) ? parsed.planificado.length : 0,
+        parsedEnEvaluacion: Array.isArray(parsed.en_evaluacion) ? parsed.en_evaluacion.length : 0,
       });
+      fallbackReason = "claude_empty_recommendations";
     }
 
     return NextResponse.json({
       summary: parsed.summary ?? "",
       recommendations,
+      fallbackReason,
     });
   } catch (caughtError) {
     return NextResponse.json(
