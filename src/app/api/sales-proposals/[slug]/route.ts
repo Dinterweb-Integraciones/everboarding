@@ -84,10 +84,16 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
         ? caughtError.message
         : typeof caughtError === "string"
           ? caughtError
+          : caughtError &&
+              typeof caughtError === "object" &&
+              "message" in caughtError &&
+              typeof caughtError.message === "string"
+            ? caughtError.message
           : "";
     const errorDetails =
       caughtError && typeof caughtError === "object"
         ? {
+            message: "message" in caughtError ? caughtError.message : undefined,
             code: "code" in caughtError ? caughtError.code : undefined,
             details: "details" in caughtError ? caughtError.details : undefined,
             hint: "hint" in caughtError ? caughtError.hint : undefined,
