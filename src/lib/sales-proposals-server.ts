@@ -1,12 +1,6 @@
 import Stripe from "stripe";
 
 import {
-  createHubSpotDeal,
-  isHubSpotConfigured,
-  moveHubSpotDealToWon,
-  updateHubSpotDeal,
-} from "@/lib/hubspot";
-import {
   getSalesProposalActivationValidation,
   isValidSalesProposalClientEmail,
   mapSalesProposalRow,
@@ -269,41 +263,12 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
 
   const serialized = serializeSalesProposalDraft(draftToPersist);
 
-  let hubspotDealId: string | null = existingRow?.hubspot_deal_id ?? null;
-
-  if (isHubSpotConfigured()) {
-    if (hubspotDealId) {
-      await updateHubSpotDeal(hubspotDealId, {
-        dealname: serialized.title,
-        amount: String(serialized.quoted_price),
-        description: `Everboarding proposal ${proposalSlug} · ${serialized.client_name}${serialized.client_company ? ` · ${serialized.client_company}` : ""}${serialized.client_email ? ` · ${serialized.client_email}` : ""}`,
-      });
-    } else {
-      const deal = await createHubSpotDeal({
-        dealName: serialized.title,
-        amount: serialized.quoted_price,
-        pipelineId: process.env.HUBSPOT_SALES_PIPELINE_ID ?? null,
-        dealStageId: process.env.HUBSPOT_DEAL_STAGE_NEW_ID ?? null,
-        closeDate: serialized.start_date,
-        proposalSlug: proposalSlug,
-        clientName: serialized.client_name,
-        clientEmail: serialized.client_email,
-        clientCompany: serialized.client_company,
-      });
-      hubspotDealId = deal?.id ?? null;
-    }
-  }
-
   const { data, error } = await admin
     .from("sales_proposals")
     .upsert(
       ({
         slug: proposalSlug,
         ...serialized,
-        hubspot_deal_id: hubspotDealId,
-        hubspot_pipeline_id: process.env.HUBSPOT_SALES_PIPELINE_ID ?? null,
-        hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_NEW_ID ?? null,
-        last_synced_at: new Date().toISOString(),
       }) as never,
       { onConflict: "slug" },
     )
@@ -465,11 +430,6 @@ export async function createSalesProposalCheckout(
   const amountInCents = Math.round(proposal.quotedPrice * 100);
   const routeBase = getSalesProposalRouteBase(proposal);
 
-  if (!proposal.hubspotDealId && isHubSpotConfigured()) {
-    const synced = await saveSalesProposal(proposal, proposal.slug || proposal.id || "proposal");
-    proposal = synced;
-  }
-
   const baseMetadata = {
     sales_proposal_id: proposal.id || "",
     sales_proposal_slug: proposal.slug || "",
@@ -575,10 +535,6 @@ async function activateSalesProposalWithPaymentContext(
 
   if (!activatedClientId) {
     if (!proposal.assignedCsmUserId) {
-      if (proposal.hubspotDealId) {
-        await moveHubSpotDealToWon(proposal.hubspotDealId);
-      }
-
       const { error: paidUpdateError } = await admin
         .from("sales_proposals")
         .update(({
@@ -587,7 +543,6 @@ async function activateSalesProposalWithPaymentContext(
           stripe_checkout_session_id: payment.checkoutSessionId,
           stripe_payment_intent_id: paymentIntentId,
           stripe_subscription_id: subscriptionId,
-          hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
           updated_at: new Date().toISOString(),
         }) as never)
         .eq("id", mappedProposalId);
@@ -797,10 +752,6 @@ async function activateSalesProposalWithPaymentContext(
     }
   }
 
-  if (proposal.hubspotDealId) {
-    await moveHubSpotDealToWon(proposal.hubspotDealId);
-  }
-
   const { error: updateError } = await admin
     .from("sales_proposals")
     .update(({
@@ -811,7 +762,6 @@ async function activateSalesProposalWithPaymentContext(
       stripe_checkout_session_id: payment.checkoutSessionId,
       stripe_payment_intent_id: paymentIntentId,
       stripe_subscription_id: subscriptionId,
-      hubspot_deal_stage_id: process.env.HUBSPOT_DEAL_STAGE_WON_ID ?? typedProposalRow.hubspot_deal_stage_id,
       updated_at: new Date().toISOString(),
     }) as never)
     .eq("id", mappedProposalId);
