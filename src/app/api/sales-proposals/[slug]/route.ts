@@ -79,12 +79,25 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
       requestBodySize: requestBody ? JSON.stringify(requestBody).length : 0,
     });
 
+    const rawMessage =
+      caughtError instanceof Error
+        ? caughtError.message
+        : typeof caughtError === "string"
+          ? caughtError
+          : "";
+    const errorDetails =
+      caughtError && typeof caughtError === "object"
+        ? {
+            code: "code" in caughtError ? caughtError.code : undefined,
+            details: "details" in caughtError ? caughtError.details : undefined,
+            hint: "hint" in caughtError ? caughtError.hint : undefined,
+          }
+        : undefined;
+
     return NextResponse.json(
       {
-        message: formatUserError(
-          caughtError,
-          "No pudimos actualizar la propuesta comercial.",
-        ),
+        message: rawMessage || formatUserError(caughtError, "No pudimos actualizar la propuesta comercial."),
+        errorDetails,
       },
       { status: 400 },
     );

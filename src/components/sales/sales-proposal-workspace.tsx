@@ -1314,9 +1314,12 @@ function createInitiativeFromGroup(
       initiatives: normalizeBoardSortOrders(scheduledInitiatives),
     };
 
+    const previousSignature = lastPersistedSignatureRef.current;
     setProposal(nextProposal);
     lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
-    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
+    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true }).catch(() => {
+      lastPersistedSignatureRef.current = previousSignature;
+    });
     setCatalogPreviewGroup(null);
     setFeedback({
       tone: "success",
@@ -1445,9 +1448,12 @@ function mergeRecommendedGroups(
       })),
     };
 
+    const previousSignature = lastPersistedSignatureRef.current;
     setProposal(nextProposal);
     lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
-    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true });
+    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true }).catch(() => {
+      lastPersistedSignatureRef.current = previousSignature;
+    });
     setActiveCatalogTab(defaultCatalogLibraryTab);
     setIsCatalogModalOpen(false);
     setFeedback({
