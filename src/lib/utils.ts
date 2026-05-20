@@ -1,5 +1,20 @@
 import { clsx, type ClassValue } from "clsx";
 
+const SHORT_MONTHS_ES = [
+  "ene",
+  "feb",
+  "mar",
+  "abr",
+  "may",
+  "jun",
+  "jul",
+  "ago",
+  "sep",
+  "oct",
+  "nov",
+  "dic",
+];
+
 export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
@@ -22,18 +37,96 @@ export function formatCurrency(value: number, currency = "USD") {
   }).format(value);
 }
 
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function isIsoDateOnly(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function formatDateParts(day: number, monthIndex: number, year: number) {
+  return `${pad2(day)} ${SHORT_MONTHS_ES[monthIndex]} ${year}`;
+}
+
 export function formatDate(date: string | null | undefined) {
   if (!date) {
     return "--";
   }
 
-  const parsedDate = date.includes("T") ? new Date(date) : new Date(`${date}T00:00:00`);
+  if (isIsoDateOnly(date)) {
+    const [year, month, day] = date.split("-").map(Number);
+    return formatDateParts(day, month - 1, year);
+  }
 
-  return new Intl.DateTimeFormat("es-NI", {
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "--";
+  }
+
+  const formatter = new Intl.DateTimeFormat("es-NI", {
+    timeZone: "America/Managua",
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(parsedDate);
+  });
+  const parts = formatter.formatToParts(parsedDate);
+  const day = parts.find((part) => part.type === "day")?.value;
+  const month = normalizeMonthLabel(parts.find((part) => part.type === "month")?.value);
+  const year = parts.find((part) => part.type === "year")?.value;
+
+  if (!day || !month || !year) {
+    return "--";
+  }
+
+  return `${day} ${month} ${year}`;
+}
+
+function normalizeMonthLabel(value: string | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(".", "")
+    .toLowerCase();
+}
+
+export function formatDateTime(date: string | null | undefined) {
+  if (!date) {
+    return "--";
+  }
+
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "--";
+  }
+
+  const formatter = new Intl.DateTimeFormat("es-NI", {
+    timeZone: "America/Managua",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  const parts = formatter.formatToParts(parsedDate);
+  const day = parts.find((part) => part.type === "day")?.value;
+  const month = normalizeMonthLabel(parts.find((part) => part.type === "month")?.value);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  const rawDayPeriod = parts.find((part) => part.type === "dayPeriod")?.value ?? "";
+  const normalizedDayPeriod = rawDayPeriod.toLowerCase().includes("p") ? "p. m." : "a. m.";
+
+  if (!day || !month || !year || !hour || !minute) {
+    return "--";
+  }
+
+  return `${day} ${month} ${year}, ${hour}:${minute} ${normalizedDayPeriod}`;
 }
 
 export function toIsoDate(date = new Date()) {
