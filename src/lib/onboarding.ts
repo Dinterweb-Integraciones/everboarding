@@ -199,6 +199,24 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
   };
 }
 
+function parseSafeDate(value: string | null | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const dateOnlyMatch = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
+  const parsed = dateOnlyMatch
+    ? new Date(`${dateOnlyMatch[1]}T00:00:00`)
+    : new Date(normalized);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
 export function getExtraCapacityCredits(config: Pick<OnboardingConfig, "extra_capacity">) {
   const extraCapacity = Math.max(0, safeParseNumber(config.extra_capacity));
 
@@ -215,7 +233,7 @@ export function createDefaultBillingStatus(config: OnboardingConfig): ClientBill
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const start = new Date(`${config.start_date}T00:00:00`);
+  const start = parseSafeDate(config.start_date) ?? today;
   const anchorDay = start.getDate();
   const cycleStart = new Date(today.getFullYear(), today.getMonth(), anchorDay);
 
@@ -478,7 +496,7 @@ export function calculateMetrics(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const start = new Date(`${config.start_date}T00:00:00`);
+  const start = parseSafeDate(config.start_date) ?? today;
   const startDay = start.getDate();
   const nextCutoff = new Date(today.getFullYear(), today.getMonth(), startDay);
 
@@ -552,7 +570,11 @@ export function daysInactive(date: string | null) {
     return 0;
   }
 
-  const target = new Date(`${date}T00:00:00`);
+  const target = parseSafeDate(date);
+  if (!target) {
+    return 0;
+  }
+
   const today = new Date();
   return Math.ceil((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
 }
@@ -576,8 +598,12 @@ export function getEstimatedStatus(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
+  const start = parseSafeDate(startDate);
+  const end = parseSafeDate(endDate);
+
+  if (!start || !end) {
+    return null;
+  }
 
   const daysUntilStart = Math.ceil((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   const daysUntilEnd = Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -614,12 +640,19 @@ export function formatDateRange(startDate: string | null, endDate: string | null
     return "Sin fechas";
   }
 
+  const start = parseSafeDate(startDate);
+  const end = parseSafeDate(endDate);
+
+  if (!start || !end) {
+    return "Sin fechas";
+  }
+
   const formatter = new Intl.DateTimeFormat("es-NI", {
     day: "numeric",
     month: "short",
   });
 
-  return `${formatter.format(new Date(`${startDate}T00:00:00`))} al ${formatter.format(new Date(`${endDate}T00:00:00`))}`;
+  return `${formatter.format(start)} al ${formatter.format(end)}`;
 }
 
 export function getRoleLabel(role: ClientAccessRole) {

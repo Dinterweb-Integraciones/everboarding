@@ -189,24 +189,38 @@ function getNextTaskStatus(status: InitiativeTaskStatus) {
 function formatCompactDate(value: string) {
   if (!value) return "Sin fecha";
 
+  const parsed = parseCalendarDate(value);
+  if (!parsed) return "Sin fecha";
+
   return new Intl.DateTimeFormat("es-NI", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(parsed);
 }
 
 function formatLongDate(value: string) {
+  const parsed = parseCalendarDate(value);
+  if (!parsed) return "Sin fecha";
+
   return new Intl.DateTimeFormat("es-NI", {
     day: "numeric",
     month: "long",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(parsed);
 }
 
 function parseCalendarDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, (month || 1) - 1, day || 1);
+  const normalized = value.trim();
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function addCalendarDays(value: Date, amount: number) {
@@ -231,8 +245,15 @@ function diffCalendarDays(left: Date, right: Date) {
 
 function getInitiativeSpanLabel(startDate: string | null, endDate: string | null, fallbackCount = 0) {
   if (startDate && endDate) {
+    const parsedStart = parseCalendarDate(startDate);
+    const parsedEnd = parseCalendarDate(endDate);
+
+    if (!parsedStart || !parsedEnd) {
+      return fallbackCount > 0 ? `${fallbackCount} act` : "--";
+    }
+
     const days = Math.max(
-      diffCalendarDays(parseCalendarDate(startDate), parseCalendarDate(endDate)) + 1,
+      diffCalendarDays(parsedStart, parsedEnd) + 1,
       1,
     );
     return `${days}d`;
@@ -261,10 +282,13 @@ function maxCalendarDate(values: Date[]) {
 function getDaysUntil(date: string | null) {
   if (!date) return null;
 
+  const parsed = parseCalendarDate(date);
+  if (!parsed) return null;
+
   return Math.max(
     0,
     Math.ceil(
-      (new Date(`${date}T00:00:00`).getTime() - new Date().setHours(0, 0, 0, 0)) /
+      (parsed.getTime() - new Date().setHours(0, 0, 0, 0)) /
         (1000 * 60 * 60 * 24),
     ),
   );
@@ -484,9 +508,10 @@ export function OnboardingClientPage({
   const ganttTimeline = useMemo(() => {
     const today = new Date();
     const baseDateCandidates = [today];
+    const parsedConfigStartDate = config.start_date ? parseCalendarDate(config.start_date) : null;
 
-    if (config.start_date) {
-      baseDateCandidates.push(parseCalendarDate(config.start_date));
+    if (parsedConfigStartDate) {
+      baseDateCandidates.push(parsedConfigStartDate);
     }
 
     const datedRows = initiatives
@@ -494,7 +519,8 @@ export function OnboardingClientPage({
         const subitemDates = initiative.subitems
           .map((subitem) => subitem.target_date)
           .filter((value): value is string => Boolean(value))
-          .map(parseCalendarDate);
+          .map(parseCalendarDate)
+          .filter((value): value is Date => Boolean(value));
 
         const resolvedStart = initiative.est_start_date
           ? parseCalendarDate(initiative.est_start_date)
@@ -635,6 +661,10 @@ export function OnboardingClientPage({
 
       const startBase = parseCalendarDate(activeDrag.startDate);
       const endBase = parseCalendarDate(activeDrag.endDate);
+      if (!startBase || !endBase) {
+        return;
+      }
+
       let nextStart = activeDrag.startDate;
       let nextEnd = activeDrag.endDate;
 
@@ -2809,8 +2839,8 @@ export function OnboardingClientPage({
                     const baseEnd = row.initiative.est_end_date ?? toIsoDate(row.end as Date);
                     const dragDelta =
                       ganttDrag?.initiativeId === row.initiative.id ? ganttDrag.dayDelta : 0;
-                    const baseStartDate = parseCalendarDate(baseStart);
-                    const baseEndDate = parseCalendarDate(baseEnd);
+                    const baseStartDate = parseCalendarDate(baseStart) ?? (row.start as Date);
+                    const baseEndDate = parseCalendarDate(baseEnd) ?? (row.end as Date);
                     const previewStartDate =
                       ganttDrag?.initiativeId === row.initiative.id && ganttDrag.mode === "resize-start"
                         ? (() => {
