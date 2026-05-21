@@ -1708,7 +1708,8 @@ function mergeRecommendedGroups(
       }
 
       const normalizedPayload = normalizeSalesProposalDraft(payload);
-      pendingProposalSlugRef.current = normalizedPayload.slug;
+      const resolvedSlug = normalizedPayload.slug ?? slug;
+      pendingProposalSlugRef.current = resolvedSlug;
       lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(normalizedPayload);
 
       if (options?.mergeWithCurrent) {
@@ -1718,7 +1719,7 @@ function mergeRecommendedGroups(
       }
 
       if (!draftToPersist.slug) {
-        router.replace(`${routeBase}/${normalizedPayload.slug}`);
+        router.replace(`${routeBase}/${resolvedSlug}`);
       }
 
       return normalizedPayload;
