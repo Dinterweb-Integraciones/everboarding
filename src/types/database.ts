@@ -237,8 +237,10 @@ export type Database = {
         Row: {
           id: string;
           code: string;
+          coupon_type: string;
           granted_credits: number;
           discounted_price: number;
+          percentage_off: number | null;
           is_active: boolean;
           starts_at: string | null;
           ends_at: string | null;
@@ -248,8 +250,10 @@ export type Database = {
         Insert: {
           id?: string;
           code: string;
+          coupon_type?: string;
           granted_credits?: number;
           discounted_price?: number;
+          percentage_off?: number | null;
           is_active?: boolean;
           starts_at?: string | null;
           ends_at?: string | null;
@@ -259,8 +263,10 @@ export type Database = {
         Update: {
           id?: string;
           code?: string;
+          coupon_type?: string;
           granted_credits?: number;
           discounted_price?: number;
+          percentage_off?: number | null;
           is_active?: boolean;
           starts_at?: string | null;
           ends_at?: string | null;

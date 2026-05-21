@@ -96,8 +96,10 @@ create table if not exists public.sales_proposals (
 create table if not exists public.sales_coupons (
   id uuid primary key default gen_random_uuid(),
   code text not null,
+  coupon_type text not null default 'package_override' check (coupon_type in ('package_override', 'percentage')),
   granted_credits integer not null default 40 check (granted_credits >= 0),
   discounted_price numeric(10, 2) not null default 0 check (discounted_price >= 0),
+  percentage_off numeric(5, 2) check (percentage_off is null or (percentage_off > 0 and percentage_off <= 100)),
   is_active boolean not null default true,
   starts_at timestamptz,
   ends_at timestamptz,

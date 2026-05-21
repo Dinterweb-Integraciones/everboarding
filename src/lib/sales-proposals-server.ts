@@ -1,10 +1,14 @@
 import Stripe from "stripe";
 
 import {
+  applyPercentageDiscount,
   getSalesProposalActivationValidation,
   isValidSalesProposalClientEmail,
   mapSalesProposalRow,
+  normalizeCouponPercentageOff,
+  normalizeSalesCouponType,
   serializeSalesProposalDraft,
+  type SalesCouponType,
   type SalesProposalDraft,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
@@ -93,6 +97,10 @@ function getSalesCouponGrantedCredits(coupon: SalesCouponRow) {
   );
 }
 
+function getSalesCouponType(coupon: SalesCouponRow): SalesCouponType {
+  return normalizeSalesCouponType(coupon.coupon_type);
+}
+
 function getSalesCouponDiscountedPrice(coupon: SalesCouponRow) {
   return Math.max(
     0,
@@ -100,6 +108,10 @@ function getSalesCouponDiscountedPrice(coupon: SalesCouponRow) {
       (coupon.discounted_price as number | string | null | undefined) ?? LEGACY_SALES_COUPON_PRICE,
     ),
   );
+}
+
+function getSalesCouponPercentageOff(coupon: SalesCouponRow) {
+  return normalizeCouponPercentageOff(coupon.percentage_off);
 }
 
 function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
@@ -122,13 +134,29 @@ function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
 }
 
 function applyCouponTermsToProposal(proposal: SalesProposalRecord, coupon: SalesCouponRow): SalesProposalDraft {
+  const couponType = getSalesCouponType(coupon);
+  const percentageOff = couponType === "percentage" ? getSalesCouponPercentageOff(coupon) : null;
+  const baseQuotedPrice =
+    couponType === "percentage" &&
+    proposal.appliedCouponId === coupon.id &&
+    proposal.couponBaseQuotedPrice !== null
+      ? proposal.couponBaseQuotedPrice
+      : proposal.quotedPrice;
+
   return {
     ...proposal,
-    contractedCredits: getSalesCouponGrantedCredits(coupon),
-    quotedPrice: getSalesCouponDiscountedPrice(coupon),
+    contractedCredits:
+      couponType === "package_override" ? getSalesCouponGrantedCredits(coupon) : proposal.contractedCredits,
+    quotedPrice:
+      couponType === "package_override"
+        ? getSalesCouponDiscountedPrice(coupon)
+        : applyPercentageDiscount(baseQuotedPrice, percentageOff ?? 0),
     currency: resolveCurrency(proposal.currency),
     appliedCouponId: coupon.id,
     appliedCouponCode: normalizeSalesCouponCode(coupon.code),
+    appliedCouponType: couponType,
+    appliedCouponPercentageOff: percentageOff,
+    couponBaseQuotedPrice: baseQuotedPrice,
     couponAppliedAt: proposal.couponAppliedAt || new Date().toISOString(),
   };
 }
@@ -172,19 +200,30 @@ export async function getActiveSalesCouponByCode(code: string) {
 
 export async function createSalesCoupon(input: {
   code: string;
+  couponType: SalesCouponType;
   grantedCredits: number;
   discountedPrice: number;
+  percentageOff: number | null;
 }) {
   const normalizedCode = normalizeSalesCouponCode(input.code);
+  const couponType = normalizeSalesCouponType(input.couponType);
   const grantedCredits = Math.max(0, Math.round(safeParseNumber(input.grantedCredits)));
   const discountedPrice = Math.max(0, safeParseNumber(input.discountedPrice));
+  const percentageOff =
+    input.percentageOff === null || input.percentageOff === undefined
+      ? null
+      : normalizeCouponPercentageOff(input.percentageOff);
 
   if (!normalizedCode) {
     throw new Error("Ingresa un codigo de cupon.");
   }
 
-  if (grantedCredits <= 0) {
+  if (couponType === "package_override" && grantedCredits <= 0) {
     throw new Error("Define una cantidad de creditos mayor a 0.");
+  }
+
+  if (couponType === "percentage" && (!percentageOff || percentageOff <= 0)) {
+    throw new Error("Define un porcentaje de descuento mayor a 0.");
   }
 
   const admin = createSupabaseAdminClient();
@@ -206,8 +245,10 @@ export async function createSalesCoupon(input: {
     .from("sales_coupons")
     .insert(({
       code: normalizedCode,
-      granted_credits: grantedCredits,
-      discounted_price: discountedPrice,
+      coupon_type: couponType,
+      granted_credits: couponType === "package_override" ? grantedCredits : 0,
+      discounted_price: couponType === "package_override" ? discountedPrice : 0,
+      percentage_off: couponType === "percentage" ? percentageOff : null,
       is_active: true,
     }) as never)
     .select("*")

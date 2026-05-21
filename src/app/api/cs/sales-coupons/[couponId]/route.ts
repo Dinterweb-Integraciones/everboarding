@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
+import { normalizeCouponPercentageOff, normalizeSalesCouponType } from "@/lib/sales-proposals";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type SalesCouponRouteProps = {
@@ -13,22 +14,33 @@ export async function PUT(request: Request, { params }: SalesCouponRouteProps) {
     const { supabase } = await requireUser();
     const body = (await request.json()) as {
       code?: string;
+      couponType?: string;
       grantedCredits?: number;
       discountedPrice?: number;
+      percentageOff?: number | null;
       isActive?: boolean;
     };
 
     const code = body.code?.trim().toUpperCase();
+    const couponType = normalizeSalesCouponType(body.couponType);
     const grantedCredits = Math.max(0, Math.round(safeParseNumber(body.grantedCredits)));
     const discountedPrice = Math.max(0, safeParseNumber(body.discountedPrice));
+    const percentageOff =
+      body.percentageOff === null || body.percentageOff === undefined
+        ? null
+        : normalizeCouponPercentageOff(body.percentageOff);
     const isActive = body.isActive ?? true;
 
     if (!code) {
       return NextResponse.json({ message: "El codigo del cupon es requerido." }, { status: 400 });
     }
 
-    if (grantedCredits <= 0) {
+    if (couponType === "package_override" && grantedCredits <= 0) {
       return NextResponse.json({ message: "Los creditos deben ser mayores a 0." }, { status: 400 });
+    }
+
+    if (couponType === "percentage" && (!percentageOff || percentageOff <= 0)) {
+      return NextResponse.json({ message: "El porcentaje debe ser mayor a 0." }, { status: 400 });
     }
 
     const { data: duplicateCoupon, error: duplicateError } = await supabase
@@ -48,8 +60,10 @@ export async function PUT(request: Request, { params }: SalesCouponRouteProps) {
       .from("sales_coupons")
       .update({
         code,
-        granted_credits: grantedCredits,
-        discounted_price: discountedPrice,
+        coupon_type: couponType,
+        granted_credits: couponType === "package_override" ? grantedCredits : 0,
+        discounted_price: couponType === "package_override" ? discountedPrice : 0,
+        percentage_off: couponType === "percentage" ? percentageOff : null,
         is_active: isActive,
       })
       .eq("id", couponId)

@@ -3,11 +3,12 @@
 import { BadgePercent, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { normalizeCouponPercentageOff, normalizeSalesCouponType, type SalesCouponType } from "@/lib/sales-proposals";
+import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import type { Database } from "@/types/database";
-import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
 
 type SalesCoupon = Database["public"]["Tables"]["sales_coupons"]["Row"];
 
@@ -17,10 +18,26 @@ type SalesCouponsManagerProps = {
 
 const emptyForm = {
   code: "",
+  couponType: "package_override" as SalesCouponType,
   grantedCredits: "60",
   discountedPrice: "852",
+  percentageOff: "20",
   isActive: true,
 };
+
+function getCouponTypeLabel(couponType: string | null | undefined) {
+  return normalizeSalesCouponType(couponType) === "percentage" ? "Descuento %" : "Paquete";
+}
+
+function getCouponBenefitLabel(coupon: SalesCoupon) {
+  const couponType = normalizeSalesCouponType(coupon.coupon_type);
+
+  if (couponType === "percentage") {
+    return `${normalizeCouponPercentageOff(coupon.percentage_off)}% sobre el precio actual`;
+  }
+
+  return `${coupon.granted_credits} CR por ${formatCurrency(Number(coupon.discounted_price ?? 0))}`;
+}
 
 export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps) {
   const [coupons, setCoupons] = useState(initialCoupons);
@@ -51,8 +68,10 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
     setEditingId(coupon.id);
     setForm({
       code: coupon.code,
+      couponType: normalizeSalesCouponType(coupon.coupon_type),
       grantedCredits: String(coupon.granted_credits ?? 0),
       discountedPrice: String(coupon.discounted_price ?? 0),
+      percentageOff: String(normalizeCouponPercentageOff(coupon.percentage_off)),
       isActive: coupon.is_active,
     });
   }
@@ -70,8 +89,10 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             code: form.code,
+            couponType: form.couponType,
             grantedCredits: Math.max(0, Math.round(safeParseNumber(form.grantedCredits))),
             discountedPrice: Math.max(0, safeParseNumber(form.discountedPrice)),
+            percentageOff: Math.max(0, normalizeCouponPercentageOff(form.percentageOff)),
             isActive: form.isActive,
           }),
         },
@@ -146,11 +167,11 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aqui defines cupones comerciales con codigo, creditos y precio final para que ventas solo los canjee.
+            Aqui defines cupones comerciales de paquete cerrado o porcentaje de descuento para que ventas los aplique sin rehacer la propuesta.
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-4">
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Codigo
@@ -160,36 +181,83 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                   onChange={(event) =>
                     setForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))
                   }
-                  placeholder="DTEXTIL5"
+                  placeholder="DTEXTIL20"
                 />
               </div>
+
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Creditos
+                  Tipo
                 </label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={form.grantedCredits}
+                <select
+                  value={form.couponType}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, grantedCredits: event.target.value }))
+                    setForm((current) => ({
+                      ...current,
+                      couponType: normalizeSalesCouponType(event.target.value),
+                    }))
                   }
-                />
+                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+                >
+                  <option value="package_override">Paquete cerrado</option>
+                  <option value="percentage">Descuento porcentual</option>
+                </select>
               </div>
-              <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Precio final
-                </label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.discountedPrice}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, discountedPrice: event.target.value }))
-                  }
-                />
-              </div>
+
+              {form.couponType === "package_override" ? (
+                <>
+                  <div>
+                    <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                      Creditos
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={form.grantedCredits}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, grantedCredits: event.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                      Precio final
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={form.discountedPrice}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, discountedPrice: event.target.value }))
+                      }
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Descuento %
+                  </label>
+                  <Input
+                    type="number"
+                    min={0.01}
+                    max={100}
+                    step="0.01"
+                    value={form.percentageOff}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, percentageOff: event.target.value }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              {form.couponType === "package_override"
+                ? "Este cupon reemplaza el paquete comercial actual por una combinacion fija de creditos y precio final."
+                : "Este cupon conserva el board y los creditos ya armados, y solo recalcula el precio con el porcentaje indicado."}
             </div>
 
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3">
@@ -239,10 +307,10 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                     Codigo
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Creditos
+                    Tipo
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Precio final
+                    Beneficio
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Estado
@@ -256,10 +324,8 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                 {rows.map((coupon) => (
                   <tr key={coupon.id}>
                     <td className="px-4 py-3 font-semibold text-slate-800">{coupon.code}</td>
-                    <td className="px-4 py-3 text-slate-600">{coupon.granted_credits} CR</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {formatCurrency(Number(coupon.discounted_price ?? 0))}
-                    </td>
+                    <td className="px-4 py-3 text-slate-600">{getCouponTypeLabel(coupon.coupon_type)}</td>
+                    <td className="px-4 py-3 text-slate-600">{getCouponBenefitLabel(coupon)}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${

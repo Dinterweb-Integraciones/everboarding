@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
+import { normalizeCouponPercentageOff, normalizeSalesCouponType } from "@/lib/sales-proposals";
 import { getActiveSalesCouponByCode } from "@/lib/sales-proposals-server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
@@ -44,14 +45,25 @@ export async function POST(request: Request) {
       );
     }
 
+    const couponType = normalizeSalesCouponType(coupon.coupon_type);
+    const percentageOff =
+      coupon.percentage_off === null || coupon.percentage_off === undefined
+        ? null
+        : normalizeCouponPercentageOff(coupon.percentage_off);
+
     return NextResponse.json({
       ok: true,
       coupon: {
         code: coupon.code,
+        couponType,
         grantedCredits: Math.max(0, safeParseNumber(coupon.granted_credits)),
         discountedPrice: Math.max(0, safeParseNumber(coupon.discounted_price)),
+        percentageOff,
       },
-      message: `Cupon valido: ${Math.max(0, safeParseNumber(coupon.granted_credits))} creditos por ${formatCurrency(Math.max(0, safeParseNumber(coupon.discounted_price)))}.`,
+      message:
+        couponType === "percentage"
+          ? `Cupon valido: ${percentageOff}% de descuento sobre el precio actual de la propuesta.`
+          : `Cupon valido: ${Math.max(0, safeParseNumber(coupon.granted_credits))} creditos por ${formatCurrency(Math.max(0, safeParseNumber(coupon.discounted_price)))}.`,
     });
   } catch (caughtError) {
     return NextResponse.json(

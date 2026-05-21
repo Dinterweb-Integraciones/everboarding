@@ -14,6 +14,7 @@ import {
   TASK_STATUS_META,
 } from "@/lib/constants";
 import {
+  applyPercentageDiscount,
   createProposalSubitemFromCatalog,
   createEmptySalesInitiative,
   createEmptySalesProposalDraft,
@@ -22,6 +23,7 @@ import {
   generateSalesProposalSlug,
   isValidSalesProposalClientEmail,
   normalizeSalesProposalDraft,
+  type SalesCouponType,
   type SalesProposalDraft,
   type SalesProposalInitiativeDraft,
   type SalesProposalRecord,
@@ -247,6 +249,9 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     status: normalized.status,
     appliedCouponId: normalized.appliedCouponId,
     appliedCouponCode: normalized.appliedCouponCode,
+    appliedCouponType: normalized.appliedCouponType,
+    appliedCouponPercentageOff: normalized.appliedCouponPercentageOff,
+    couponBaseQuotedPrice: normalized.couponBaseQuotedPrice,
     couponAppliedAt: normalized.couponAppliedAt,
     initiatives: normalized.initiatives,
   });
@@ -267,8 +272,29 @@ function mergePersistedProposalIntoCurrent(
     assignedCsmUserId: persisted.assignedCsmUserId || current.assignedCsmUserId,
     appliedCouponId: persisted.appliedCouponId,
     appliedCouponCode: persisted.appliedCouponCode,
+    appliedCouponType: persisted.appliedCouponType,
+    appliedCouponPercentageOff: persisted.appliedCouponPercentageOff,
+    couponBaseQuotedPrice: persisted.couponBaseQuotedPrice,
     couponAppliedAt: persisted.couponAppliedAt,
   });
+}
+
+function applyActiveCouponPricing(
+  proposal: SalesProposalDraft,
+  baseQuotedPrice = proposal.quotedPrice,
+) {
+  if (proposal.appliedCouponType !== "percentage" || !proposal.appliedCouponPercentageOff) {
+    return {
+      ...proposal,
+      couponBaseQuotedPrice: proposal.appliedCouponType === "percentage" ? baseQuotedPrice : null,
+    };
+  }
+
+  return {
+    ...proposal,
+    quotedPrice: applyPercentageDiscount(baseQuotedPrice, proposal.appliedCouponPercentageOff),
+    couponBaseQuotedPrice: baseQuotedPrice,
+  };
 }
 
 function parseCalendarDate(value: string) {
@@ -365,11 +391,18 @@ function getSuggestedInitiativeDurationDays(initiative: SalesProposalInitiativeD
 }
 
 function getCurrentHubspotUpsellCount(
-  proposal: Pick<SalesProposalDraft, "contractedCredits" | "quotedPrice">,
+  proposal: Pick<
+    SalesProposalDraft,
+    "contractedCredits" | "quotedPrice" | "appliedCouponType" | "couponBaseQuotedPrice"
+  >,
   option: Pick<(typeof SALES_PROPOSAL_UPSELL_OPTIONS)[number], "credits" | "price">,
 ) {
   const extraCredits = Math.max(0, proposal.contractedCredits - SALES_PROPOSAL_BASE_CREDITS);
-  const extraPrice = Math.max(0, proposal.quotedPrice - SALES_PROPOSAL_BASE_PRICE);
+  const effectiveQuotedPrice =
+    proposal.appliedCouponType === "percentage" && proposal.couponBaseQuotedPrice !== null
+      ? proposal.couponBaseQuotedPrice
+      : proposal.quotedPrice;
+  const extraPrice = Math.max(0, effectiveQuotedPrice - SALES_PROPOSAL_BASE_PRICE);
 
   if (extraCredits === 0 && extraPrice === 0) {
     return 0;
@@ -650,14 +683,16 @@ export function SalesProposalWorkspace({
     const normalizedMonthlyPrice = Math.max(DINTERWEB_BASE_PACKAGE.price, safeParseNumber(monthlyPrice));
     const multiplier = getDinterwebChargeMultiplier(billingMode, periodMonths);
 
-    setProposal((current) => ({
-      ...current,
-      workspaceVariant: "dinterweb",
-      billingMode,
-      periodMonths,
-      contractedCredits: normalizedMonthlyCredits * multiplier,
-      quotedPrice: normalizedMonthlyPrice * multiplier,
-    }));
+    setProposal((current) =>
+      applyActiveCouponPricing({
+        ...current,
+        workspaceVariant: "dinterweb",
+        billingMode,
+        periodMonths,
+        contractedCredits: normalizedMonthlyCredits * multiplier,
+        quotedPrice: normalizedMonthlyPrice * multiplier,
+      }),
+    );
   }
 
   const catalogOptions = useMemo(() => {
@@ -1132,11 +1167,13 @@ export function SalesProposalWorkspace({
   }
 
   function removeHubspotUpsell() {
-    setProposal((current) => ({
-      ...current,
-      contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
-      quotedPrice: SALES_PROPOSAL_BASE_PRICE,
-    }));
+    setProposal((current) =>
+      applyActiveCouponPricing({
+        ...current,
+        contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
+        quotedPrice: SALES_PROPOSAL_BASE_PRICE,
+      }),
+    );
     setUpsellCartCount(0);
     setFeedback({
       tone: "success",
@@ -1193,11 +1230,13 @@ export function SalesProposalWorkspace({
     const addedCredits = upsellPackageCredits * upsellCartCount;
     const addedPrice = upsellPackagePrice * upsellCartCount;
 
-    setProposal((current) => ({
-      ...current,
-      contractedCredits: SALES_PROPOSAL_BASE_CREDITS + addedCredits,
-      quotedPrice: SALES_PROPOSAL_BASE_PRICE + addedPrice,
-    }));
+    setProposal((current) =>
+      applyActiveCouponPricing({
+        ...current,
+        contractedCredits: SALES_PROPOSAL_BASE_CREDITS + addedCredits,
+        quotedPrice: SALES_PROPOSAL_BASE_PRICE + addedPrice,
+      }),
+    );
     setFeedback({
       tone: "success",
       message: upsellCartCount
@@ -1950,6 +1989,10 @@ function mergeRecommendedGroups(
       const validationPayload = (await validationResponse.json()) as {
         ok?: boolean;
         message?: string;
+        coupon?: {
+          couponType?: SalesCouponType;
+          percentageOff?: number | null;
+        };
       };
 
       if (!validationResponse.ok || !validationPayload.ok) {
@@ -2112,9 +2155,17 @@ function mergeRecommendedGroups(
   const hasValidClientEmail = isValidSalesProposalClientEmail(proposal.clientEmail);
   const showClientEmailError = hasClientEmail && !hasValidClientEmail;
   const hasAppliedCoupon = Boolean(proposal.appliedCouponCode.trim());
+  const appliedCouponOriginalPrice =
+    proposal.appliedCouponType === "percentage" && proposal.couponBaseQuotedPrice !== null
+      ? proposal.couponBaseQuotedPrice
+      : null;
   const appliedCouponLabel = hasAppliedCoupon
     ? `Cupon aplicado: ${proposal.appliedCouponCode} · ${proposal.contractedCredits} CR · ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}`
     : "Canjear cupon";
+  const percentageCouponLabel =
+    proposal.appliedCouponType === "percentage" && proposal.appliedCouponPercentageOff
+      ? `Cupon aplicado: ${proposal.appliedCouponCode} · ${proposal.appliedCouponPercentageOff}% OFF · ${appliedCouponOriginalPrice !== null ? `${formatCurrency(appliedCouponOriginalPrice, proposal.currency.toUpperCase())} -> ` : ""}${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}`
+      : appliedCouponLabel;
   const isProposalCheckoutLocked =
     proposal.status === "checkout_pending" ||
     proposal.status === "paid" ||
@@ -2466,7 +2517,7 @@ function mergeRecommendedGroups(
                     className="inline-flex h-10 w-full items-center justify-center rounded-[4px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[12px] font-bold text-[#00bda5] transition hover:border-[#00bda5] hover:bg-[#d7fff7] hover:text-[#009c88] disabled:cursor-not-allowed disabled:opacity-75"
                     disabled={hasAppliedCoupon}
                   >
-                    {appliedCouponLabel}
+                    {hasAppliedCoupon ? percentageCouponLabel : appliedCouponLabel}
                   </button>
 
                   {!hasAppliedCoupon && isCouponPanelOpen ? (

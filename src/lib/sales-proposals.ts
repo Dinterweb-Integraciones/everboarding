@@ -16,6 +16,8 @@ import type { Database } from "@/types/database";
 
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
 
+export type SalesCouponType = "package_override" | "percentage";
+
 export type SalesProposalStatus =
   | "draft"
   | "checkout_pending"
@@ -71,6 +73,9 @@ export type SalesProposalDraft = {
   activatedClientId: string | null;
   appliedCouponId: string | null;
   appliedCouponCode: string;
+  appliedCouponType: SalesCouponType | null;
+  appliedCouponPercentageOff: number | null;
+  couponBaseQuotedPrice: number | null;
   couponAppliedAt: string | null;
   initiatives: SalesProposalInitiativeDraft[];
 };
@@ -114,9 +119,28 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     activatedClientId: null,
     appliedCouponId: null,
     appliedCouponCode: "",
+    appliedCouponType: null,
+    appliedCouponPercentageOff: null,
+    couponBaseQuotedPrice: null,
     couponAppliedAt: null,
     initiatives: [],
   };
+}
+
+export function normalizeSalesCouponType(value: unknown): SalesCouponType {
+  return value === "percentage" ? "percentage" : "package_override";
+}
+
+export function normalizeCouponPercentageOff(value: unknown) {
+  return Math.min(100, Math.max(0, safeParseNumber(value as string | number | null | undefined)));
+}
+
+export function applyPercentageDiscount(amount: number, percentageOff: number) {
+  const normalizedAmount = Math.max(0, safeParseNumber(amount));
+  const normalizedPercentage = normalizeCouponPercentageOff(percentageOff);
+  const discountedAmount = normalizedAmount * (1 - normalizedPercentage / 100);
+
+  return Math.round(discountedAmount * 100) / 100;
 }
 
 function normalizeSalesBillingMode(value: unknown): "subscription" | "one_time" {
@@ -165,6 +189,15 @@ export function normalizeSalesProposalDraft(input: Partial<SalesProposalDraft>):
     billingMode: normalizeSalesBillingMode(input.billingMode ?? base.billingMode),
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
+    appliedCouponType: input.appliedCouponType ? normalizeSalesCouponType(input.appliedCouponType) : null,
+    appliedCouponPercentageOff:
+      input.appliedCouponPercentageOff === null || input.appliedCouponPercentageOff === undefined
+        ? null
+        : normalizeCouponPercentageOff(input.appliedCouponPercentageOff),
+    couponBaseQuotedPrice:
+      input.couponBaseQuotedPrice === null || input.couponBaseQuotedPrice === undefined
+        ? null
+        : Math.max(0, safeParseNumber(input.couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
     periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
@@ -235,6 +268,15 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     activatedClientId: (row.activated_client_id as string | null) ?? null,
     appliedCouponId: (row.applied_coupon_id as string | null) ?? null,
     appliedCouponCode: String(row.applied_coupon_code ?? snapshot.appliedCouponCode ?? ""),
+    appliedCouponType: snapshot.appliedCouponType ? normalizeSalesCouponType(snapshot.appliedCouponType) : null,
+    appliedCouponPercentageOff:
+      snapshot.appliedCouponPercentageOff === null || snapshot.appliedCouponPercentageOff === undefined
+        ? null
+        : normalizeCouponPercentageOff(snapshot.appliedCouponPercentageOff),
+    couponBaseQuotedPrice:
+      snapshot.couponBaseQuotedPrice === null || snapshot.couponBaseQuotedPrice === undefined
+        ? null
+        : Math.max(0, safeParseNumber(snapshot.couponBaseQuotedPrice)),
     couponAppliedAt: (row.coupon_applied_at as string | null) ?? snapshot.couponAppliedAt ?? null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),
@@ -249,6 +291,9 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
   const clientCompany = normalized.clientCompany.trim() || clientName;
   const snapshot: Partial<SalesProposalDraft> = {
     workspaceVariant: normalized.workspaceVariant,
+    appliedCouponType: normalized.appliedCouponType,
+    appliedCouponPercentageOff: normalized.appliedCouponPercentageOff,
+    couponBaseQuotedPrice: normalized.couponBaseQuotedPrice,
     initiatives: normalized.initiatives,
   };
 
