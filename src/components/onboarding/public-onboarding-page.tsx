@@ -74,6 +74,21 @@ function addCalendarMonths(value: Date, amount: number) {
   return new Date(value.getFullYear(), value.getMonth() + amount, 1);
 }
 
+function addRollingCalendarMonths(value: Date, amount: number) {
+  const targetMonthStart = new Date(value.getFullYear(), value.getMonth() + amount, 1);
+  const targetMonthLastDay = new Date(
+    targetMonthStart.getFullYear(),
+    targetMonthStart.getMonth() + 1,
+    0,
+  ).getDate();
+
+  return new Date(
+    targetMonthStart.getFullYear(),
+    targetMonthStart.getMonth(),
+    Math.min(value.getDate(), targetMonthLastDay),
+  );
+}
+
 function startOfCalendarMonth(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
 }
@@ -343,7 +358,7 @@ export function PublicOnboardingPage({
   const timeline = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const windowEnd = addCalendarMonths(windowStart, 3);
+    const windowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
 
     const datedRows = initiatives
       .map((initiative) => {
