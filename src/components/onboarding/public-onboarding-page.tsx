@@ -270,6 +270,9 @@ export function PublicOnboardingPage({
     0,
   );
   const isRecurringPlan = initialData.config.custom_plan_billing_mode !== "one_time";
+  const paymentAmountLabel = isRecurringPlan
+    ? `Inversión ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)}`
+    : "Inversión total";
   const usesStripeMembership = initialData.config.custom_plan_billing_mode !== "one_time";
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
@@ -884,7 +887,7 @@ export function PublicOnboardingPage({
                     <div className="flex flex-wrap items-stretch">
                       <div className="flex min-w-[148px] flex-1 flex-col justify-center px-4 py-3">
                         <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
-                          Inversión total
+                          {paymentAmountLabel}
                         </p>
                         <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
                           {formatCurrency(paymentAmount)}
