@@ -316,6 +316,29 @@ function startOfCalendarMonth(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
 }
 
+function buildRollingTimelineMonthSegments(windowStart: Date, windowEnd: Date) {
+  const segments: Array<{ key: string; label: string; days: number }> = [];
+  let cursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate());
+
+  while (cursor < windowEnd) {
+    const nextMonthStart = addCalendarMonths(startOfCalendarMonth(cursor), 1);
+    const segmentEnd = nextMonthStart < windowEnd ? nextMonthStart : windowEnd;
+
+    segments.push({
+      key: `${cursor.getFullYear()}-${cursor.getMonth() + 1}-${cursor.getDate()}`,
+      label: new Intl.DateTimeFormat("es-NI", {
+        month: "long",
+        year: "numeric",
+      }).format(cursor),
+      days: Math.max(diffCalendarDays(cursor, segmentEnd), 1),
+    });
+
+    cursor = segmentEnd;
+  }
+
+  return segments;
+}
+
 function diffCalendarDays(left: Date, right: Date) {
   const leftCopy = new Date(left.getFullYear(), left.getMonth(), left.getDate());
   const rightCopy = new Date(right.getFullYear(), right.getMonth(), right.getDate());
@@ -325,10 +348,6 @@ function diffCalendarDays(left: Date, right: Date) {
 function getSnappedDayDelta(deltaX: number, dayWidth: number) {
   if (dayWidth <= 0) return 0;
   return Math.round(deltaX / dayWidth);
-}
-
-function minCalendarDate(values: Date[]) {
-  return values.reduce((earliest, current) => (current < earliest ? current : earliest));
 }
 
 function createEditorDraft(initiative: SalesProposalInitiativeDraft) {
@@ -772,19 +791,13 @@ export function SalesProposalWorkspace({
 
   const timelineRows = useMemo(() => {
     const today = new Date();
-    const baseDateCandidates = [today];
-
-    if (proposal.startDate) {
-      baseDateCandidates.push(parseCalendarDate(proposal.startDate));
-    }
+    const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const windowEnd = addCalendarMonths(windowStart, 3);
 
     const datedRows = proposal.initiatives
       .map((initiative) => {
         const start = initiative.estStartDate ? parseCalendarDate(initiative.estStartDate) : null;
         const end = initiative.estEndDate ? parseCalendarDate(initiative.estEndDate) : null;
-
-        if (start) baseDateCandidates.push(start);
-        if (end) baseDateCandidates.push(end);
 
         return { initiative, start, end };
       })
@@ -794,23 +807,8 @@ export function SalesProposalWorkspace({
         return left.start.getTime() - right.start.getTime();
       });
 
-    const windowStart = startOfCalendarMonth(minCalendarDate(baseDateCandidates));
-    const windowEnd = addCalendarMonths(windowStart, 3);
     const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
-    const monthSegments = Array.from({ length: 3 }, (_, index) => {
-      const monthStart = addCalendarMonths(windowStart, index);
-      const nextMonthStart = addCalendarMonths(windowStart, index + 1);
-      const days = diffCalendarDays(monthStart, nextMonthStart);
-
-      return {
-        key: `${monthStart.getFullYear()}-${monthStart.getMonth() + 1}`,
-        label: new Intl.DateTimeFormat("es-NI", {
-          month: "long",
-          year: "numeric",
-        }).format(monthStart),
-        days,
-      };
-    });
+    const monthSegments = buildRollingTimelineMonthSegments(windowStart, windowEnd);
 
     const dayMarkers = Array.from({ length: timelineDays }, (_, index) => {
       const date = addCalendarDays(windowStart, index);
@@ -857,7 +855,7 @@ export function SalesProposalWorkspace({
       windowStart,
       windowEnd,
     };
-  }, [proposal.initiatives, proposal.startDate]);
+  }, [proposal.initiatives]);
 
   useEffect(() => {
     if (!isGeneratingWizardPlan) {

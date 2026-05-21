@@ -78,6 +78,29 @@ function startOfCalendarMonth(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
 }
 
+function buildRollingTimelineMonthSegments(windowStart: Date, windowEnd: Date) {
+  const segments: Array<{ key: string; label: string; days: number }> = [];
+  let cursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), windowStart.getDate());
+
+  while (cursor < windowEnd) {
+    const nextMonthStart = addCalendarMonths(startOfCalendarMonth(cursor), 1);
+    const segmentEnd = nextMonthStart < windowEnd ? nextMonthStart : windowEnd;
+
+    segments.push({
+      key: `${cursor.getFullYear()}-${cursor.getMonth() + 1}-${cursor.getDate()}`,
+      label: new Intl.DateTimeFormat("es-NI", {
+        month: "long",
+        year: "numeric",
+      }).format(cursor),
+      days: Math.max(diffCalendarDays(cursor, segmentEnd), 1),
+    });
+
+    cursor = segmentEnd;
+  }
+
+  return segments;
+}
+
 function diffCalendarDays(left: Date, right: Date) {
   const leftCopy = new Date(left.getFullYear(), left.getMonth(), left.getDate());
   const rightCopy = new Date(right.getFullYear(), right.getMonth(), right.getDate());
@@ -319,11 +342,8 @@ export function PublicOnboardingPage({
           : `Pagar ${formatCurrency(paymentAmount)}`;
   const timeline = useMemo(() => {
     const today = new Date();
-    const baseDateCandidates = [today];
-
-    if (initialData.config.start_date) {
-      baseDateCandidates.push(parseCalendarDate(initialData.config.start_date));
-    }
+    const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const windowEnd = addCalendarMonths(windowStart, 3);
 
     const datedRows = initiatives
       .map((initiative) => {
@@ -353,7 +373,6 @@ export function PublicOnboardingPage({
 
         const normalizedStart = resolvedStart <= resolvedEnd ? resolvedStart : resolvedEnd;
         const normalizedEnd = resolvedEnd >= resolvedStart ? resolvedEnd : resolvedStart;
-        baseDateCandidates.push(normalizedStart);
 
         return {
           initiative,
@@ -368,23 +387,8 @@ export function PublicOnboardingPage({
         return left.start.getTime() - right.start.getTime();
       });
 
-    const windowStart = startOfCalendarMonth(minCalendarDate(baseDateCandidates));
-    const windowEnd = addCalendarMonths(windowStart, 3);
     const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
-    const monthSegments = Array.from({ length: 3 }, (_, index) => {
-      const monthStart = addCalendarMonths(windowStart, index);
-      const nextMonthStart = addCalendarMonths(windowStart, index + 1);
-      const days = diffCalendarDays(monthStart, nextMonthStart);
-
-      return {
-        key: `${monthStart.getFullYear()}-${monthStart.getMonth() + 1}`,
-        label: new Intl.DateTimeFormat("es-NI", {
-          month: "long",
-          year: "numeric",
-        }).format(monthStart),
-        days,
-      };
-    });
+    const monthSegments = buildRollingTimelineMonthSegments(windowStart, windowEnd);
     const dayMarkers = Array.from({ length: timelineDays }, (_, index) => {
       const date = addCalendarDays(windowStart, index);
       const isMonthStart = date.getDate() === 1;
@@ -429,7 +433,7 @@ export function PublicOnboardingPage({
       windowStart,
       windowEnd,
     };
-  }, [initialData.config.start_date, initiatives]);
+  }, [initiatives]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
