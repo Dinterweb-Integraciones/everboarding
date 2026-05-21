@@ -3,9 +3,11 @@ import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import { mapSalesProposalRow, type SalesProposalRecord } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isMissingSupabaseTable } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
+type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_snapshots"]["Row"];
 
 type SalesProposalAccessError = {
   ok: false;
@@ -20,6 +22,27 @@ type SalesProposalAccessSuccess = {
 };
 
 export type SalesProposalAccessResult = SalesProposalAccessError | SalesProposalAccessSuccess;
+
+async function attachStoredSnapshot(proposalRow: SalesProposalRow) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("sales_proposal_snapshots")
+    .select("snapshot")
+    .eq("proposal_id", proposalRow.id)
+    .maybeSingle();
+  const snapshotRow = data as Pick<SalesProposalSnapshotRow, "snapshot"> | null;
+
+  if (error && !isMissingSupabaseTable(error, "sales_proposal_snapshots")) {
+    throw error;
+  }
+
+  return snapshotRow?.snapshot
+    ? ({
+        ...proposalRow,
+        snapshot: snapshotRow.snapshot,
+      } as SalesProposalRow)
+    : proposalRow;
+}
 
 export async function getSalesProposalBySlug(slug: string) {
   const admin = createSupabaseAdminClient();
@@ -38,9 +61,11 @@ export async function getSalesProposalBySlug(slug: string) {
     return null;
   }
 
+  const proposalRowWithSnapshot = await attachStoredSnapshot(proposalRow);
+
   return {
-    proposalRow,
-    proposal: mapSalesProposalRow(proposalRow),
+    proposalRow: proposalRowWithSnapshot,
+    proposal: mapSalesProposalRow(proposalRowWithSnapshot),
   };
 }
 

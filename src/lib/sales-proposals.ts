@@ -87,6 +87,75 @@ export type SalesProposalRecord = SalesProposalDraft & {
   activatedAt: string | null;
 };
 
+type CompactSalesProposalSubitemSnapshot = [
+  id?: string,
+  catalogItemId?: string | null,
+  name?: string,
+  status?: InitiativeTaskStatus,
+  targetDate?: string | null,
+  unitCredits?: number,
+  quantity?: number,
+];
+
+type CompactSalesProposalInitiativeSnapshot = [
+  id?: string,
+  title?: string,
+  type?: string,
+  status?: InitiativeStatus,
+  description?: string | null,
+  estStartDate?: string | null,
+  estEndDate?: string | null,
+  sortOrder?: number,
+  isBlocked?: number | boolean,
+  subitems?: CompactSalesProposalSubitemSnapshot[],
+];
+
+type CompactSalesProposalSnapshot = {
+  w?: "hubspot" | "dinterweb";
+  ct?: SalesCouponType | null;
+  cp?: number | null;
+  cb?: number | null;
+  i?: CompactSalesProposalInitiativeSnapshot[];
+};
+
+function createCompactSalesProposalSnapshot(
+  draft: Pick<
+    SalesProposalDraft,
+    | "workspaceVariant"
+    | "appliedCouponType"
+    | "appliedCouponPercentageOff"
+    | "couponBaseQuotedPrice"
+    | "initiatives"
+  >,
+): CompactSalesProposalSnapshot {
+  return {
+    w: draft.workspaceVariant,
+    ct: draft.appliedCouponType,
+    cp: draft.appliedCouponPercentageOff,
+    cb: draft.couponBaseQuotedPrice,
+    i: draft.initiatives.map((initiative) => [
+      initiative.id,
+      initiative.title,
+      initiative.type,
+      initiative.status,
+      initiative.description || null,
+      initiative.estStartDate || null,
+      initiative.estEndDate || null,
+      initiative.sortOrder,
+      initiative.isBlocked ? 1 : 0,
+      initiative.subitems.map((subitem) => [
+        subitem.id,
+        subitem.catalogItemId,
+        subitem.name,
+        subitem.status,
+        subitem.targetDate || null,
+        subitem.unitCredits,
+        subitem.quantity,
+      ]),
+    ]),
+  };
+}
+
 export function createLocalId(prefix: string) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -178,50 +247,103 @@ export function createProposalSubitemFromCatalog(item: CreditCatalogItem): Sales
   };
 }
 
-export function normalizeSalesProposalDraft(input: Partial<SalesProposalDraft>): SalesProposalDraft {
+function normalizeSalesProposalSubitemDraft(
+  subitem: Partial<SalesProposalSubitemDraft> | CompactSalesProposalSubitemSnapshot,
+): SalesProposalSubitemDraft {
+  if (Array.isArray(subitem)) {
+    return {
+      id: subitem[0] || createLocalId("sales-subitem"),
+      catalogItemId: subitem[1] || null,
+      name: subitem[2] || "",
+      status: subitem[3] || "pending",
+      targetDate: subitem[4] || "",
+      unitCredits: Math.max(0, safeParseNumber(subitem[5])),
+      quantity: Math.max(1, safeParseNumber(subitem[6] || 1)),
+    };
+  }
+
+  return {
+    id: subitem.id || createLocalId("sales-subitem"),
+    catalogItemId: subitem.catalogItemId || null,
+    name: subitem.name || "",
+    status: subitem.status || "pending",
+    targetDate: subitem.targetDate || "",
+    unitCredits: Math.max(0, safeParseNumber(subitem.unitCredits)),
+    quantity: Math.max(1, safeParseNumber(subitem.quantity || 1)),
+  };
+}
+
+function normalizeSalesProposalInitiativeDraft(
+  initiative: Partial<SalesProposalInitiativeDraft> | CompactSalesProposalInitiativeSnapshot,
+  initiativeIndex: number,
+): SalesProposalInitiativeDraft {
+  if (Array.isArray(initiative)) {
+    return {
+      id: initiative[0] || createLocalId("sales-initiative"),
+      title: initiative[1] || "",
+      type: initiative[2] || "",
+      status: initiative[3] || "backlog",
+      description: initiative[4] || "",
+      estStartDate: initiative[5] || "",
+      estEndDate: initiative[6] || "",
+      sortOrder: safeParseNumber(initiative[7] ?? initiativeIndex),
+      isBlocked: Boolean(initiative[8]),
+      subitems: (initiative[9] ?? []).map((subitem) => normalizeSalesProposalSubitemDraft(subitem)),
+    };
+  }
+
+  return {
+    id: initiative.id || createLocalId("sales-initiative"),
+    title: initiative.title || "",
+    type: initiative.type || "",
+    status: initiative.status || "backlog",
+    description: initiative.description || "",
+    estStartDate: initiative.estStartDate || "",
+    estEndDate: initiative.estEndDate || "",
+    sortOrder: safeParseNumber(initiative.sortOrder ?? initiativeIndex),
+    isBlocked: Boolean(initiative.isBlocked),
+    subitems: (initiative.subitems ?? []).map((subitem) => normalizeSalesProposalSubitemDraft(subitem)),
+  };
+}
+
+export function normalizeSalesProposalDraft(
+  input: Partial<SalesProposalDraft> & CompactSalesProposalSnapshot,
+): SalesProposalDraft {
   const base = createEmptySalesProposalDraft();
+  const couponType = input.appliedCouponType ?? input.ct ?? null;
+  const couponPercentageOff = input.appliedCouponPercentageOff ?? input.cp;
+  const couponBaseQuotedPrice = input.couponBaseQuotedPrice ?? input.cb;
+  const rawInitiatives = Array.isArray(input.initiatives)
+    ? input.initiatives
+    : Array.isArray(input.i)
+      ? input.i
+      : [];
 
   return {
     ...base,
     ...input,
     currency: (input.currency || base.currency).toLowerCase(),
-    workspaceVariant: input.workspaceVariant === "dinterweb" ? "dinterweb" : "hubspot",
+    workspaceVariant:
+      input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot",
     billingMode: normalizeSalesBillingMode(input.billingMode ?? base.billingMode),
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
-    appliedCouponType: input.appliedCouponType ? normalizeSalesCouponType(input.appliedCouponType) : null,
+    appliedCouponType: couponType ? normalizeSalesCouponType(couponType) : null,
     appliedCouponPercentageOff:
-      input.appliedCouponPercentageOff === null || input.appliedCouponPercentageOff === undefined
+      couponPercentageOff === null || couponPercentageOff === undefined
         ? null
-        : normalizeCouponPercentageOff(input.appliedCouponPercentageOff),
+        : normalizeCouponPercentageOff(couponPercentageOff),
     couponBaseQuotedPrice:
-      input.couponBaseQuotedPrice === null || input.couponBaseQuotedPrice === undefined
+      couponBaseQuotedPrice === null || couponBaseQuotedPrice === undefined
         ? null
-        : Math.max(0, safeParseNumber(input.couponBaseQuotedPrice)),
+        : Math.max(0, safeParseNumber(couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
     periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
-    initiatives: (input.initiatives ?? []).map((initiative, initiativeIndex) => ({
-      id: initiative.id || createLocalId("sales-initiative"),
-      title: initiative.title || "",
-      type: initiative.type || "",
-      status: initiative.status || "backlog",
-      description: initiative.description || "",
-      estStartDate: initiative.estStartDate || "",
-      estEndDate: initiative.estEndDate || "",
-      sortOrder: safeParseNumber(initiative.sortOrder ?? initiativeIndex),
-      isBlocked: Boolean(initiative.isBlocked),
-      subitems: (initiative.subitems ?? []).map((subitem) => ({
-        id: subitem.id || createLocalId("sales-subitem"),
-        catalogItemId: subitem.catalogItemId || null,
-        name: subitem.name || "",
-        status: subitem.status || "pending",
-        targetDate: subitem.targetDate || "",
-        unitCredits: Math.max(0, safeParseNumber(subitem.unitCredits)),
-        quantity: Math.max(1, safeParseNumber(subitem.quantity || 1)),
-      })),
-    })),
+    initiatives: rawInitiatives.map((initiative, initiativeIndex) =>
+      normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex),
+    ),
   };
 }
 
@@ -289,13 +411,10 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
   const normalized = normalizeSalesProposalDraft(draft);
   const clientName = normalized.clientName.trim();
   const clientCompany = normalized.clientCompany.trim() || clientName;
-  const snapshot: Partial<SalesProposalDraft> = {
-    workspaceVariant: normalized.workspaceVariant,
-    appliedCouponType: normalized.appliedCouponType,
-    appliedCouponPercentageOff: normalized.appliedCouponPercentageOff,
-    couponBaseQuotedPrice: normalized.couponBaseQuotedPrice,
-    initiatives: normalized.initiatives,
-  };
+  const snapshot = createCompactSalesProposalSnapshot({
+    ...normalized,
+    initiatives: [],
+  });
 
   return {
     title: normalized.title.trim() || "Propuesta comercial",
@@ -320,6 +439,10 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     coupon_applied_at: normalized.couponAppliedAt,
     snapshot,
   };
+}
+
+export function serializeSalesProposalFullSnapshot(draft: SalesProposalDraft) {
+  return createCompactSalesProposalSnapshot(normalizeSalesProposalDraft(draft));
 }
 
 function isMissingClientName(value: string) {

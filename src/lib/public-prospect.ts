@@ -12,10 +12,12 @@ import {
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isMissingSupabaseTable } from "@/lib/utils";
 import { toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
+type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_snapshots"]["Row"];
 
 export type PublicProspectSnapshotBase = Pick<
   PublicOnboardingSnapshot,
@@ -160,5 +162,27 @@ export async function getSalesProposalBySlug(slug: string) {
     throw error;
   }
 
-  return proposalRow ? mapSalesProposalRow(proposalRow) : null;
+  if (!proposalRow) {
+    return null;
+  }
+
+  const { data: snapshotData, error: snapshotError } = await admin
+    .from("sales_proposal_snapshots")
+    .select("snapshot")
+    .eq("proposal_id", proposalRow.id)
+    .maybeSingle();
+  const snapshotRow = snapshotData as Pick<SalesProposalSnapshotRow, "snapshot"> | null;
+
+  if (snapshotError && !isMissingSupabaseTable(snapshotError, "sales_proposal_snapshots")) {
+    throw snapshotError;
+  }
+
+  return mapSalesProposalRow(
+    snapshotRow?.snapshot
+      ? ({
+          ...proposalRow,
+          snapshot: snapshotRow.snapshot,
+        } as SalesProposalRow)
+      : proposalRow,
+  );
 }

@@ -11,16 +11,14 @@ import type {
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
-import { mapSalesProposalRow } from "@/lib/sales-proposals";
+import { getSalesProposalBySlug } from "@/lib/sales-proposal-access";
+import type { SalesProposalRecord } from "@/lib/sales-proposals";
 import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Database } from "@/types/database";
 
 type DinterwebSalesProposalPageProps = {
   params: Promise<{ slug: string }>;
 };
-
-type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,7 +30,7 @@ export default async function DinterwebSalesProposalPage({
   const seller = getDinterwebSellerIdentity(user);
   const isGlobalView = canManagePlatformUsers(platformProfile?.platform_role ?? null);
   const { slug } = await params;
-  let proposalRow: SalesProposalRow | null = null;
+  let initialProposal: SalesProposalRecord | null = null;
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
   let groupCategoryRows: CreditCatalogGroupCategory[] = [];
@@ -41,15 +39,19 @@ export default async function DinterwebSalesProposalPage({
 
   try {
     const admin = createSupabaseAdminClient();
+    const storedProposal = await getSalesProposalBySlug(slug);
+
+    if (!storedProposal) {
+      notFound();
+    }
+
     const [
-      { data: fetchedProposal, error: proposalError },
       { data: fetchedCatalog, error: catalogError },
       { data: fetchedGroups, error: groupsError },
       { data: fetchedGroupCategories, error: groupCategoriesError },
       { data: fetchedGroupCategoryLinks, error: groupCategoryLinksError },
       { data: fetchedMemberships, error: membershipsError },
     ] = await Promise.all([
-      admin.from("sales_proposals").select("*").eq("slug", slug).maybeSingle(),
       admin
         .from("credit_catalog_items")
         .select("*")
@@ -61,10 +63,6 @@ export default async function DinterwebSalesProposalPage({
       admin.from("credit_catalog_group_category_links").select("*").order("created_at"),
       admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
     ]);
-
-    if (proposalError) {
-      console.error("dinterweb_sales_proposal_load_failed", { slug, error: proposalError });
-    }
 
     if (catalogError) {
       console.error("dinterweb_sales_proposal_catalog_load_failed", { slug, error: catalogError });
@@ -95,7 +93,10 @@ export default async function DinterwebSalesProposalPage({
       });
     }
 
-    proposalRow = (fetchedProposal as SalesProposalRow | null) ?? null;
+    initialProposal =
+      storedProposal.proposal.status === "checkout_pending"
+        ? await syncSalesProposalCheckoutStatus(slug)
+        : storedProposal.proposal;
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     groupCategoryRows = fetchedGroupCategories ?? [];
@@ -103,18 +104,12 @@ export default async function DinterwebSalesProposalPage({
     membershipRows = fetchedMemberships ?? [];
   } catch (error) {
     console.error("dinterweb_sales_proposal_workspace_bootstrap_failed", { slug, error });
-    proposalRow = null;
+    initialProposal = null;
   }
 
-  if (!proposalRow) {
+  if (!initialProposal) {
     notFound();
   }
-
-  const typedProposalRow: SalesProposalRow = proposalRow;
-  const initialProposal =
-    typedProposalRow.status === "checkout_pending"
-      ? await syncSalesProposalCheckoutStatus(slug)
-      : mapSalesProposalRow(typedProposalRow);
 
   if (
     initialProposal.workspaceVariant !== "dinterweb" ||

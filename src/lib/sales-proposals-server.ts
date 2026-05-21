@@ -8,17 +8,19 @@ import {
   normalizeCouponPercentageOff,
   normalizeSalesCouponType,
   serializeSalesProposalDraft,
+  serializeSalesProposalFullSnapshot,
   type SalesCouponType,
   type SalesProposalDraft,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
+import { isMissingSupabaseTable, safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
 type RecordStripeCheckoutPaymentArgs =
   Database["public"]["Functions"]["record_stripe_checkout_payment"]["Args"];
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
+type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_snapshots"]["Row"];
 type SalesCouponRow = Database["public"]["Tables"]["sales_coupons"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type OnboardingInitiativeRow = Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
@@ -46,6 +48,42 @@ type SalesProposalPaymentContext = {
 
 const LEGACY_SALES_COUPON_GRANTED_CREDITS = 40;
 const LEGACY_SALES_COUPON_PRICE = 0;
+
+async function loadSalesProposalSnapshot(proposalId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("sales_proposal_snapshots")
+    .select("snapshot")
+    .eq("proposal_id", proposalId)
+    .maybeSingle();
+  const snapshotRow = data as Pick<SalesProposalSnapshotRow, "snapshot"> | null;
+
+  if (error) {
+    if (isMissingSupabaseTable(error, "sales_proposal_snapshots")) {
+      return null;
+    }
+
+    throw error;
+  }
+
+  return snapshotRow?.snapshot ?? null;
+}
+
+function attachSalesProposalSnapshot(row: SalesProposalRow, snapshot: unknown) {
+  if (!snapshot) {
+    return row;
+  }
+
+  return {
+    ...row,
+    snapshot,
+  };
+}
+
+async function mapSalesProposalRecord(row: SalesProposalRow) {
+  const snapshot = await loadSalesProposalSnapshot(row.id);
+  return mapSalesProposalRow(attachSalesProposalSnapshot(row, snapshot));
+}
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -327,6 +365,7 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
   }
 
   const serialized = serializeSalesProposalDraft(draftToPersist);
+  const fullSnapshot = serializeSalesProposalFullSnapshot(draftToPersist);
   const payload = ({
     slug: proposalSlug,
     ...serialized,
@@ -358,7 +397,22 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
     throw error ?? new Error("No pudimos guardar la propuesta comercial.");
   }
 
-  return mapSalesProposalRow(data as SalesProposalRow);
+  const typedRow = data as SalesProposalRow;
+  const { error: snapshotError } = await admin.from("sales_proposal_snapshots").upsert(({
+    proposal_id: typedRow.id,
+    snapshot: fullSnapshot,
+    updated_at: new Date().toISOString(),
+  }) as never);
+
+  if (snapshotError) {
+    if (isMissingSupabaseTable(snapshotError, "sales_proposal_snapshots")) {
+      throw new Error("Falta aplicar la migracion de snapshots de propuestas comerciales.");
+    }
+
+    throw snapshotError;
+  }
+
+  return mapSalesProposalRow(attachSalesProposalSnapshot(typedRow, fullSnapshot));
 }
 
 export async function applySalesCouponToProposal(proposalSlug: string, couponCode: string) {
@@ -388,7 +442,7 @@ export async function applySalesCouponToProposal(proposalSlug: string, couponCod
     throw new Error("El cupon no existe o ya no esta activo.");
   }
 
-  const proposal = mapSalesProposalRow(typedProposalRow);
+  const proposal = await mapSalesProposalRecord(typedProposalRow);
   const nextProposal = applyCouponTermsToProposal(proposal, coupon);
 
   return saveSalesProposal(nextProposal, proposalSlug);
@@ -455,7 +509,7 @@ async function activateSalesProposalFromCoupon(
     throw error ?? new Error("No pudimos refrescar la propuesta activada con cupon.");
   }
 
-  return mapSalesProposalRow(typedRefreshedRow);
+  return mapSalesProposalRecord(typedRefreshedRow);
 }
 
 export async function activateSalesProposal(
@@ -603,7 +657,7 @@ async function activateSalesProposalWithPaymentContext(
     throw proposalError ?? new Error("No encontramos la propuesta comercial pagada.");
   }
 
-  const proposal = mapSalesProposalRow(typedProposalRow);
+  const proposal = await mapSalesProposalRecord(typedProposalRow);
   const mappedProposalId = proposal.id;
   if (!mappedProposalId) {
     throw new Error("La propuesta pagada no tiene un identificador valido.");
@@ -898,7 +952,7 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
   const storedCoupon = await getSalesCouponForProposal(typedProposalRow, false);
 
   if (storedCoupon && getSalesCouponDiscountedPrice(storedCoupon) <= 0) {
-    await activateSalesProposalFromCoupon(mapSalesProposalRow(typedProposalRow), storedCoupon);
+    await activateSalesProposalFromCoupon(await mapSalesProposalRecord(typedProposalRow), storedCoupon);
     return;
   }
 
@@ -930,7 +984,7 @@ export async function syncSalesProposalCheckoutStatus(
     throw error ?? new Error("No encontramos la propuesta comercial.");
   }
 
-  const currentProposal = mapSalesProposalRow(typedProposalRow);
+  const currentProposal = await mapSalesProposalRecord(typedProposalRow);
   if (currentProposal.status !== "checkout_pending") {
     return currentProposal;
   }
@@ -973,5 +1027,5 @@ export async function syncSalesProposalCheckoutStatus(
     throw refreshedError ?? new Error("No pudimos refrescar la propuesta despues del pago.");
   }
 
-  return mapSalesProposalRow(typedRefreshedRow);
+  return mapSalesProposalRecord(typedRefreshedRow);
 }

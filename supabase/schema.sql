@@ -93,6 +93,13 @@ create table if not exists public.sales_proposals (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.sales_proposal_snapshots (
+  proposal_id uuid primary key references public.sales_proposals(id) on delete cascade,
+  snapshot jsonb not null default '{"i":[]}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.sales_coupons (
   id uuid primary key default gen_random_uuid(),
   code text not null,
@@ -416,6 +423,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_sales_proposals_updated_at on public.sales_proposals;
 create trigger set_sales_proposals_updated_at
 before update on public.sales_proposals
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_sales_proposal_snapshots_updated_at on public.sales_proposal_snapshots;
+create trigger set_sales_proposal_snapshots_updated_at
+before update on public.sales_proposal_snapshots
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_sales_coupons_updated_at on public.sales_coupons;
@@ -1545,6 +1557,7 @@ alter table public.onboarding_initiatives enable row level security;
 alter table public.onboarding_initiative_subitems enable row level security;
 alter table public.onboarding_activity_logs enable row level security;
 alter table public.sales_proposals enable row level security;
+alter table public.sales_proposal_snapshots enable row level security;
 
 drop policy if exists "profiles_select_allowed" on public.profiles;
 drop policy if exists "profiles_update_own" on public.profiles;

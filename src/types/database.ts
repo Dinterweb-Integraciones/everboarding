@@ -233,6 +233,26 @@ export type Database = {
           updated_at?: string;
         };
       };
+      sales_proposal_snapshots: {
+        Row: {
+          proposal_id: string;
+          snapshot: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          proposal_id: string;
+          snapshot?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          proposal_id?: string;
+          snapshot?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       sales_coupons: {
         Row: {
           id: string;
