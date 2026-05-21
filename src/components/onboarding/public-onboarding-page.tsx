@@ -198,8 +198,10 @@ export function PublicOnboardingPage({
   publicSlug,
   initialData,
 }: PublicOnboardingPageProps) {
+  const [config, setConfig] = useState(initialData.config);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
   const [billing, setBilling] = useState(initialData.billing);
+  const [prospectProposal, setProspectProposal] = useState(initialData.prospectProposal ?? null);
   const [requestDraft, setRequestDraft] = useState({
     title: "",
     description: "",
@@ -217,14 +219,19 @@ export function PublicOnboardingPage({
     message: string;
   } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [couponCode, setCouponCode] = useState(initialData.prospectProposal?.appliedCouponCode ?? "");
+  const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
+    Boolean(initialData.prospectProposal?.appliedCouponCode?.trim()),
+  );
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [isStartingPayment, setIsStartingPayment] = useState(false);
   const [isSyncingPayment, setIsSyncingPayment] = useState(false);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
   const metrics = useMemo(
-    () => calculateMetrics(initialData.config, initiatives, billing),
-    [billing, initialData.config, initiatives],
+    () => calculateMetrics(config, initiatives, billing),
+    [billing, config, initiatives],
   );
 
   const groupedInitiatives = useMemo(() => {
@@ -301,19 +308,15 @@ export function PublicOnboardingPage({
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const paymentAmount = Number(
-    initialData.config.custom_plan_price ??
-      suggestPlanPrice(initialData.config.custom_plan_credits ?? initialData.config.base_capacity),
+    config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity),
   );
-  const contractedPlanCredits = Math.max(
-    initialData.config.custom_plan_credits ?? initialData.config.base_capacity,
-    0,
-  );
+  const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
   const extraPackageResultingCredits = metrics.total + PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
-  const isRecurringPlan = initialData.config.custom_plan_billing_mode !== "one_time";
+  const isRecurringPlan = config.custom_plan_billing_mode !== "one_time";
   const paymentAmountLabel = isRecurringPlan
-    ? `Inversión ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)}`
+    ? `Inversión ${getPlanCadenceLabel(config.custom_plan_period_months)}`
     : "Inversión total";
-  const usesStripeMembership = initialData.config.custom_plan_billing_mode !== "one_time";
+  const usesStripeMembership = config.custom_plan_billing_mode !== "one_time";
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
 
@@ -339,6 +342,16 @@ export function PublicOnboardingPage({
         hasActivatedWork;
   const shouldShowPaymentCta = paymentAmount > 0 && !hasPaidCycleAccess;
   const shouldPromptPayment = shouldShowPaymentCta;
+  const hasAppliedCoupon = Boolean(prospectProposal?.appliedCouponCode.trim());
+  const appliedCouponLabel = hasAppliedCoupon
+    ? `Cupón aplicado: ${prospectProposal?.appliedCouponCode}`
+    : "Canjear cupón";
+  const percentageCouponLabel =
+    hasAppliedCoupon &&
+    prospectProposal?.appliedCouponType === "percentage" &&
+    prospectProposal.appliedCouponPercentageOff !== null
+      ? `${prospectProposal.appliedCouponPercentageOff}% OFF aplicado`
+      : appliedCouponLabel;
   const prospectPlanActionLabel =
     isStartingPayment || isSyncingPayment
       ? "Confirmando pago..."
@@ -349,11 +362,13 @@ export function PublicOnboardingPage({
     isStartingPayment || isSyncingPayment
       ? "Confirmando pago..."
       : audience === "prospect"
-        ? usesStripeMembership
-          ? `Pagar membresia ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
-          : `Pagar propuesta ${formatCurrency(paymentAmount)}`
+        ? paymentAmount <= 0
+          ? "Activar plan sin pago"
+          : usesStripeMembership
+            ? `Pagar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
+            : `Pagar propuesta ${formatCurrency(paymentAmount)}`
         : usesStripeMembership
-          ? `Activar membresia ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
+          ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
           : `Pagar ${formatCurrency(paymentAmount)}`;
   const timeline = useMemo(() => {
     const today = new Date();
@@ -692,10 +707,31 @@ export function PublicOnboardingPage({
 
       const payload = (await response.json()) as {
         url?: string;
+        config?: PublicOnboardingSnapshot["config"];
+        billing?: ClientBillingStatus;
+        prospectProposal?: PublicOnboardingSnapshot["prospectProposal"];
         message?: string;
       };
 
-      if (!response.ok || !payload.url) {
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos abrir el formulario de pago.");
+      }
+
+      if (payload.config && payload.billing) {
+        setConfig(payload.config);
+        setBilling(payload.billing);
+        setProspectProposal(payload.prospectProposal ?? null);
+        setCouponCode(payload.prospectProposal?.appliedCouponCode ?? couponCode);
+        setIsCouponPanelOpen(Boolean(payload.prospectProposal?.appliedCouponCode?.trim()));
+        setIsStartingPayment(false);
+        setFeedback({
+          tone: "success",
+          message: payload.message || "Plan activado correctamente.",
+        });
+        return;
+      }
+
+      if (!payload.url) {
         throw new Error(payload.message || "No pudimos abrir el formulario de pago.");
       }
 
@@ -710,6 +746,63 @@ export function PublicOnboardingPage({
       });
       setIsStartingPayment(false);
     }
+  }
+
+  async function handleApplyCoupon() {
+    const normalizedCode = couponCode.trim();
+
+    if (!normalizedCode) {
+      setFeedback({
+        tone: "error",
+        message: "Ingresa un cupon antes de intentar canjearlo.",
+      });
+      return;
+    }
+
+    setIsApplyingCoupon(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/public-onboarding/${audience}/${publicSlug}/apply-coupon`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code: normalizedCode }),
+      });
+
+      const payload = (await response.json()) as {
+        config?: PublicOnboardingSnapshot["config"];
+        billing?: ClientBillingStatus;
+        prospectProposal?: PublicOnboardingSnapshot["prospectProposal"];
+        message?: string;
+      };
+
+      if (!response.ok || !payload.config || !payload.billing) {
+        throw new Error(payload.message || "No pudimos aplicar el cupon.");
+      }
+
+      setConfig(payload.config);
+      setBilling(payload.billing);
+      setProspectProposal(payload.prospectProposal ?? null);
+      setCouponCode(payload.prospectProposal?.appliedCouponCode ?? normalizedCode);
+      setIsCouponPanelOpen(Boolean(payload.prospectProposal?.appliedCouponCode?.trim()));
+      setFeedback({
+        tone: "success",
+        message: payload.message || "Cupon aplicado correctamente.",
+      });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos aplicar el cupon al prospecto."),
+      });
+    } finally {
+      setIsApplyingCoupon(false);
+    }
+  }
+
+  function handleRedeemCoupon() {
+    setIsCouponPanelOpen((current) => !current);
   }
 
   function addCatalogItem() {
@@ -879,7 +972,7 @@ export function PublicOnboardingPage({
                   </h1>
                   <div className="flex items-center gap-2 text-[11px] text-[#516f90]">
                     <CalendarDays className="h-3.5 w-3.5" />
-                    <span>{formatLongDate(initialData.config.start_date)}</span>
+                    <span>{formatLongDate(config.start_date)}</span>
                   </div>
                   <Badge className="bg-[#e6fffb] text-[#00a88f]">
                     {isRecurringPlan ? "Recurrente" : "Paquete de créditos"}
@@ -925,12 +1018,47 @@ export function PublicOnboardingPage({
                         <button
                           type="button"
                           onClick={() => void startStripeCheckout("plan")}
-                          disabled={hasPaidCycleAccess || isStartingPayment || isSyncingPayment || paymentAmount <= 0}
+                          disabled={hasPaidCycleAccess || isStartingPayment || isSyncingPayment}
                           className="inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[14px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           <span className="whitespace-nowrap">{prospectPlanActionLabel}</span>
                           <Sparkles className="h-3.5 w-3.5 shrink-0" />
                         </button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-[#dfe3eb] px-3 py-3">
+                      <div className="flex flex-col items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={hasAppliedCoupon ? undefined : handleRedeemCoupon}
+                          className="inline-flex h-10 w-full items-center justify-center rounded-[4px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[12px] font-bold text-[#00bda5] transition hover:border-[#00bda5] hover:bg-[#d7fff7] hover:text-[#009c88] disabled:cursor-not-allowed disabled:opacity-75"
+                          disabled={hasAppliedCoupon}
+                        >
+                          {hasAppliedCoupon ? percentageCouponLabel : appliedCouponLabel}
+                        </button>
+
+                        {!hasAppliedCoupon && isCouponPanelOpen ? (
+                          <div className="w-full rounded-[4px] border border-[#d7efe8] bg-[#f7fffc] p-2.5">
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <input
+                                type="text"
+                                value={couponCode}
+                                onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+                                placeholder="Ingresa el cupon"
+                                className="h-10 flex-1 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-medium text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#00bda5]"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleApplyCoupon}
+                                disabled={isApplyingCoupon}
+                                className="inline-flex h-10 items-center justify-center rounded-[4px] bg-[#00bda5] px-4 text-[12px] font-bold text-white transition hover:bg-[#009c88] disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                {isApplyingCoupon ? "Aplicando..." : "Aplicar cupon"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>

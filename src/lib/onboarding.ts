@@ -97,6 +97,12 @@ export type PublicOnboardingSnapshot = {
   catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
   paymentEmail: string | null;
+  prospectProposal?: {
+    workspaceVariant: "hubspot" | "dinterweb";
+    appliedCouponCode: string;
+    appliedCouponType: "package_override" | "percentage" | null;
+    appliedCouponPercentageOff: number | null;
+  } | null;
 };
 
 export type CatalogModalGroup = {

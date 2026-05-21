@@ -9,8 +9,8 @@ import {
   type PublicClientSummary,
   type PublicOnboardingAudience,
 } from "@/lib/onboarding";
-import { getSalesProposalBySlug } from "@/lib/public-prospect";
-import { createSalesProposalCheckout } from "@/lib/sales-proposals-server";
+import { buildPublicProspectSnapshotBase, getSalesProposalBySlug } from "@/lib/public-prospect";
+import { activateSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
 
@@ -84,12 +84,23 @@ export async function POST(request: Request) {
         );
       }
 
-      const origin = resolveOrigin(request);
-      const publicProspectUrl = `${origin}/public/prospect/${body.slug}`;
-      const url = await createSalesProposalCheckout(request, proposal, {
-        successUrl: `${publicProspectUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${publicProspectUrl}?payment=cancelled`,
-      });
+      const activationResult = await activateSalesProposal(request, proposal);
+
+      if ("proposal" in activationResult && activationResult.proposal) {
+        const snapshot = buildPublicProspectSnapshotBase(activationResult.proposal);
+
+        return NextResponse.json({
+          config: snapshot.config,
+          billing: snapshot.billing,
+          prospectProposal: snapshot.prospectProposal,
+          message: activationResult.message,
+        });
+      }
+
+      const url = activationResult.url;
+      if (!url) {
+        throw new Error("No pudimos preparar la activacion del prospecto.");
+      }
 
       return NextResponse.json({ url });
     }

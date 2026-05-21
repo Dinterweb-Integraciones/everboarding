@@ -21,7 +21,7 @@ type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_sna
 
 export type PublicProspectSnapshotBase = Pick<
   PublicOnboardingSnapshot,
-  "client" | "config" | "billing" | "initiatives" | "paymentEmail"
+  "client" | "config" | "billing" | "initiatives" | "paymentEmail" | "prospectProposal"
 >;
 
 function normalizeInitiativeStatus(
@@ -146,6 +146,12 @@ export function buildPublicProspectSnapshotBase(
       mapProposalInitiativeToPublicRecord(initiative, proposal, index),
     ),
     paymentEmail: proposal.sellerEmail || null,
+    prospectProposal: {
+      workspaceVariant: proposal.workspaceVariant || "hubspot",
+      appliedCouponCode: proposal.appliedCouponCode || "",
+      appliedCouponType: proposal.appliedCouponType,
+      appliedCouponPercentageOff: proposal.appliedCouponPercentageOff,
+    },
   };
 }
 
