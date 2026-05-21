@@ -98,7 +98,7 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
-const summaryStatuses: InitiativeStatus[] = boardStatuses;
+const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
 const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,

@@ -171,6 +171,7 @@ export function PublicOnboardingPage({
   const [catalogSelection, setCatalogSelection] = useState("");
   const [isGroupBuilderOpen, setIsGroupBuilderOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+  const [isExtraCreditsModalOpen, setIsExtraCreditsModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState("");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
   const [feedback, setFeedback] = useState<{
@@ -269,6 +270,7 @@ export function PublicOnboardingPage({
     initialData.config.custom_plan_credits ?? initialData.config.base_capacity,
     0,
   );
+  const extraPackageResultingCredits = metrics.total + PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
   const isRecurringPlan = initialData.config.custom_plan_billing_mode !== "one_time";
   const paymentAmountLabel = isRecurringPlan
     ? `Inversión ${getPlanCadenceLabel(initialData.config.custom_plan_period_months)}`
@@ -879,7 +881,7 @@ export function PublicOnboardingPage({
 
               <div
                 className={`flex w-full flex-col gap-3 ${
-                  audience === "prospect" ? "max-w-[520px]" : "max-w-[360px]"
+                  audience === "prospect" || audience === "client" ? "max-w-[520px]" : "max-w-[360px]"
                 }`}
               >
                 {audience === "prospect" ? (
@@ -920,28 +922,53 @@ export function PublicOnboardingPage({
                     : "Puedes proponer nuevas iniciativas, pero solo entraran en En evaluacion."}
                 </div>
                 {audience === "client" ? (
-                  <div className="rounded-[14px] border border-[#99f6e4] bg-[#effdfa] px-4 py-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#00a88f]">
-                      Paquete adicional
-                    </p>
-                    <div className="mt-2 flex items-end justify-between gap-3">
-                      <div>
-                        <p className="text-[22px] font-extrabold text-[#00bda5]">
-                          {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos
+                  <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
+                    <div className="border-b border-[#dfe3eb] px-4 py-2">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
+                        Ampliar plan
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-stretch">
+                      <div className="flex min-w-[148px] flex-1 flex-col justify-center px-4 py-3">
+                        <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
+                          Inversión total
                         </p>
-                        <p className="mt-1 text-[12px] text-[#516f90]">
-                          {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)} para ampliar capacidad.
+                        <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
+                          {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}
                         </p>
                       </div>
-                      <Button
-                        variant="primary"
-                        className="rounded-[10px] bg-[#00bda5] px-4 text-white hover:bg-[#00a894]"
-                        onClick={() => void startStripeCheckout("extra_package")}
-                        disabled={isStartingPayment || isSyncingPayment}
-                      >
-                        <CreditCard className="mr-2 h-4 w-4" />
-                        Pagar
-                      </Button>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex shrink-0 items-center px-4 py-3">
+                        <span className="inline-flex h-11 min-w-[96px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[16px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
+                          {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR
+                        </span>
+                      </div>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex shrink-0 items-center px-2 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setIsExtraCreditsModalOpen(true)}
+                          disabled={isStartingPayment || isSyncingPayment}
+                          className="grid h-11 w-11 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Abrir detalle del paquete adicional"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex min-w-[220px] flex-1 items-center px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => void startStripeCheckout("extra_package")}
+                          disabled={isStartingPayment || isSyncingPayment}
+                          className="inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[14px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <span className="whitespace-nowrap">
+                            {isStartingPayment || isSyncingPayment ? "Confirmando pago..." : "Pagar"}
+                          </span>
+                          <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -1741,6 +1768,77 @@ export function PublicOnboardingPage({
               </Button>
             </div>
           </aside>
+        </div>
+      ) : null}
+
+      {isExtraCreditsModalOpen && audience === "client" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[560px] rounded-[6px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
+                  Ampliar plan
+                </p>
+                <h3 className="mt-2 text-[22px] font-extrabold tracking-[-0.02em] text-[#33475b]">
+                  Agregar más créditos
+                </h3>
+                <p className="mt-2 text-[13px] text-[#516f90]">
+                  Este paquete añade {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos a tu capacidad actual.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExtraCreditsModalOpen(false)}
+                className="rounded-[4px] p-2 text-[#9cb1c6] transition hover:bg-[#f5f8fa] hover:text-[#33475b]"
+                aria-label="Cerrar modal de créditos"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-6 rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00bda5]">
+                Resumen de capacidad
+              </p>
+              <div className="mt-4 space-y-3 text-[13px] text-[#33475b]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="font-bold">Capacidad actual:</span>
+                  <span className="font-bold">{metrics.total} CR</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="font-bold">
+                    Paquete adicional {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR:
+                  </span>
+                  <span className="font-bold">{formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}</span>
+                </div>
+                <div className="border-t border-[#99f6e4] pt-3">
+                  <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">
+                    <span>Créditos totales:</span>
+                    <span>{extraPackageResultingCredits} CR</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setIsExtraCreditsModalOpen(false)}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white px-4 text-[13px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa]"
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={() => void startStripeCheckout("extra_package")}
+                disabled={isStartingPayment || isSyncingPayment}
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-[4px] bg-[#ff7a59] px-4 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <CreditCard className="h-4 w-4" />
+                {isStartingPayment || isSyncingPayment ? "Confirmando pago..." : "Pagar"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
