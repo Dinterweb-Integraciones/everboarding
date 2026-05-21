@@ -409,6 +409,14 @@ export function getAssigneeName(users: AssignableUser[], userId: string) {
   return users.find((user) => user.id === userId)?.full_name || users.find((user) => user.id === userId)?.email || "";
 }
 
+function createSalesProposalSlugSuffix() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+  }
+
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function generateSalesProposalSlug(
   input: Pick<SalesProposalDraft, "clientCompany" | "clientName" | "clientEmail" | "title">,
 ) {
@@ -422,7 +430,7 @@ export function generateSalesProposalSlug(
   const emailSlug = slugify(emailLocalPart);
   const base = companySlug || clientSlug || emailSlug || slugify(input.title) || "propuesta";
 
-  return `${base}-${Date.now().toString(36)}`;
+  return `${base}-${createSalesProposalSlugSuffix()}`;
 }
 
 function normalizeSalesStatus(value: unknown): SalesProposalStatus {

@@ -2574,7 +2574,7 @@ export function OnboardingClientPage({
                               </div>
 
                               <div className="mt-3 space-y-1.5">
-                                <div className="rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                                <div className="rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                   {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                                   {estimated && estimated.label !== "Sin fechas" ? ` · ${estimated.label}` : ""}
                                 </div>
@@ -3040,7 +3040,7 @@ export function OnboardingClientPage({
                             <p className="mt-1 text-[10px] text-[#516f90]">
                               {initiative.description || "Sin descripcion ejecutiva."}
                             </p>
-                            <div className="mt-2 rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                            <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                               {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                             </div>
                           </div>
@@ -3181,7 +3181,7 @@ export function OnboardingClientPage({
                               {topItem.credits} CR
                             </span>
                           </div>
-                          <div className="mt-3 rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                          <div className="mt-3 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                             {formatDateRange(topItem.est_start_date, topItem.est_end_date)}
                           </div>
                         </div>
@@ -3245,7 +3245,7 @@ export function OnboardingClientPage({
                               <p className="mt-1 text-[10px] text-[#516f90]">
                                 {initiative.description || "Sin descripcion ejecutiva."}
                               </p>
-                              <div className="mt-2 rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                              <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                 {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                               </div>
                             </div>

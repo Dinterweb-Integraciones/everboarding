@@ -1093,7 +1093,7 @@ export function PublicOnboardingPage({
                             </div>
 
                             <div className="mt-3 space-y-1.5">
-                              <div className="rounded-[2px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                              <div className="rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                 {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                                 {estimatedStatus && estimatedStatus.label !== "Sin fechas"
                                   ? ` - ${estimatedStatus.label}`
@@ -1366,7 +1366,7 @@ export function PublicOnboardingPage({
                                 <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
                                   {initiative.description || "Sin descripcion ejecutiva."}
                                 </p>
-                                <div className="mt-2 inline-flex rounded-[3px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                                <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                   {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                                 </div>
                               </div>

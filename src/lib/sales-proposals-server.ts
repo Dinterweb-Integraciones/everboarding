@@ -65,6 +65,21 @@ function resolveCurrency(value: string | null | undefined) {
   return (value || process.env.STRIPE_CURRENCY || "usd").toLowerCase();
 }
 
+function getErrorCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+}
+
+function isSalesProposalSlugConflict(error: unknown) {
+  if (getErrorCode(error) !== "23505") {
+    return false;
+  }
+
+  const message =
+    typeof error === "object" && error !== null && "message" in error ? String(error.message) : "";
+
+  return message.toLowerCase().includes("sales_proposals_slug_key") || message.toLowerCase().includes("slug");
+}
+
 function normalizeSalesCouponCode(value: string) {
   return value.trim().toUpperCase();
 }
@@ -243,12 +258,21 @@ async function getSalesCouponForProposal(row: SalesProposalRow, requireActive = 
 
 export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug: string) {
   const admin = createSupabaseAdminClient();
-  const existing = await admin
-    .from("sales_proposals")
-    .select("*")
-    .eq("slug", proposalSlug)
-    .maybeSingle();
-  const existingRow = existing.data as SalesProposalRow | null;
+  const loadExistingRow = async () => {
+    const existing = await admin
+      .from("sales_proposals")
+      .select("*")
+      .eq("slug", proposalSlug)
+      .maybeSingle();
+
+    if (existing.error) {
+      throw existing.error;
+    }
+
+    return existing.data as SalesProposalRow | null;
+  };
+
+  let existingRow = await loadExistingRow();
   const draftToPersist = {
     ...input,
     slug: proposalSlug,
@@ -266,12 +290,21 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
     slug: proposalSlug,
     ...serialized,
   }) as never;
-  const query = existingRow
-    ? admin.from("sales_proposals").update(payload).eq("id", existingRow.id)
-    : admin.from("sales_proposals").insert(payload);
-  const { data, error } = await query
-    .select("*")
-    .single();
+  const runWrite = (row: SalesProposalRow | null) =>
+    (row
+      ? admin.from("sales_proposals").update(payload).eq("id", row.id)
+      : admin.from("sales_proposals").insert(payload))
+      .select("*")
+      .single();
+  let { data, error } = await runWrite(existingRow);
+
+  if ((error || !data) && !existingRow && isSalesProposalSlugConflict(error)) {
+    existingRow = await loadExistingRow();
+
+    if (existingRow) {
+      ({ data, error } = await runWrite(existingRow));
+    }
+  }
 
   if (error || !data) {
     console.error("sales_proposal_save_failed", {

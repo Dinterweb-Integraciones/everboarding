@@ -637,6 +637,7 @@ export function SalesProposalWorkspace({
   const [isSavingTimelineDates, setIsSavingTimelineDates] = useState(false);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
+  const pendingProposalSlugRef = useRef<string | null>(initialDraft.slug ?? null);
   const persistProposalRef = useRef<((draftOverride?: SalesProposalDraft, options?: { mergeWithCurrent?: boolean }) => Promise<SalesProposalDraft>) | null>(null);
 
   function applyDinterwebCommercialTerms(
@@ -1314,19 +1315,18 @@ function createInitiativeFromGroup(
       initiatives: normalizeBoardSortOrders(scheduledInitiatives),
     };
 
-    const previousSignature = lastPersistedSignatureRef.current;
-    setProposal(nextProposal);
-    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
-    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true }).catch(() => {
-      lastPersistedSignatureRef.current = previousSignature;
-    });
+    const wasPersistQueued = syncProposalAfterStructuralChange(nextProposal);
     setCatalogPreviewGroup(null);
     setFeedback({
       tone: "success",
       message:
         status === "planned"
-          ? "Grupo incluido en Planificacion."
-          : "Grupo enviado a Evaluacion.",
+          ? wasPersistQueued
+            ? "Grupo incluido en Planificacion."
+            : "Grupo incluido en Planificacion. Se guardara cuando completes el correo del cliente."
+          : wasPersistQueued
+            ? "Grupo enviado a Evaluacion."
+            : "Grupo enviado a Evaluacion. Se guardara cuando completes el correo del cliente.",
     });
   }
 
@@ -1377,6 +1377,22 @@ function createInitiativeFromGroup(
       usedCredits += groupCredits;
       return true;
     });
+  }
+
+  function syncProposalAfterStructuralChange(nextProposal: SalesProposalDraft) {
+    setProposal(nextProposal);
+
+    if (!canPersistSalesProposal(nextProposal)) {
+      return false;
+    }
+
+    const previousSignature = lastPersistedSignatureRef.current;
+    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
+    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true }).catch(() => {
+      lastPersistedSignatureRef.current = previousSignature;
+    });
+
+    return true;
   }
 
 function mergeRecommendedGroups(
@@ -1448,17 +1464,14 @@ function mergeRecommendedGroups(
       })),
     };
 
-    const previousSignature = lastPersistedSignatureRef.current;
-    setProposal(nextProposal);
-    lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(nextProposal);
-    void persistProposalRef.current?.(nextProposal, { mergeWithCurrent: true }).catch(() => {
-      lastPersistedSignatureRef.current = previousSignature;
-    });
+    const wasPersistQueued = syncProposalAfterStructuralChange(nextProposal);
     setActiveCatalogTab(defaultCatalogLibraryTab);
     setIsCatalogModalOpen(false);
     setFeedback({
       tone: "success",
-      message: feedbackMessage,
+      message: wasPersistQueued
+        ? feedbackMessage
+        : `${feedbackMessage} Se guardara cuando completes el correo del cliente.`,
     });
   }
 
@@ -1670,7 +1683,13 @@ function mergeRecommendedGroups(
   ) => {
     const draftToPersist = normalizeSalesProposalDraft(draftOverride ?? proposal);
     const persistTask = async () => {
-      const slug = draftToPersist.slug || generateSalesProposalSlug(draftToPersist);
+      const slug =
+        draftToPersist.slug || pendingProposalSlugRef.current || generateSalesProposalSlug(draftToPersist);
+
+      if (!draftToPersist.slug && !pendingProposalSlugRef.current) {
+        pendingProposalSlugRef.current = slug;
+      }
+
       const response = await fetch(
         draftToPersist.slug ? `/api/sales-proposals/${draftToPersist.slug}` : "/api/sales-proposals",
         {
@@ -1689,6 +1708,7 @@ function mergeRecommendedGroups(
       }
 
       const normalizedPayload = normalizeSalesProposalDraft(payload);
+      pendingProposalSlugRef.current = normalizedPayload.slug;
       lastPersistedSignatureRef.current = getSalesProposalAutosaveSignature(normalizedPayload);
 
       if (options?.mergeWithCurrent) {
@@ -2217,7 +2237,10 @@ function mergeRecommendedGroups(
             ) : null}
             <button
               type="button"
-              onClick={() => setProposal(createNewSalesProposalDraft(variant, sellerPreset))}
+              onClick={() => {
+                pendingProposalSlugRef.current = null;
+                setProposal(createNewSalesProposalDraft(variant, sellerPreset));
+              }}
               className="inline-flex items-center gap-1.5 transition hover:text-[#ff7a59]"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -2668,13 +2691,7 @@ function mergeRecommendedGroups(
                                           <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
                                             {initiative.description || "Sin descripcion ejecutiva."}
                                           </p>
-                                          <div
-                                            className={`mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border px-2 text-[9px] font-bold leading-none ${
-                                              emptyStatus === "executing"
-                                                ? "border-[#f8c75c] bg-[#fff7dc] text-[#d97706]"
-                                                : "border-[#c9d7e6] bg-white text-[#486b93]"
-                                            }`}
-                                          >
+                                          <div className="mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 text-[9px] font-bold leading-none text-[#33475b]">
                                             {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                                           </div>
                                         </div>
@@ -2794,13 +2811,7 @@ function mergeRecommendedGroups(
                                 <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
                                   {initiative.description || "Sin descripción ejecutiva."}
                                 </p>
-                                <div
-                                  className={`mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border px-2 text-[9px] font-bold leading-none ${
-                                    status === "executing"
-                                      ? "border-[#f8c75c] bg-[#fff7dc] text-[#d97706]"
-                                      : "border-[#c9d7e6] bg-white text-[#486b93]"
-                                  }`}
-                                >
+                                <div className="mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 text-[9px] font-bold leading-none text-[#33475b]">
                                   {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                                 </div>
                               </div>
@@ -3123,7 +3134,7 @@ function mergeRecommendedGroups(
                               <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
                                 {initiative.description || "Sin descripción ejecutiva."}
                               </p>
-                              <div className="mt-2 inline-flex rounded-[3px] border border-[#f8c75c] bg-[#fff7dc] px-2 py-0.5 text-[9px] font-bold text-[#d97706]">
+                              <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                 {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                               </div>
                             </div>
