@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Plus } from "lucide-react";
+import { ArrowRight, CalendarDays, Copy, Plus } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -161,8 +161,11 @@ export function DinterwebSellerDashboard({
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {paginatedProposals.map((proposal) => (
-            <Link key={proposal.id ?? proposal.slug} href={`/sales/dinterweb/proposals/${proposal.slug}`}>
-              <Card className="h-full border border-[#e2ecea] px-5 py-5 transition hover:-translate-y-0.5 hover:border-[#99ddd1] hover:shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
+            <Card
+              key={proposal.id ?? proposal.slug}
+              className="h-full border border-[#e2ecea] px-5 py-5 transition hover:-translate-y-0.5 hover:border-[#99ddd1] hover:shadow-[0_18px_45px_rgba(15,23,42,0.08)]"
+            >
+              <div className="flex h-full flex-col">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-lg font-semibold text-slate-950">
@@ -194,15 +197,36 @@ export function DinterwebSellerDashboard({
                   </p>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500">
+                <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500">
                   <span>Actualizada {formatDateTime(proposal.updatedAt)}</span>
-                  <span className="inline-flex items-center font-semibold text-[#0f766e]">
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!proposal.slug) return;
+                      window.open(
+                        `/sales/dinterweb/proposals/new?duplicateFrom=${encodeURIComponent(proposal.slug)}`,
+                        "_blank",
+                      );
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#cfe5df] bg-white px-3 py-2 text-sm font-semibold text-[#0f766e] transition hover:border-[#99ddd1] hover:bg-[#f3fbf9]"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Duplicar propuesta
+                  </button>
+
+                  <Link
+                    href={`/sales/dinterweb/proposals/${proposal.slug}`}
+                    className="inline-flex items-center font-semibold text-[#0f766e]"
+                  >
                     Abrir
                     <ArrowRight className="ml-1 h-4 w-4" />
-                  </span>
+                  </Link>
                 </div>
-              </Card>
-            </Link>
+              </div>
+            </Card>
           ))}
         </div>
 
@@ -279,6 +303,7 @@ export function DinterwebSellerDashboard({
           </div>
         </div>
       </div>
+
     </div>
   );
 }

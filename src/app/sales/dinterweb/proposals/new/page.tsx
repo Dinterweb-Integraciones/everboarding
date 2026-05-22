@@ -8,19 +8,30 @@ import type {
   CreditCatalogGroupItem,
   CreditCatalogItem,
 } from "@/lib/onboarding";
+import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
+import { createDuplicatedSalesProposalDraft, type SalesProposalDraft } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function NewDinterwebSalesProposalPage() {
+type NewDinterwebSalesProposalPageProps = {
+  searchParams?: Promise<{ duplicateFrom?: string }>;
+};
+
+export default async function NewDinterwebSalesProposalPage({
+  searchParams,
+}: NewDinterwebSalesProposalPageProps) {
   const { user } = await requireUser("/sales/dinterweb");
   const seller = getDinterwebSellerIdentity(user);
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const duplicateFromSlug = resolvedSearchParams?.duplicateFrom?.trim() || "";
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
   let groupCategoryRows: CreditCatalogGroupCategory[] = [];
   let groupCategoryLinkRows: CreditCatalogGroupCategoryLink[] = [];
   let membershipRows: CreditCatalogGroupItem[] = [];
+  let initialProposal: SalesProposalDraft | null = null;
 
   try {
     const admin = createSupabaseAdminClient();
@@ -68,6 +79,7 @@ export default async function NewDinterwebSalesProposalPage() {
     groupCategoryRows = fetchedGroupCategories ?? [];
     groupCategoryLinkRows = fetchedGroupCategoryLinks ?? [];
     membershipRows = fetchedMemberships ?? [];
+
   } catch (error) {
     console.error("dinterweb_sales_new_workspace_bootstrap_failed", error);
     catalogRows = [];
@@ -77,6 +89,28 @@ export default async function NewDinterwebSalesProposalPage() {
     membershipRows = [];
   }
 
+  if (duplicateFromSlug) {
+    try {
+      const proposalAccess = await getSalesProposalMutationAccess(duplicateFromSlug);
+
+      if (!proposalAccess.ok) {
+        throw new Error(proposalAccess.message);
+      }
+
+      if (proposalAccess.proposal.workspaceVariant !== "dinterweb") {
+        throw new Error("Solo puedes duplicar propuestas de Dinterweb desde esta vista.");
+      }
+
+      initialProposal = createDuplicatedSalesProposalDraft(proposalAccess.proposal);
+    } catch (error) {
+      console.error("dinterweb_sales_duplicate_template_load_failed", {
+        duplicateFromSlug,
+        error,
+      });
+      initialProposal = null;
+    }
+  }
+
   return (
     <SalesProposalWorkspace
       initialCatalog={catalogRows}
@@ -84,7 +118,7 @@ export default async function NewDinterwebSalesProposalPage() {
       initialGroupCategories={groupCategoryRows}
       initialGroupCategoryLinks={groupCategoryLinkRows}
       initialGroupMemberships={membershipRows}
-      initialProposal={null}
+      initialProposal={initialProposal}
       variant="dinterweb"
       routeBase="/sales/dinterweb/proposals"
       sellerPreset={seller}

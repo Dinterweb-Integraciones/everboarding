@@ -51,7 +51,7 @@ type SalesProposalWorkspaceProps = {
   initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   initialGroupMemberships: CreditCatalogGroupItem[];
-  initialProposal?: SalesProposalRecord | null;
+  initialProposal?: SalesProposalDraft | SalesProposalRecord | null;
   variant?: "hubspot" | "dinterweb";
   routeBase?: string;
   sellerPreset?: {

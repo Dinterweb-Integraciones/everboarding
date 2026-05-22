@@ -196,6 +196,51 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
   };
 }
 
+function buildDuplicatedSalesProposalTitle(value: string) {
+  const normalizedTitle = value.trim() || "Propuesta comercial";
+  return /\bcopia\b/i.test(normalizedTitle) ? normalizedTitle : `${normalizedTitle} - Copia`;
+}
+
+export function createDuplicatedSalesProposalDraft(
+  source: SalesProposalDraft | SalesProposalRecord,
+): SalesProposalDraft {
+  const normalized = normalizeSalesProposalDraft(source);
+
+  return {
+    ...normalized,
+    id: undefined,
+    slug: undefined,
+    title:
+      normalized.workspaceVariant === "dinterweb"
+        ? "Propuesta comercial"
+        : buildDuplicatedSalesProposalTitle(normalized.title),
+    clientName: "Cliente",
+    clientEmail: "",
+    clientCompany: "",
+    clientPhone: "",
+    clientDescription: "",
+    status: "draft",
+    assignedCsmUserId: "",
+    hubspotDealId: null,
+    activatedClientId: null,
+    appliedCouponId: null,
+    appliedCouponCode: "",
+    appliedCouponType: null,
+    appliedCouponPercentageOff: null,
+    couponBaseQuotedPrice: null,
+    couponAppliedAt: null,
+    initiatives: normalized.initiatives.map((initiative, initiativeIndex) => ({
+      ...initiative,
+      id: createLocalId("sales-initiative"),
+      sortOrder: initiative.sortOrder ?? initiativeIndex,
+      subitems: initiative.subitems.map((subitem) => ({
+        ...subitem,
+        id: createLocalId("sales-subitem"),
+      })),
+    })),
+  };
+}
+
 export function normalizeSalesCouponType(value: unknown): SalesCouponType {
   return value === "percentage" ? "percentage" : "package_override";
 }

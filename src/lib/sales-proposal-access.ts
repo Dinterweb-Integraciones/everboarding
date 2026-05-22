@@ -1,5 +1,6 @@
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
+import { canManagePlatformUsers } from "@/lib/platform-access";
 import { mapSalesProposalRow, type SalesProposalRecord } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -101,8 +102,23 @@ export async function getSalesProposalMutationAccess(slug: string): Promise<Sale
     };
   }
 
+  const admin = createSupabaseAdminClient();
   const seller = getDinterwebSellerIdentity(user);
   const proposalSellerEmail = storedProposal.proposal.sellerEmail.trim().toLowerCase();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("platform_role")
+    .eq("id", user.id)
+    .maybeSingle();
+  const canManageAllDinterwebProposals = canManagePlatformUsers(profile?.platform_role ?? null);
+
+  if (canManageAllDinterwebProposals) {
+    return {
+      ok: true,
+      proposal: storedProposal.proposal,
+      proposalRow: storedProposal.proposalRow,
+    };
+  }
 
   if (proposalSellerEmail && proposalSellerEmail !== seller.email) {
     return {
