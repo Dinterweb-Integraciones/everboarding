@@ -102,6 +102,7 @@ export type PublicOnboardingSnapshot = {
     appliedCouponCode: string;
     appliedCouponType: "package_override" | "percentage" | null;
     appliedCouponPercentageOff: number | null;
+    extraPackageQuantity: number;
   } | null;
 };
 

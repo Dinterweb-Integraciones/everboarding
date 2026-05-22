@@ -77,6 +77,7 @@ export type SalesProposalDraft = {
   appliedCouponPercentageOff: number | null;
   couponBaseQuotedPrice: number | null;
   couponAppliedAt: string | null;
+  prospectExtraPackageQuantity: number;
   initiatives: SalesProposalInitiativeDraft[];
 };
 
@@ -115,6 +116,7 @@ type CompactSalesProposalSnapshot = {
   ct?: SalesCouponType | null;
   cp?: number | null;
   cb?: number | null;
+  pe?: number | null;
   i?: CompactSalesProposalInitiativeSnapshot[];
 };
 
@@ -133,6 +135,7 @@ function createCompactSalesProposalSnapshot(
     ct: draft.appliedCouponType,
     cp: draft.appliedCouponPercentageOff,
     cb: draft.couponBaseQuotedPrice,
+    pe: draft.prospectExtraPackageQuantity,
     i: draft.initiatives.map((initiative) => [
       initiative.id,
       initiative.title,
@@ -192,6 +195,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    prospectExtraPackageQuantity: 0,
     initiatives: [],
   };
 }
@@ -229,6 +233,7 @@ export function createDuplicatedSalesProposalDraft(
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    prospectExtraPackageQuantity: 0,
     initiatives: normalized.initiatives.map((initiative, initiativeIndex) => ({
       ...initiative,
       id: createLocalId("sales-initiative"),
@@ -255,6 +260,80 @@ export function applyPercentageDiscount(amount: number, percentageOff: number) {
   const discountedAmount = normalizedAmount * (1 - normalizedPercentage / 100);
 
   return Math.round(discountedAmount * 100) / 100;
+}
+
+export function applySalesProposalExtraPackages(
+  proposal: SalesProposalDraft | SalesProposalRecord,
+  option: { credits: number; price: number },
+  quantity: number,
+): SalesProposalDraft {
+  const normalizedProposal = normalizeSalesProposalDraft(proposal);
+  const normalizedQuantity = Math.max(0, Math.floor(safeParseNumber(quantity)));
+
+  if (normalizedQuantity <= 0) {
+    return normalizedProposal;
+  }
+
+  const addedCredits = Math.max(0, safeParseNumber(option.credits)) * normalizedQuantity;
+  const addedPrice = Math.max(0, safeParseNumber(option.price)) * normalizedQuantity;
+  const baseQuotedPrice =
+    normalizedProposal.appliedCouponType === "percentage" &&
+    normalizedProposal.couponBaseQuotedPrice !== null
+      ? normalizedProposal.couponBaseQuotedPrice
+      : normalizedProposal.quotedPrice;
+  const nextBaseQuotedPrice = Math.round((baseQuotedPrice + addedPrice) * 100) / 100;
+  const nextQuotedPrice =
+    normalizedProposal.appliedCouponType === "percentage" &&
+    normalizedProposal.appliedCouponPercentageOff
+      ? applyPercentageDiscount(nextBaseQuotedPrice, normalizedProposal.appliedCouponPercentageOff)
+      : nextBaseQuotedPrice;
+
+  return {
+    ...normalizedProposal,
+    contractedCredits: normalizedProposal.contractedCredits + addedCredits,
+    quotedPrice: nextQuotedPrice,
+    prospectExtraPackageQuantity: normalizedProposal.prospectExtraPackageQuantity + normalizedQuantity,
+    couponBaseQuotedPrice:
+      normalizedProposal.appliedCouponType === "percentage" ? nextBaseQuotedPrice : null,
+  };
+}
+
+export function setSalesProposalExtraPackages(
+  proposal: SalesProposalDraft | SalesProposalRecord,
+  option: { credits: number; price: number },
+  quantity: number,
+): SalesProposalDraft {
+  const normalizedProposal = normalizeSalesProposalDraft(proposal);
+  const currentQuantity = Math.max(0, Math.floor(safeParseNumber(normalizedProposal.prospectExtraPackageQuantity)));
+  const nextQuantity = Math.max(0, Math.floor(safeParseNumber(quantity)));
+  const delta = nextQuantity - currentQuantity;
+
+  if (delta === 0) {
+    return normalizedProposal;
+  }
+
+  const creditsDelta = Math.max(0, safeParseNumber(option.credits)) * delta;
+  const priceDelta = Math.max(0, safeParseNumber(option.price)) * delta;
+  const baseQuotedPrice =
+    normalizedProposal.appliedCouponType === "percentage" &&
+    normalizedProposal.couponBaseQuotedPrice !== null
+      ? normalizedProposal.couponBaseQuotedPrice
+      : normalizedProposal.quotedPrice;
+  const nextBaseQuotedPrice = Math.max(0, Math.round((baseQuotedPrice + priceDelta) * 100) / 100);
+  const nextQuotedPrice =
+    normalizedProposal.appliedCouponType === "percentage" &&
+    normalizedProposal.appliedCouponPercentageOff
+      ? applyPercentageDiscount(nextBaseQuotedPrice, normalizedProposal.appliedCouponPercentageOff)
+      : nextBaseQuotedPrice;
+
+  return {
+    ...normalizedProposal,
+    contractedCredits: Math.max(0, normalizedProposal.contractedCredits + creditsDelta),
+    quotedPrice: nextQuotedPrice,
+    prospectExtraPackageQuantity: nextQuantity,
+    couponBaseQuotedPrice:
+      normalizedProposal.appliedCouponType === "percentage" ? nextBaseQuotedPrice : null,
+  };
 }
 
 function normalizeSalesBillingMode(value: unknown): "subscription" | "one_time" {
@@ -383,6 +462,10 @@ export function normalizeSalesProposalDraft(
         ? null
         : Math.max(0, safeParseNumber(couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
+    prospectExtraPackageQuantity: Math.max(
+      0,
+      Math.floor(safeParseNumber(input.prospectExtraPackageQuantity ?? input.pe ?? base.prospectExtraPackageQuantity)),
+    ),
     periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),

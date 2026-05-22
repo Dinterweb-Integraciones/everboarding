@@ -297,6 +297,13 @@ function applyActiveCouponPricing(
   };
 }
 
+function clearProspectExtraPackages(proposal: SalesProposalDraft) {
+  return {
+    ...proposal,
+    prospectExtraPackageQuantity: 0,
+  };
+}
+
 function parseCalendarDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, (month || 1) - 1, day || 1);
@@ -719,7 +726,7 @@ export function SalesProposalWorkspace({
 
     setProposal((current) =>
       applyActiveCouponPricing({
-        ...current,
+        ...clearProspectExtraPackages(current),
         workspaceVariant: "dinterweb",
         billingMode,
         periodMonths,
@@ -1182,7 +1189,7 @@ export function SalesProposalWorkspace({
   function removeHubspotUpsell() {
     setProposal((current) =>
       applyActiveCouponPricing({
-        ...current,
+        ...clearProspectExtraPackages(current),
         contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
         quotedPrice: SALES_PROPOSAL_BASE_PRICE,
       }),
@@ -1245,7 +1252,7 @@ export function SalesProposalWorkspace({
 
     setProposal((current) =>
       applyActiveCouponPricing({
-        ...current,
+        ...clearProspectExtraPackages(current),
         contractedCredits: SALES_PROPOSAL_BASE_CREDITS + addedCredits,
         quotedPrice: SALES_PROPOSAL_BASE_PRICE + addedPrice,
       }),

@@ -151,6 +151,7 @@ export function buildPublicProspectSnapshotBase(
       appliedCouponCode: proposal.appliedCouponCode || "",
       appliedCouponType: proposal.appliedCouponType,
       appliedCouponPercentageOff: proposal.appliedCouponPercentageOff,
+      extraPackageQuantity: proposal.prospectExtraPackageQuantity ?? 0,
     },
   };
 }

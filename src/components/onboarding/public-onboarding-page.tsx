@@ -26,6 +26,7 @@ import {
   type PublicOnboardingAudience,
   type PublicOnboardingSnapshot,
 } from "@/lib/onboarding";
+import { applyPercentageDiscount } from "@/lib/sales-proposals";
 import { formatCurrency, formatUserError } from "@/lib/utils";
 
 type PublicOnboardingPageProps = {
@@ -226,6 +227,10 @@ export function PublicOnboardingPage({
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [isStartingPayment, setIsStartingPayment] = useState(false);
   const [isSyncingPayment, setIsSyncingPayment] = useState(false);
+  const [prospectExtraPackageQuantity, setProspectExtraPackageQuantity] = useState(
+    initialData.prospectProposal?.extraPackageQuantity ?? 0,
+  );
+  const [isSavingProspectExtraPackages, setIsSavingProspectExtraPackages] = useState(false);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
@@ -311,6 +316,30 @@ export function PublicOnboardingPage({
     config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity),
   );
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
+  const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
+  const prospectExtraPackageQuantityDelta =
+    prospectExtraPackageQuantity - persistedProspectExtraPackageQuantity;
+  const prospectExtraCreditsAdded =
+    prospectExtraPackageQuantityDelta * PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+  const prospectExtraPriceAdded =
+    prospectExtraPackageQuantityDelta * PUBLIC_EXTRA_CREDIT_PACKAGE.price;
+  const prospectPercentageOff =
+    audience === "prospect" && prospectProposal?.appliedCouponType === "percentage"
+      ? prospectProposal.appliedCouponPercentageOff ?? 0
+      : 0;
+  const prospectDiscountFactor = 1 - prospectPercentageOff / 100;
+  const prospectBaseQuotedPrice =
+    prospectPercentageOff > 0 && prospectDiscountFactor > 0
+      ? Math.round((paymentAmount / prospectDiscountFactor) * 100) / 100
+      : paymentAmount;
+  const prospectDisplayedPlanCredits =
+    audience === "prospect" ? contractedPlanCredits + prospectExtraCreditsAdded : contractedPlanCredits;
+  const prospectDisplayedPaymentAmount =
+    audience === "prospect"
+      ? prospectPercentageOff > 0
+        ? applyPercentageDiscount(prospectBaseQuotedPrice + prospectExtraPriceAdded, prospectPercentageOff)
+        : paymentAmount + prospectExtraPriceAdded
+      : paymentAmount;
   const extraPackageResultingCredits = metrics.total + PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
   const isRecurringPlan = config.custom_plan_billing_mode !== "one_time";
   const paymentAmountLabel = isRecurringPlan
@@ -362,14 +391,18 @@ export function PublicOnboardingPage({
     isStartingPayment || isSyncingPayment
       ? "Confirmando pago..."
       : audience === "prospect"
-        ? paymentAmount <= 0
+        ? prospectDisplayedPaymentAmount <= 0
           ? "Activar plan sin pago"
           : usesStripeMembership
-            ? `Pagar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
-            : `Pagar propuesta ${formatCurrency(paymentAmount)}`
+            ? `Pagar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(prospectDisplayedPaymentAmount)}`
+            : `Pagar propuesta ${formatCurrency(prospectDisplayedPaymentAmount)}`
         : usesStripeMembership
           ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
           : `Pagar ${formatCurrency(paymentAmount)}`;
+
+  useEffect(() => {
+    setProspectExtraPackageQuantity(prospectProposal?.extraPackageQuantity ?? 0);
+  }, [prospectProposal?.extraPackageQuantity]);
   const timeline = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -688,6 +721,57 @@ export function PublicOnboardingPage({
     await createPublicRequest(requestDraft);
   }
 
+  async function updateProspectExtraPackages(nextQuantity: number) {
+    if (audience !== "prospect" || isSavingProspectExtraPackages) {
+      return;
+    }
+
+    const normalizedQuantity = Math.max(0, nextQuantity);
+    const previousQuantity = prospectProposal?.extraPackageQuantity ?? 0;
+    setProspectExtraPackageQuantity(normalizedQuantity);
+    setIsSavingProspectExtraPackages(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/public-onboarding/${audience}/${publicSlug}/extra-packages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          quantity: normalizedQuantity,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        config?: PublicOnboardingSnapshot["config"];
+        billing?: ClientBillingStatus;
+        prospectProposal?: PublicOnboardingSnapshot["prospectProposal"];
+        message?: string;
+      };
+
+      if (!response.ok || !payload.config || !payload.billing || !payload.prospectProposal) {
+        throw new Error(payload.message || "No pudimos guardar los paquetes extra.");
+      }
+
+      setConfig(payload.config);
+      setBilling(payload.billing);
+      setProspectProposal(payload.prospectProposal);
+      setFeedback({
+        tone: "success",
+        message: payload.message || "La propuesta quedo actualizada con los paquetes extra.",
+      });
+    } catch (caughtError) {
+      setProspectExtraPackageQuantity(previousQuantity);
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos guardar los paquetes extra del prospecto."),
+      });
+    } finally {
+      setIsSavingProspectExtraPackages(false);
+    }
+  }
+
   async function startStripeCheckout(purchaseKind: "plan" | "extra_package" = "plan") {
     setFeedback(null);
     setIsStartingPayment(true);
@@ -1004,14 +1088,65 @@ export function PublicOnboardingPage({
                           {paymentAmountLabel}
                         </p>
                         <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
-                          {formatCurrency(paymentAmount)}
+                          {formatCurrency(prospectDisplayedPaymentAmount)}
                         </p>
                       </div>
                       <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
                       <div className="flex shrink-0 items-center px-4 py-3">
                         <span className="inline-flex h-11 min-w-[96px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[16px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
-                          {contractedPlanCredits} CR
+                          {prospectDisplayedPlanCredits} CR
                         </span>
+                      </div>
+                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex min-w-[178px] shrink-0 items-center px-3 py-3">
+                        <div className="w-full rounded-[4px] border border-[#dfe3eb] bg-[#f8fbfd] px-3 py-2">
+                          <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
+                            Paquetes extra 80 CR
+                          </p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateProspectExtraPackages(prospectExtraPackageQuantity - 1)
+                              }
+                              disabled={
+                                isStartingPayment ||
+                                isSyncingPayment ||
+                                isSavingProspectExtraPackages ||
+                                hasPaidCycleAccess ||
+                                prospectExtraPackageQuantity <= 0
+                              }
+                              className="grid h-8 w-8 place-items-center rounded-[4px] border border-[#cbd6e2] bg-white text-[16px] font-bold text-[#33475b] transition hover:border-[#9cb1c6] disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label="Quitar paquete extra"
+                            >
+                              -
+                            </button>
+                            <div className="min-w-[72px] text-center">
+                              <p className="text-[16px] font-extrabold leading-none text-[#33475b]">
+                                {prospectExtraPackageQuantity}
+                              </p>
+                              <p className="mt-1 text-[9px] font-medium text-[#516f90]">
+                                {prospectExtraCreditsAdded} CR
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateProspectExtraPackages(prospectExtraPackageQuantity + 1)
+                              }
+                              disabled={
+                                isStartingPayment ||
+                                isSyncingPayment ||
+                                isSavingProspectExtraPackages ||
+                                hasPaidCycleAccess
+                              }
+                              className="grid h-8 w-8 place-items-center rounded-[4px] border border-[#cbd6e2] bg-white text-[16px] font-bold text-[#33475b] transition hover:border-[#9cb1c6] disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label="Agregar paquete extra"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
                       </div>
                       <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
                       <div className="flex min-w-[220px] flex-1 items-center px-3 py-3">
@@ -1029,6 +1164,19 @@ export function PublicOnboardingPage({
 
                     <div className="border-t border-[#dfe3eb] px-3 py-3">
                       <div className="flex flex-col items-center gap-2.5">
+                        {prospectExtraPackageQuantity > 0 ? (
+                          <div className="w-full rounded-[4px] border border-[#d7efe8] bg-[#f7fffc] px-3 py-2 text-[11px] text-[#516f90]">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-semibold text-[#33475b]">
+                                {prospectExtraPackageQuantity}x paquete extra de {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR
+                              </span>
+                              <span className="font-bold text-[#00a88f]">
+                                {prospectExtraPriceAdded >= 0 ? "+" : "-"}
+                                {formatCurrency(Math.abs(prospectExtraPriceAdded))}
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
                         <button
                           type="button"
                           onClick={hasAppliedCoupon ? undefined : handleRedeemCoupon}

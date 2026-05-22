@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 
+import { PUBLIC_EXTRA_CREDIT_PACKAGE } from "@/lib/constants";
 import {
   applyPercentageDiscount,
   getSalesProposalActivationValidation,
@@ -7,6 +8,7 @@ import {
   mapSalesProposalRow,
   normalizeCouponPercentageOff,
   normalizeSalesCouponType,
+  setSalesProposalExtraPackages,
   serializeSalesProposalDraft,
   serializeSalesProposalFullSnapshot,
   type SalesCouponType,
@@ -444,6 +446,40 @@ export async function applySalesCouponToProposal(proposalSlug: string, couponCod
 
   const proposal = await mapSalesProposalRecord(typedProposalRow);
   const nextProposal = applyCouponTermsToProposal(proposal, coupon);
+
+  return saveSalesProposal(nextProposal, proposalSlug);
+}
+
+export async function updateSalesProposalProspectExtraPackages(
+  proposalSlug: string,
+  quantity: number,
+) {
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("slug", proposalSlug)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta comercial.");
+  }
+
+  if (
+    typedProposalRow.status === "checkout_pending" ||
+    typedProposalRow.status === "paid" ||
+    typedProposalRow.status === "board_activated"
+  ) {
+    throw new Error("Los paquetes extra solo se pueden ajustar antes de iniciar el checkout.");
+  }
+
+  const proposal = await mapSalesProposalRecord(typedProposalRow);
+  const nextProposal = setSalesProposalExtraPackages(
+    proposal,
+    PUBLIC_EXTRA_CREDIT_PACKAGE,
+    quantity,
+  );
 
   return saveSalesProposal(nextProposal, proposalSlug);
 }
