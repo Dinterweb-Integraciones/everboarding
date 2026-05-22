@@ -127,6 +127,7 @@ function createCompactSalesProposalSnapshot(
     | "appliedCouponType"
     | "appliedCouponPercentageOff"
     | "couponBaseQuotedPrice"
+    | "prospectExtraPackageQuantity"
     | "initiatives"
   >,
 ): CompactSalesProposalSnapshot {
