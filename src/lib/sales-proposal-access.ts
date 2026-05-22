@@ -9,6 +9,7 @@ import type { Database } from "@/types/database";
 
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
 type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_snapshots"]["Row"];
+type PlatformProfileRoleRow = Pick<Database["public"]["Tables"]["profiles"]["Row"], "platform_role">;
 
 type SalesProposalAccessError = {
   ok: false;
@@ -110,7 +111,8 @@ export async function getSalesProposalMutationAccess(slug: string): Promise<Sale
     .select("platform_role")
     .eq("id", user.id)
     .maybeSingle();
-  const canManageAllDinterwebProposals = canManagePlatformUsers(profile?.platform_role ?? null);
+  const profileRow = profile as PlatformProfileRoleRow | null;
+  const canManageAllDinterwebProposals = canManagePlatformUsers(profileRow?.platform_role ?? null);
 
   if (canManageAllDinterwebProposals) {
     return {
