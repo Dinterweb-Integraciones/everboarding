@@ -455,6 +455,7 @@ export function OnboardingClientPage({
   const persistGanttDatesRef = useRef<
     ((initiative: InitiativeRecord, startDate: string, endDate: string) => Promise<void>) | null
   >(null);
+  const draftSubitemDateInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const writable = canEdit(initialData.accessRole);
   const ownerCanShare = initialData.accessRole === "owner";
@@ -4428,29 +4429,14 @@ export function OnboardingClientPage({
                                 const dateInputId = `draft-subitem-date-${draft.id || "new"}-${index}`;
 
                                 return (
-                                  <>
-                                    <input
-                                      id={dateInputId}
-                                      type="date"
-                                      value={subitem.targetDate}
-                                      onChange={(event) =>
-                                        updateDraftSubitem(index, "targetDate", event.target.value)
-                                      }
-                                      disabled={!writable}
-                                      className="sr-only"
-                                      tabIndex={-1}
-                                      aria-hidden="true"
-                                    />
+                                  <div className="relative inline-flex">
                                     <button
                                       type="button"
                                       disabled={!writable}
                                       onClick={() => {
                                         if (!writable) return;
 
-                                        const input = document.getElementById(dateInputId) as
-                                          | (HTMLInputElement & { showPicker?: () => void })
-                                          | null;
-
+                                        const input = draftSubitemDateInputRefs.current[dateInputId];
                                         if (!input) return;
 
                                         if (typeof input.showPicker === "function") {
@@ -4466,7 +4452,24 @@ export function OnboardingClientPage({
                                       <CalendarDays className="h-3 w-3" />
                                       {formatCompactDate(subitem.targetDate)}
                                     </button>
-                                  </>
+                                    {writable ? (
+                                      <input
+                                        id={dateInputId}
+                                        ref={(element) => {
+                                          draftSubitemDateInputRefs.current[dateInputId] = element;
+                                        }}
+                                        type="date"
+                                        value={subitem.targetDate}
+                                        onChange={(event) =>
+                                          updateDraftSubitem(index, "targetDate", event.target.value)
+                                        }
+                                        className="pointer-events-none absolute inset-0 z-10 h-full w-full opacity-0"
+                                        tabIndex={-1}
+                                        aria-hidden="true"
+                                        aria-label={`Fecha objetivo de ${subitem.name || `actividad ${index + 1}`}`}
+                                      />
+                                    ) : null}
+                                  </div>
                                 );
                               })()}
                             </div>
