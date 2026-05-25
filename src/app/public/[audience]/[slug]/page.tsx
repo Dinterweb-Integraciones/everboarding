@@ -104,6 +104,8 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     admin
       .from("credit_catalog_group_category_links")
       .select("*")
+      .order("category_id", { ascending: true })
+      .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true }),
     admin
       .from("credit_catalog_group_items")

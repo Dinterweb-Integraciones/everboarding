@@ -733,18 +733,21 @@ export type Database = {
           id: string;
           group_id: string;
           category_id: string;
+          sort_order: number;
           created_at: string;
         };
         Insert: {
           id?: string;
           group_id: string;
           category_id: string;
+          sort_order?: number;
           created_at?: string;
         };
         Update: {
           id?: string;
           group_id?: string;
           category_id?: string;
+          sort_order?: number;
           created_at?: string;
         };
       };

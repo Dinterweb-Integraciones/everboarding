@@ -114,9 +114,11 @@ export type CatalogModalGroup = {
   modalCategory: string;
   modalCategoryIds: string[];
   modalCategoryNames: string[];
+  modalCategorySortOrders: number[];
   priorityStatus: "normal" | "prioritario";
   credits: number;
   sortOrder: number;
+  categorySortOrder?: number;
   items: CreditCatalogItem[];
   tags: string[];
 };
@@ -322,18 +324,42 @@ export function buildCatalogModalGroups({
   return groups
     .filter((group) => group.is_active)
     .map((group) => {
-      const assignedCategories = (categoryLinksByGroup.get(group.id) ?? [])
-        .map((link) => groupCategoriesById.get(link.category_id) ?? null)
-        .filter((category): category is CreditCatalogGroupCategory => Boolean(category))
+      const assignedCategoryLinks = [...(categoryLinksByGroup.get(group.id) ?? [])].sort(
+        (left, right) =>
+          safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+          || left.created_at.localeCompare(right.created_at)
+          || left.id.localeCompare(right.id),
+      );
+
+      const assignedCategories = assignedCategoryLinks
+        .map((link) => {
+          const category = groupCategoriesById.get(link.category_id) ?? null;
+          if (!category) {
+            return null;
+          }
+
+          return {
+            category,
+            sortOrder: safeParseNumber(link.sort_order),
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            category: CreditCatalogGroupCategory;
+            sortOrder: number;
+          } => Boolean(entry),
+        )
         .sort(
           (left, right) =>
-            safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
-            || left.name.localeCompare(right.name, "es"),
+            safeParseNumber(left.category.sort_order) - safeParseNumber(right.category.sort_order)
+            || left.category.name.localeCompare(right.category.name, "es"),
         );
 
       const uniqueAssignedCategories = assignedCategories.filter(
-        (category, index, current) =>
-          current.findIndex((entry) => entry.id === category.id) === index,
+        (entry, index, current) =>
+          current.findIndex((candidate) => candidate.category.id === entry.category.id) === index,
       );
 
       const fallbackCategory =
@@ -342,16 +368,21 @@ export function buildCatalogModalGroups({
           : null;
 
       const categoryIds = uniqueAssignedCategories.length
-        ? uniqueAssignedCategories.map((category) => category.id)
+        ? uniqueAssignedCategories.map((entry) => entry.category.id)
         : fallbackCategory
           ? [fallbackCategory.id]
           : [];
       const legacyCategoryName = (group.modal_category ?? "").trim();
       const categoryNames = uniqueAssignedCategories.length
-        ? uniqueAssignedCategories.map((category) => category.name)
+        ? uniqueAssignedCategories.map((entry) => entry.category.name)
         : fallbackCategory
           ? [fallbackCategory.name]
           : (legacyCategoryName ? [legacyCategoryName] : []);
+      const categorySortOrders = uniqueAssignedCategories.length
+        ? uniqueAssignedCategories.map((entry) => entry.sortOrder)
+        : fallbackCategory
+          ? [safeParseNumber(group.sort_order)]
+          : [];
 
       const resolvedCategoryId = categoryIds[0] ?? null;
       const resolvedCategoryName = categoryNames[0] ?? group.name.trim();
@@ -371,6 +402,7 @@ export function buildCatalogModalGroups({
         modalCategory: resolvedCategoryName,
         modalCategoryIds: categoryIds,
         modalCategoryNames: categoryNames,
+        modalCategorySortOrders: categorySortOrders,
         priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
         credits,
         sortOrder: safeParseNumber(group.sort_order),
@@ -397,11 +429,13 @@ export function buildCatalogGroupOptions(
     if (group.modalCategoryIds.length) {
       group.modalCategoryIds.forEach((categoryId, index) => {
         const categoryName = group.modalCategoryNames[index] ?? group.modalCategory;
+        const categorySortOrder = group.modalCategorySortOrders[index] ?? group.sortOrder;
         const bucket = groupedByCategoryId.get(categoryId) ?? [];
         bucket.push({
           ...group,
           modalCategoryId: categoryId,
           modalCategory: categoryName,
+          categorySortOrder,
         });
         groupedByCategoryId.set(categoryId, bucket);
       });
@@ -421,7 +455,8 @@ export function buildCatalogGroupOptions(
       sortOrder: safeParseNumber(category.sort_order),
       groups: [...(groupedByCategoryId.get(category.id) ?? [])].sort(
         (left, right) =>
-          (left.priorityStatus === "prioritario" ? 0 : 1) - (right.priorityStatus === "prioritario" ? 0 : 1)
+          (left.categorySortOrder ?? left.sortOrder) - (right.categorySortOrder ?? right.sortOrder)
+          || (left.priorityStatus === "prioritario" ? 0 : 1) - (right.priorityStatus === "prioritario" ? 0 : 1)
           || left.sortOrder - right.sortOrder
           || left.name.localeCompare(right.name, "es"),
       ),

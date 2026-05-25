@@ -216,6 +216,7 @@ create table if not exists public.credit_catalog_group_category_links (
   id uuid primary key default gen_random_uuid(),
   group_id uuid not null references public.credit_catalog_groups(id) on delete cascade,
   category_id uuid not null references public.credit_catalog_group_categories(id) on delete cascade,
+  sort_order integer not null default 0,
   created_at timestamptz not null default timezone('utc', now()),
   unique (group_id, category_id)
 );
@@ -400,6 +401,8 @@ create index if not exists credit_catalog_group_category_links_group_idx
 on public.credit_catalog_group_category_links (group_id);
 create index if not exists credit_catalog_group_category_links_category_idx
 on public.credit_catalog_group_category_links (category_id);
+create index if not exists credit_catalog_group_category_links_category_sort_idx
+on public.credit_catalog_group_category_links (category_id, sort_order, created_at);
 create index if not exists managed_prompts_updated_idx
 on public.managed_prompts (updated_at desc, created_at desc);
 create unique index if not exists managed_prompts_singleton_key_idx

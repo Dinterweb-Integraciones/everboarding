@@ -121,22 +121,67 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .single();
 
     if (error || !data) throw error ?? new Error("No pudimos actualizar el grupo.");
-    const { error: deleteCategoryLinksError } = await supabase
+    const { data: existingCategoryLinks, error: existingCategoryLinksError } = await supabase
       .from("credit_catalog_group_category_links")
-      .delete()
+      .select("id, category_id, sort_order")
       .eq("group_id", groupId);
 
-    if (deleteCategoryLinksError) {
-      throw deleteCategoryLinksError;
+    if (existingCategoryLinksError) {
+      throw existingCategoryLinksError;
     }
 
-    if (selectedCategories.length) {
+    const existingCategoryLinksByCategoryId = new Map(
+      (existingCategoryLinks ?? []).map((link) => [link.category_id, link] as const),
+    );
+    const selectedCategoryIds = selectedCategories.map((category) => category.id);
+    const categoryIdsToRemove = (existingCategoryLinks ?? [])
+      .map((link) => link.category_id)
+      .filter((categoryId) => !selectedCategoryIds.includes(categoryId));
+    const categoriesToAdd = selectedCategories.filter(
+      (category) => !existingCategoryLinksByCategoryId.has(category.id),
+    );
+
+    if (categoryIdsToRemove.length) {
+      const { error: deleteCategoryLinksError } = await supabase
+        .from("credit_catalog_group_category_links")
+        .delete()
+        .eq("group_id", groupId)
+        .in("category_id", categoryIdsToRemove);
+
+      if (deleteCategoryLinksError) {
+        throw deleteCategoryLinksError;
+      }
+    }
+
+    if (categoriesToAdd.length) {
+      const categoryIdsToAdd = categoriesToAdd.map((category) => category.id);
+      const { data: categoryLinksForOrdering, error: categoryLinksForOrderingError } = await supabase
+        .from("credit_catalog_group_category_links")
+        .select("category_id, sort_order")
+        .in("category_id", categoryIdsToAdd);
+
+      if (categoryLinksForOrderingError) {
+        throw categoryLinksForOrderingError;
+      }
+
+      const nextSortOrderByCategoryId = new Map<string, number>();
+      for (const categoryId of categoryIdsToAdd) {
+        const currentMax = Math.max(
+          -1,
+          ...(categoryLinksForOrdering ?? [])
+            .filter((link) => link.category_id === categoryId)
+            .map((link) => safeParseNumber(link.sort_order)),
+        );
+        nextSortOrderByCategoryId.set(categoryId, currentMax + 1);
+      }
+
       const { error: insertCategoryLinksError } = await supabase
         .from("credit_catalog_group_category_links")
         .insert(
-          selectedCategories.map((category) => ({
+          categoriesToAdd.map((category) => ({
             group_id: groupId,
             category_id: category.id,
+            sort_order: nextSortOrderByCategoryId.get(category.id) ?? 0,
           })),
         );
 
@@ -145,13 +190,13 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       }
     }
 
-    const { error: deleteLinksError } = await supabase
+    const { error: deleteMembershipLinksError } = await supabase
       .from("credit_catalog_group_items")
       .delete()
       .eq("group_id", groupId);
 
-    if (deleteLinksError) {
-      throw deleteLinksError;
+    if (deleteMembershipLinksError) {
+      throw deleteMembershipLinksError;
     }
 
     if (taskIds.length) {

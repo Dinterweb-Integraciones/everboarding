@@ -20,7 +20,7 @@ export default async function CatalogGroupsPage() {
   ] = await Promise.all([
     supabase.from("credit_catalog_groups").select("*").order("sort_order").order("name"),
     supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
-    supabase.from("credit_catalog_group_category_links").select("*").order("created_at"),
+    supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     supabase.from("credit_catalog_items").select("*").order("category").order("sort_order").order("label"),
     supabase.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
   ]);

@@ -1,6 +1,20 @@
 "use client";
 
-import { ChevronDown, ChevronLeft, ChevronRight, Eye, Layers3, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  GripVertical,
+  Layers3,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -50,6 +64,42 @@ const emptyForm: CatalogGroupForm = {
   tags: [],
 };
 
+function sortCategoryLinks(
+  links: CreditCatalogGroupCategoryLink[],
+  categoriesById: Map<string, CreditCatalogGroupCategory>,
+) {
+  return [...links].sort(
+    (left, right) =>
+      safeParseNumber(categoriesById.get(left.category_id)?.sort_order) -
+        safeParseNumber(categoriesById.get(right.category_id)?.sort_order)
+      || (categoriesById.get(left.category_id)?.name ?? "").localeCompare(
+        categoriesById.get(right.category_id)?.name ?? "",
+        "es",
+      )
+      || safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+      || left.created_at.localeCompare(right.created_at)
+      || left.id.localeCompare(right.id),
+  );
+}
+
+function reorderIds(ids: string[], draggedId: string, targetId: string) {
+  if (draggedId === targetId) {
+    return ids;
+  }
+
+  const draggedIndex = ids.indexOf(draggedId);
+  const targetIndex = ids.indexOf(targetId);
+
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return ids;
+  }
+
+  const nextIds = [...ids];
+  nextIds.splice(draggedIndex, 1);
+  nextIds.splice(targetIndex, 0, draggedId);
+  return nextIds;
+}
+
 export function CatalogGroupsManager({
   initialGroups,
   initialGroupCategories,
@@ -71,6 +121,10 @@ export function CatalogGroupsManager({
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupsPageSize, setGroupsPageSize] = useState(10);
   const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
+  const [activeOrderingCategoryId, setActiveOrderingCategoryId] = useState<string | null>(null);
+  const [isSavingCategoryOrder, setIsSavingCategoryOrder] = useState(false);
+  const [draggedOrderingGroupId, setDraggedOrderingGroupId] = useState<string | null>(null);
+  const [dropOrderingGroupId, setDropOrderingGroupId] = useState<string | null>(null);
   const [openDescriptionGroupId, setOpenDescriptionGroupId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -200,9 +254,10 @@ export function CatalogGroupsManager({
   const groupsTableRows = useMemo(
     () =>
       sortedGroups.map((group) => {
-        const selectedCategoryIds = groupCategoryLinks
-          .filter((link) => link.group_id === group.id)
-          .map((link) => link.category_id);
+        const selectedCategoryIds = sortCategoryLinks(
+          groupCategoryLinks.filter((link) => link.group_id === group.id),
+          groupCategoriesById,
+        ).map((link) => link.category_id);
         const uniqueSelectedCategoryIds = [...new Set(selectedCategoryIds)];
         const taskIds = memberships
           .filter((membership) => membership.group_id === group.id)
@@ -240,6 +295,45 @@ export function CatalogGroupsManager({
     [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups],
   );
 
+  const groupRowsById = useMemo(
+    () => new Map(groupsTableRows.map((group) => [group.id, group] as const)),
+    [groupsTableRows],
+  );
+
+  const categoryOrderingRows = useMemo(
+    () =>
+      availableGroupCategories
+        .map((category) => {
+          const groupsForCategory = groupCategoryLinks
+            .filter((link) => link.category_id === category.id)
+            .sort(
+              (left, right) =>
+                safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+                || left.created_at.localeCompare(right.created_at)
+                || left.id.localeCompare(right.id),
+            )
+            .map((link) => groupRowsById.get(link.group_id) ?? null)
+            .filter((group): group is (typeof groupsTableRows)[number] => Boolean(group));
+
+          return {
+            id: category.id,
+            name: category.name,
+            description: category.description ?? "",
+            groups: groupsForCategory,
+          };
+        })
+        .filter((category) => category.groups.length > 0),
+    [availableGroupCategories, groupCategoryLinks, groupRowsById],
+  );
+
+  const activeOrderingCategory = useMemo(
+    () =>
+      categoryOrderingRows.find((category) => category.id === activeOrderingCategoryId)
+      ?? categoryOrderingRows[0]
+      ?? null,
+    [activeOrderingCategoryId, categoryOrderingRows],
+  );
+
   const filteredGroupsTableRows = useMemo(() => {
     const normalizedQuery = deferredGroupSearchQuery.trim().toLowerCase();
     if (!normalizedQuery) {
@@ -269,6 +363,19 @@ export function CatalogGroupsManager({
   useEffect(() => {
     setCurrentGroupsPage((currentPage) => Math.min(currentPage, totalGroupsPages));
   }, [totalGroupsPages]);
+
+  useEffect(() => {
+    if (!categoryOrderingRows.length) {
+      if (activeOrderingCategoryId !== null) {
+        setActiveOrderingCategoryId(null);
+      }
+      return;
+    }
+
+    if (!activeOrderingCategoryId || !categoryOrderingRows.some((category) => category.id === activeOrderingCategoryId)) {
+      setActiveOrderingCategoryId(categoryOrderingRows[0].id);
+    }
+  }, [activeOrderingCategoryId, categoryOrderingRows]);
 
   useEffect(() => {
     if (!isCategoryMenuOpen) {
@@ -317,8 +424,10 @@ export function CatalogGroupsManager({
   }
 
   function startEdit(group: CreditCatalogGroup) {
-    const selectedCategoryIds = groupCategoryLinks
-      .filter((link) => link.group_id === group.id)
+    const selectedCategoryIds = sortCategoryLinks(
+      groupCategoryLinks.filter((link) => link.group_id === group.id),
+      groupCategoriesById,
+    )
       .map((link) => link.category_id)
       .filter((categoryId, index, current) => current.indexOf(categoryId) === index);
 
@@ -368,6 +477,123 @@ export function CatalogGroupsManager({
     }));
   }
 
+  function buildLocalCategoryLinks(groupId: string, selectedCategoryIds: string[]) {
+    const existingLinksByCategoryId = new Map(
+      groupCategoryLinks
+        .filter((link) => link.group_id === groupId)
+        .map((link) => [link.category_id, link] as const),
+    );
+
+    return selectedCategoryIds.map((categoryId) => {
+      const existingLink = existingLinksByCategoryId.get(categoryId);
+      if (existingLink) {
+        return existingLink;
+      }
+
+      const currentMax = Math.max(
+        -1,
+        ...groupCategoryLinks
+          .filter((link) => link.category_id === categoryId && link.group_id !== groupId)
+          .map((link) => safeParseNumber(link.sort_order)),
+      );
+
+      return {
+        id: crypto.randomUUID(),
+        group_id: groupId,
+        category_id: categoryId,
+        sort_order: currentMax + 1,
+        created_at: new Date().toISOString(),
+      } satisfies CreditCatalogGroupCategoryLink;
+    });
+  }
+
+  function applyCategoryOrderLocally(
+    currentLinks: CreditCatalogGroupCategoryLink[],
+    categoryId: string,
+    orderedGroupIds: string[],
+  ) {
+    const nextSortOrderByGroupId = new Map(orderedGroupIds.map((groupId, index) => [groupId, index] as const));
+
+    return currentLinks.map((link) =>
+      link.category_id === categoryId && nextSortOrderByGroupId.has(link.group_id)
+        ? { ...link, sort_order: nextSortOrderByGroupId.get(link.group_id) ?? link.sort_order }
+        : link,
+    );
+  }
+
+  async function persistCategoryOrdering(categoryId: string, orderedGroupIds: string[]) {
+    const previousLinks = groupCategoryLinks;
+    setIsSavingCategoryOrder(true);
+    setFeedback(null);
+    setGroupCategoryLinks((current) => applyCategoryOrderLocally(current, categoryId, orderedGroupIds));
+
+    try {
+      const response = await fetch(`/api/cs/catalog-group-categories/${categoryId}/reorder-groups`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupIds: orderedGroupIds }),
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos reordenar los grupos de la categoria.");
+      }
+
+      setFeedback({ tone: "success", message: "Orden por categoria actualizado." });
+    } catch (caughtError) {
+      setGroupCategoryLinks(previousLinks);
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos reordenar los grupos de la categoria."),
+      });
+    } finally {
+      setIsSavingCategoryOrder(false);
+      setDraggedOrderingGroupId(null);
+      setDropOrderingGroupId(null);
+    }
+  }
+
+  function moveGroupInsideCategory(categoryId: string, groupId: string, direction: "up" | "down") {
+    const categoryRow = categoryOrderingRows.find((category) => category.id === categoryId);
+    if (!categoryRow) {
+      return;
+    }
+
+    const orderedGroupIds = categoryRow.groups.map((group) => group.id);
+    const currentIndex = orderedGroupIds.indexOf(groupId);
+    const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+    if (currentIndex === -1 || nextIndex < 0 || nextIndex >= orderedGroupIds.length) {
+      return;
+    }
+
+    const nextOrderedGroupIds = [...orderedGroupIds];
+    const [movedGroupId] = nextOrderedGroupIds.splice(currentIndex, 1);
+    nextOrderedGroupIds.splice(nextIndex, 0, movedGroupId);
+    void persistCategoryOrdering(categoryId, nextOrderedGroupIds);
+  }
+
+  function handleOrderingDrop(categoryId: string, targetGroupId: string) {
+    if (!draggedOrderingGroupId) {
+      return;
+    }
+
+    const categoryRow = categoryOrderingRows.find((category) => category.id === categoryId);
+    if (!categoryRow) {
+      return;
+    }
+
+    const currentOrderedGroupIds = categoryRow.groups.map((group) => group.id);
+    const nextOrderedGroupIds = reorderIds(currentOrderedGroupIds, draggedOrderingGroupId, targetGroupId);
+
+    if (nextOrderedGroupIds.join("|") === currentOrderedGroupIds.join("|")) {
+      setDraggedOrderingGroupId(null);
+      setDropOrderingGroupId(null);
+      return;
+    }
+
+    void persistCategoryOrdering(categoryId, nextOrderedGroupIds);
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
@@ -409,6 +635,7 @@ export function CatalogGroupsManager({
         throw new Error(payload.message || "No pudimos guardar el grupo.");
       }
 
+      const nextCategoryLinks = buildLocalCategoryLinks(payload.id, form.modalCategoryIds);
       const nextMemberships = selectedTaskIds.map((taskId, index) => ({
         id: crypto.randomUUID(),
         group_id: payload.id,
@@ -416,12 +643,6 @@ export function CatalogGroupsManager({
         sort_order: index,
         created_at: new Date().toISOString(),
       })) satisfies CreditCatalogGroupItem[];
-      const nextCategoryLinks = form.modalCategoryIds.map((categoryId) => ({
-        id: crypto.randomUUID(),
-        group_id: payload.id,
-        category_id: categoryId,
-        created_at: new Date().toISOString(),
-      })) satisfies CreditCatalogGroupCategoryLink[];
 
       if (editingId) {
         setGroups((current) =>
@@ -833,6 +1054,169 @@ export function CatalogGroupsManager({
                 ? `${groupsTableRows.length} grupos`
                 : `${filteredGroupsTableRows.length} de ${groupsTableRows.length} grupos`}
             </span>
+          </div>
+
+          <div className="mt-6 rounded-[16px] border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Orden por categoria
+                </p>
+                <h3 className="mt-1 text-lg font-black text-slate-900">Prioriza casos de uso dentro de cada categoria</h3>
+                <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                  Arrastra las tarjetas o usa subir y bajar. Este orden se refleja en el catalogo visible para ventas y onboarding.
+                </p>
+              </div>
+              <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+                {isSavingCategoryOrder ? "Guardando orden..." : "Orden manual activo"}
+              </div>
+            </div>
+
+            {categoryOrderingRows.length ? (
+              <div className="mt-4 grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+                <div className="flex flex-col gap-2">
+                  {categoryOrderingRows.map((category) => {
+                    const selected = activeOrderingCategory?.id === category.id;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => setActiveOrderingCategoryId(category.id)}
+                        className={`rounded-[14px] border px-4 py-3 text-left transition ${
+                          selected
+                            ? "border-[var(--accent)] bg-white shadow-sm"
+                            : "border-slate-200 bg-white/70 hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-slate-900">{category.name}</span>
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                            {category.groups.length}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {category.description || "Sin descripcion"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="rounded-[16px] border border-slate-200 bg-white p-4">
+                  {activeOrderingCategory ? (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{activeOrderingCategory.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {activeOrderingCategory.groups.length} casos de uso en esta categoria
+                          </p>
+                        </div>
+                        <p className="text-xs text-slate-400">El primero aparece primero en el catalogo</p>
+                      </div>
+
+                      <div className="mt-4 space-y-3">
+                        {activeOrderingCategory.groups.map((group, index) => (
+                          <div
+                            key={`${activeOrderingCategory.id}-${group.id}`}
+                            draggable={!isSavingCategoryOrder}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", group.id);
+                              setDraggedOrderingGroupId(group.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedOrderingGroupId(null);
+                              setDropOrderingGroupId(null);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              if (isSavingCategoryOrder) {
+                                return;
+                              }
+                              event.dataTransfer.dropEffect = "move";
+                              setDropOrderingGroupId(group.id);
+                            }}
+                            onDragLeave={() => {
+                              setDropOrderingGroupId((current) => (current === group.id ? null : current));
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              handleOrderingDrop(activeOrderingCategory.id, group.id);
+                            }}
+                            className={`rounded-[14px] border px-4 py-3 transition ${
+                              dropOrderingGroupId === group.id
+                                ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_8%,white)]"
+                                : "border-slate-200 bg-slate-50/60"
+                            } ${isSavingCategoryOrder ? "opacity-70" : "cursor-grab active:cursor-grabbing"}`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex items-center gap-3 pt-1">
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">
+                                  #{index + 1}
+                                </span>
+                                <GripVertical className="h-4 w-4 text-slate-400" />
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-semibold text-slate-900">{group.name}</p>
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                    {group.totalCredits} CR
+                                  </span>
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                      group.priorityStatus === "prioritario"
+                                        ? "bg-amber-50 text-amber-700"
+                                        : "bg-slate-100 text-slate-500"
+                                    }`}
+                                  >
+                                    {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
+                                  </span>
+                                  {!group.is_active ? (
+                                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                      Inactivo
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-1 text-sm text-slate-600">
+                                  {group.description || "Sin descripcion"}
+                                </p>
+                              </div>
+
+                              <div className="flex shrink-0 flex-col gap-2">
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "up")}
+                                  disabled={isSavingCategoryOrder || index === 0}
+                                >
+                                  <ArrowUp className="mr-2 h-4 w-4" />
+                                  Subir
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "down")}
+                                  disabled={isSavingCategoryOrder || index === activeOrderingCategory.groups.length - 1}
+                                >
+                                  <ArrowDown className="mr-2 h-4 w-4" />
+                                  Bajar
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[14px] border border-dashed border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
+                Aun no hay categorias con casos de uso asociados para ordenar.
+              </div>
+            )}
           </div>
 
           <div className="mt-5 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4">

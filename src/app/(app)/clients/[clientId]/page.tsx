@@ -124,7 +124,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
     admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
-    admin.from("credit_catalog_group_category_links").select("*").order("created_at"),
+    admin.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
   ]);
 

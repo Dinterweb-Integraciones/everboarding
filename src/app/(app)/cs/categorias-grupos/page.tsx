@@ -8,7 +8,7 @@ export default async function CatalogGroupCategoriesPage() {
   const [{ data: categoryRows, error: categoriesError }, { data: categoryLinkRows, error: categoryLinksError }] =
     await Promise.all([
       supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
-      supabase.from("credit_catalog_group_category_links").select("*").order("created_at"),
+      supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     ]);
 
   if (categoriesError) {

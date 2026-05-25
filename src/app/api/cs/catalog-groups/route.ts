@@ -108,12 +108,34 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     if (selectedCategories.length) {
+      const selectedCategoryIds = selectedCategories.map((category) => category.id);
+      const { data: existingLinks, error: existingLinksError } = await supabase
+        .from("credit_catalog_group_category_links")
+        .select("category_id, sort_order")
+        .in("category_id", selectedCategoryIds);
+
+      if (existingLinksError) {
+        throw existingLinksError;
+      }
+
+      const nextSortOrderByCategoryId = new Map<string, number>();
+      for (const categoryId of selectedCategoryIds) {
+        const currentMax = Math.max(
+          -1,
+          ...(existingLinks ?? [])
+            .filter((link) => link.category_id === categoryId)
+            .map((link) => safeParseNumber(link.sort_order)),
+        );
+        nextSortOrderByCategoryId.set(categoryId, currentMax + 1);
+      }
+
       const { error: categoryLinksError } = await supabase
         .from("credit_catalog_group_category_links")
         .insert(
           selectedCategories.map((category) => ({
             group_id: data.id,
             category_id: category.id,
+            sort_order: nextSortOrderByCategoryId.get(category.id) ?? 0,
           })),
         );
 
