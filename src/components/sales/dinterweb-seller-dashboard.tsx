@@ -20,6 +20,7 @@ type DinterwebSellerDashboardProps = {
 const STATUS_COPY: Record<SalesProposalRecord["status"], string> = {
   draft: "Borrador",
   checkout_pending: "Checkout pendiente",
+  transfer_pending: "Pendiente finanzas",
   paid: "Pagada",
   board_activated: "Board activado",
   archived: "Archivada",

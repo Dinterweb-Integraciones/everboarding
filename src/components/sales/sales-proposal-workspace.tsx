@@ -2188,6 +2188,7 @@ function mergeRecommendedGroups(
       : appliedCouponLabel;
   const isProposalCheckoutLocked =
     proposal.status === "checkout_pending" ||
+    proposal.status === "transfer_pending" ||
     proposal.status === "paid" ||
     proposal.status === "board_activated";
   const defaultCatalogLibraryTab =
@@ -2197,6 +2198,8 @@ function mergeRecommendedGroups(
       ? "Plan Activado"
       : proposal.status === "paid"
         ? "Pagada"
+        : proposal.status === "transfer_pending"
+          ? "Pendiente Finanzas"
         : proposal.status === "checkout_pending"
           ? "Checkout Pendiente"
           : isActivating
@@ -2207,6 +2210,10 @@ function mergeRecommendedGroups(
   const isActivatePlanDisabled =
     isActivating || isSyncingPayment || isProposalCheckoutLocked;
   const isUpsellDisabled = hasAppliedCoupon || isProposalCheckoutLocked;
+  const billingModeSummary =
+    proposal.billingMode === "subscription"
+      ? `Facturacion recurrente ${proposal.periodMonths === 3 ? "trimestral" : proposal.periodMonths === 6 ? "semestral" : proposal.periodMonths === 12 ? "anual" : "mensual"}.`
+      : "Cobro unico por este paquete.";
   const wizardLoadingMessage =
     WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
 
@@ -2519,11 +2526,7 @@ function mergeRecommendedGroups(
                         Base mensual: <strong>{dinterwebMonthlyCredits} CR</strong> ·{" "}
                         <strong>{formatCurrency(dinterwebMonthlyPrice, proposal.currency.toUpperCase())}</strong>.
                       </p>
-                      <p className="mt-1">
-                        {proposal.billingMode === "subscription"
-                          ? `Stripe cobrara ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())} cada ${proposal.periodMonths === 3 ? "trimestre" : proposal.periodMonths === 6 ? "semestre" : proposal.periodMonths === 12 ? "ano" : "mes"}.`
-                          : `Stripe cobrara ${formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())} una sola vez por este paquete.`}
-                      </p>
+                      <p className="mt-1">{billingModeSummary}</p>
                     </div>
                   </div>
                 </div>

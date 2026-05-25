@@ -9,7 +9,7 @@ import {
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 
-const platformRoles = new Set<PlatformRole>(["superadmin", "admin", "sales", "csm"]);
+const platformRoles = new Set<PlatformRole>(["superadmin", "admin", "finance", "sales", "csm"]);
 
 function isPlatformRole(value: string): value is PlatformRole {
   return platformRoles.has(value as PlatformRole);

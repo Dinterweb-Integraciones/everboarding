@@ -6,6 +6,7 @@ import {
   getSalesProposalActivationValidation,
   isValidSalesProposalClientEmail,
   mapSalesProposalRow,
+  normalizeSalesPaymentMethod,
   normalizeCouponPercentageOff,
   normalizeSalesCouponType,
   setSalesProposalExtraPackages,
@@ -13,6 +14,7 @@ import {
   serializeSalesProposalFullSnapshot,
   type SalesCouponType,
   type SalesProposalDraft,
+  type SalesProposalPaymentMethod,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -40,12 +42,17 @@ type SalesProposalActivationResult =
     };
 
 type SalesProposalPaymentContext = {
+  paymentMethod?: SalesProposalPaymentMethod;
   checkoutSessionId: string | null;
   paymentIntentId: string | null;
   subscriptionId: string | null;
   invoiceId: string | null;
   amountCents: number;
   currency: string;
+  transferReference?: string | null;
+  transferValidatedAt?: string | null;
+  transferValidatedByUserId?: string | null;
+  recordStripePayment?: boolean;
 };
 
 const LEGACY_SALES_COUPON_GRANTED_CREDITS = 40;
@@ -432,6 +439,7 @@ export async function applySalesCouponToProposal(proposalSlug: string, couponCod
 
   if (
     typedProposalRow.status === "checkout_pending" ||
+    typedProposalRow.status === "transfer_pending" ||
     typedProposalRow.status === "paid" ||
     typedProposalRow.status === "board_activated"
   ) {
@@ -468,6 +476,7 @@ export async function updateSalesProposalProspectExtraPackages(
 
   if (
     typedProposalRow.status === "checkout_pending" ||
+    typedProposalRow.status === "transfer_pending" ||
     typedProposalRow.status === "paid" ||
     typedProposalRow.status === "board_activated"
   ) {
@@ -482,6 +491,42 @@ export async function updateSalesProposalProspectExtraPackages(
   );
 
   return saveSalesProposal(nextProposal, proposalSlug);
+}
+
+async function setSalesProposalTransferPending(proposal: SalesProposalRecord) {
+  if (!proposal.id) {
+    throw new Error("La propuesta debe guardarse antes de enviarla a Finanzas.");
+  }
+
+  const activationValidation = getSalesProposalActivationValidation(proposal);
+  if (!activationValidation.isValid) {
+    throw new Error(activationValidation.message || "La propuesta aun no esta lista para enviarse a Finanzas.");
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("sales_proposals")
+    .update(({
+      status: "transfer_pending",
+      payment_method: "bank_transfer",
+      stripe_checkout_session_id: null,
+      stripe_payment_intent_id: null,
+      stripe_subscription_id: null,
+      transfer_reference: null,
+      transfer_validated_at: null,
+      transfer_validated_by_user_id: null,
+      updated_at: new Date().toISOString(),
+    }) as never)
+    .eq("id", proposal.id)
+    .select("*")
+    .single();
+  const typedRow = data as SalesProposalRow | null;
+
+  if (error || !typedRow) {
+    throw error ?? new Error("No pudimos enviar la propuesta a revision de Finanzas.");
+  }
+
+  return mapSalesProposalRecord(typedRow);
 }
 
 async function activateSalesProposalFromCoupon(
@@ -511,6 +556,7 @@ async function activateSalesProposalFromCoupon(
   );
 
   await activateSalesProposalWithPaymentContext(syncedProposal.id!, {
+    paymentMethod: syncedProposal.paymentMethod,
     checkoutSessionId: null,
     paymentIntentId: null,
     subscriptionId: null,
@@ -559,6 +605,15 @@ export async function activateSalesProposal(
   }
 
   if (proposal.quotedPrice > 0) {
+    if (proposal.paymentMethod === "bank_transfer") {
+      const transferPendingProposal = await setSalesProposalTransferPending(proposal);
+
+      return {
+        proposal: transferPendingProposal,
+        message: "La propuesta se envio a Finanzas para validar la transferencia antes de asignar CS.",
+      };
+    }
+
     return { url: await createSalesProposalCheckout(request, proposal) };
   }
 
@@ -660,7 +715,11 @@ export async function createSalesProposalCheckout(
     .from("sales_proposals")
     .update(({
       status: "checkout_pending",
+      payment_method: "stripe",
       stripe_checkout_session_id: session.id,
+      transfer_reference: null,
+      transfer_validated_at: null,
+      transfer_validated_by_user_id: null,
       updated_at: new Date().toISOString(),
     }) as never)
     .eq("id", proposalId);
@@ -708,10 +767,15 @@ async function activateSalesProposalWithPaymentContext(
         .from("sales_proposals")
         .update(({
           status: "paid",
+          payment_method: payment.paymentMethod ?? normalizeSalesPaymentMethod(typedProposalRow.payment_method),
           paid_at: new Date().toISOString(),
           stripe_checkout_session_id: payment.checkoutSessionId,
           stripe_payment_intent_id: paymentIntentId,
           stripe_subscription_id: subscriptionId,
+          transfer_reference: payment.transferReference ?? typedProposalRow.transfer_reference,
+          transfer_validated_at: payment.transferValidatedAt ?? typedProposalRow.transfer_validated_at,
+          transfer_validated_by_user_id:
+            payment.transferValidatedByUserId ?? typedProposalRow.transfer_validated_by_user_id,
           updated_at: new Date().toISOString(),
         }) as never)
         .eq("id", mappedProposalId);
@@ -832,23 +896,25 @@ async function activateSalesProposalWithPaymentContext(
     }
   }
 
-  const paymentArgs: RecordStripeCheckoutPaymentArgs = {
-    p_client_id: activatedClientId,
-    p_checkout_session_id: payment.checkoutSessionId,
-    p_payment_intent_id: paymentIntentId,
-    p_amount_cents: payment.amountCents,
-    p_currency: resolveCurrency(payment.currency || proposal.currency),
-    p_stripe_subscription_id: subscriptionId,
-    p_stripe_invoice_id: payment.invoiceId,
-  };
+  if (payment.recordStripePayment !== false) {
+    const paymentArgs: RecordStripeCheckoutPaymentArgs = {
+      p_client_id: activatedClientId,
+      p_checkout_session_id: payment.checkoutSessionId,
+      p_payment_intent_id: paymentIntentId,
+      p_amount_cents: payment.amountCents,
+      p_currency: resolveCurrency(payment.currency || proposal.currency),
+      p_stripe_subscription_id: subscriptionId,
+      p_stripe_invoice_id: payment.invoiceId,
+    };
 
-  const { error: paymentError } = await admin.rpc(
-    "record_stripe_checkout_payment" as never,
-    paymentArgs as never,
-  );
+    const { error: paymentError } = await admin.rpc(
+      "record_stripe_checkout_payment" as never,
+      paymentArgs as never,
+    );
 
-  if (paymentError) {
-    throw paymentError;
+    if (paymentError) {
+      throw paymentError;
+    }
   }
 
   if (subscriptionId && updateSubscriptionMetadata) {
@@ -925,12 +991,17 @@ async function activateSalesProposalWithPaymentContext(
     .from("sales_proposals")
     .update(({
       status: "board_activated",
+      payment_method: payment.paymentMethod ?? normalizeSalesPaymentMethod(typedProposalRow.payment_method),
       activated_client_id: activatedClientId,
       activated_at: new Date().toISOString(),
       paid_at: new Date().toISOString(),
       stripe_checkout_session_id: payment.checkoutSessionId,
       stripe_payment_intent_id: paymentIntentId,
       stripe_subscription_id: subscriptionId,
+      transfer_reference: payment.transferReference ?? typedProposalRow.transfer_reference,
+      transfer_validated_at: payment.transferValidatedAt ?? typedProposalRow.transfer_validated_at,
+      transfer_validated_by_user_id:
+        payment.transferValidatedByUserId ?? typedProposalRow.transfer_validated_by_user_id,
       updated_at: new Date().toISOString(),
     }) as never)
     .eq("id", mappedProposalId);
@@ -951,6 +1022,7 @@ export async function activateSalesProposalAfterPayment(
   await activateSalesProposalWithPaymentContext(
     proposalId,
     {
+      paymentMethod: "stripe",
       checkoutSessionId: session.id,
       paymentIntentId:
         typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
@@ -992,6 +1064,23 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
     return;
   }
 
+  if (normalizeSalesPaymentMethod(typedProposalRow.payment_method) === "bank_transfer") {
+    await activateSalesProposalWithPaymentContext(proposalId, {
+      paymentMethod: "bank_transfer",
+      checkoutSessionId: null,
+      paymentIntentId: null,
+      subscriptionId: null,
+      invoiceId: null,
+      amountCents: Math.round(safeParseNumber(typedProposalRow.quoted_price) * 100),
+      currency: typedProposalRow.currency,
+      transferReference: typedProposalRow.transfer_reference,
+      transferValidatedAt: typedProposalRow.transfer_validated_at,
+      transferValidatedByUserId: typedProposalRow.transfer_validated_by_user_id,
+      recordStripePayment: false,
+    });
+    return;
+  }
+
   if (!typedProposalRow.stripe_checkout_session_id) {
     throw new Error("La propuesta pagada no tiene una sesion de Stripe para activar el cliente.");
   }
@@ -1002,6 +1091,66 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
   });
 
   await activateSalesProposalAfterPayment(stripe, proposalId, session);
+}
+
+export async function confirmTransferredSalesProposalPayment(
+  proposalId: string,
+  transferReference: string,
+  validatedByUserId: string,
+) {
+  const normalizedReference = transferReference.trim();
+  if (!normalizedReference) {
+    throw new Error("Ingresa la referencia de la transferencia antes de confirmar el pago.");
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("id", proposalId)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta por transferencia.");
+  }
+
+  if (normalizeSalesPaymentMethod(typedProposalRow.payment_method) !== "bank_transfer") {
+    throw new Error("Esta propuesta no usa transferencia como metodo de pago.");
+  }
+
+  if (typedProposalRow.status !== "transfer_pending") {
+    throw new Error("La propuesta ya no esta pendiente de validacion financiera.");
+  }
+
+  const validatedAt = new Date().toISOString();
+
+  await activateSalesProposalWithPaymentContext(proposalId, {
+    paymentMethod: "bank_transfer",
+    checkoutSessionId: null,
+    paymentIntentId: null,
+    subscriptionId: null,
+    invoiceId: null,
+    amountCents: Math.round(safeParseNumber(typedProposalRow.quoted_price) * 100),
+    currency: typedProposalRow.currency,
+    transferReference: normalizedReference,
+    transferValidatedAt: validatedAt,
+    transferValidatedByUserId: validatedByUserId,
+    recordStripePayment: false,
+  });
+
+  const { data: refreshedRow, error: refreshedError } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("id", proposalId)
+    .single();
+  const typedRefreshedRow = refreshedRow as SalesProposalRow | null;
+
+  if (refreshedError || !typedRefreshedRow) {
+    throw refreshedError ?? new Error("No pudimos refrescar la propuesta despues de validar la transferencia.");
+  }
+
+  return mapSalesProposalRecord(typedRefreshedRow);
 }
 
 export async function syncSalesProposalCheckoutStatus(

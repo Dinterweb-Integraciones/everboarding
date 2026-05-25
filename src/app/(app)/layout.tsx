@@ -39,9 +39,11 @@ export default async function ProtectedLayout({
 
   const firstMembership = membershipRecords[0];
   const homeHref =
-    clientOnlyMode && firstMembership
-      ? `/clients/${firstMembership.client_id}?stage=${resolveStageFromProfileRole(firstMembership.profile_role)}`
-      : "/dashboard";
+    platformRole === "finance"
+      ? "/finanzas"
+      : clientOnlyMode && firstMembership
+        ? `/clients/${firstMembership.client_id}?stage=${resolveStageFromProfileRole(firstMembership.profile_role)}`
+        : "/dashboard";
 
   return (
     <AppShell

@@ -141,6 +141,7 @@ export type Database = {
           billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months: number;
           status: Database["public"]["Enums"]["sales_proposal_status"];
+          payment_method: Database["public"]["Enums"]["sales_payment_method"];
           snapshot: Json;
           hubspot_deal_id: string | null;
           hubspot_pipeline_id: string | null;
@@ -154,6 +155,9 @@ export type Database = {
           activated_client_id: string | null;
           paid_at: string | null;
           activated_at: string | null;
+          transfer_reference: string | null;
+          transfer_validated_at: string | null;
+          transfer_validated_by_user_id: string | null;
           last_synced_at: string | null;
           created_at: string;
           updated_at: string;
@@ -178,6 +182,7 @@ export type Database = {
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
+          payment_method?: Database["public"]["Enums"]["sales_payment_method"];
           snapshot?: Json;
           hubspot_deal_id?: string | null;
           hubspot_pipeline_id?: string | null;
@@ -191,6 +196,9 @@ export type Database = {
           activated_client_id?: string | null;
           paid_at?: string | null;
           activated_at?: string | null;
+          transfer_reference?: string | null;
+          transfer_validated_at?: string | null;
+          transfer_validated_by_user_id?: string | null;
           last_synced_at?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -215,6 +223,7 @@ export type Database = {
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
+          payment_method?: Database["public"]["Enums"]["sales_payment_method"];
           snapshot?: Json;
           hubspot_deal_id?: string | null;
           hubspot_pipeline_id?: string | null;
@@ -228,6 +237,9 @@ export type Database = {
           activated_client_id?: string | null;
           paid_at?: string | null;
           activated_at?: string | null;
+          transfer_reference?: string | null;
+          transfer_validated_at?: string | null;
+          transfer_validated_by_user_id?: string | null;
           last_synced_at?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -865,13 +877,14 @@ export type Database = {
     Enums: {
       client_access_role: "viewer" | "editor" | "owner";
       client_profile_role: "sales" | "csm" | "client" | "stakeholder";
-      platform_role: "superadmin" | "admin" | "sales" | "csm";
+      platform_role: "superadmin" | "admin" | "sales" | "csm" | "finance";
       initiative_status: "backlog" | "planned" | "executing" | "completed";
       initiative_task_status: "pending" | "in_progress" | "blocked" | "completed";
       custom_plan_type: "mensual" | "proyecto";
       custom_plan_billing_mode: "subscription" | "one_time";
       project_stage: "sales" | "cs" | "client";
-      sales_proposal_status: "draft" | "checkout_pending" | "paid" | "board_activated" | "archived";
+      sales_payment_method: "stripe" | "bank_transfer";
+      sales_proposal_status: "draft" | "checkout_pending" | "transfer_pending" | "paid" | "board_activated" | "archived";
     };
     Functions: {
       redeem_client_share_link: {

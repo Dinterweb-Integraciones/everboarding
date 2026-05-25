@@ -17,10 +17,12 @@ import type { Database } from "@/types/database";
 type SalesProposalRow = Database["public"]["Tables"]["sales_proposals"]["Row"];
 
 export type SalesCouponType = "package_override" | "percentage";
+export type SalesProposalPaymentMethod = "stripe" | "bank_transfer";
 
 export type SalesProposalStatus =
   | "draft"
   | "checkout_pending"
+  | "transfer_pending"
   | "paid"
   | "board_activated"
   | "archived";
@@ -69,6 +71,7 @@ export type SalesProposalDraft = {
   billingMode: "subscription" | "one_time";
   periodMonths: 1 | 3 | 6 | 12;
   status: SalesProposalStatus;
+  paymentMethod: SalesProposalPaymentMethod;
   hubspotDealId: string | null;
   activatedClientId: string | null;
   appliedCouponId: string | null;
@@ -77,6 +80,9 @@ export type SalesProposalDraft = {
   appliedCouponPercentageOff: number | null;
   couponBaseQuotedPrice: number | null;
   couponAppliedAt: string | null;
+  transferReference: string;
+  transferValidatedAt: string | null;
+  transferValidatedByUserId: string | null;
   prospectExtraPackageQuantity: number;
   initiatives: SalesProposalInitiativeDraft[];
 };
@@ -188,6 +194,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     billingMode: "one_time",
     periodMonths: 1,
     status: "draft",
+    paymentMethod: "stripe",
     hubspotDealId: null,
     activatedClientId: null,
     appliedCouponId: null,
@@ -196,9 +203,16 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    transferReference: "",
+    transferValidatedAt: null,
+    transferValidatedByUserId: null,
     prospectExtraPackageQuantity: 0,
     initiatives: [],
   };
+}
+
+export function normalizeSalesPaymentMethod(value: unknown): SalesProposalPaymentMethod {
+  return value === "bank_transfer" ? "bank_transfer" : "stripe";
 }
 
 function buildDuplicatedSalesProposalTitle(value: string) {
@@ -234,6 +248,10 @@ export function createDuplicatedSalesProposalDraft(
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    paymentMethod: "stripe",
+    transferReference: "",
+    transferValidatedAt: null,
+    transferValidatedByUserId: null,
     prospectExtraPackageQuantity: 0,
     initiatives: normalized.initiatives.map((initiative, initiativeIndex) => ({
       ...initiative,
@@ -448,6 +466,7 @@ export function normalizeSalesProposalDraft(
     ...base,
     ...input,
     currency: (input.currency || base.currency).toLowerCase(),
+    paymentMethod: normalizeSalesPaymentMethod(input.paymentMethod ?? base.paymentMethod),
     workspaceVariant:
       input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot",
     billingMode: normalizeSalesBillingMode(input.billingMode ?? base.billingMode),
@@ -463,6 +482,15 @@ export function normalizeSalesProposalDraft(
         ? null
         : Math.max(0, safeParseNumber(couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
+    transferReference: String(input.transferReference ?? base.transferReference ?? ""),
+    transferValidatedAt:
+      typeof input.transferValidatedAt === "string" && input.transferValidatedAt.trim()
+        ? input.transferValidatedAt
+        : null,
+    transferValidatedByUserId:
+      typeof input.transferValidatedByUserId === "string" && input.transferValidatedByUserId.trim()
+        ? input.transferValidatedByUserId
+        : null,
     prospectExtraPackageQuantity: Math.max(
       0,
       Math.floor(safeParseNumber(input.prospectExtraPackageQuantity ?? input.pe ?? base.prospectExtraPackageQuantity)),
@@ -515,6 +543,7 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
       (row.plan_period_months as number | null | undefined) ?? snapshot.periodMonths,
     ),
     status: normalizeSalesStatus(row.status),
+    paymentMethod: normalizeSalesPaymentMethod(row.payment_method),
     hubspotDealId: (row.hubspot_deal_id as string | null) ?? null,
     activatedClientId: (row.activated_client_id as string | null) ?? null,
     appliedCouponId: (row.applied_coupon_id as string | null) ?? null,
@@ -529,6 +558,10 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
         ? null
         : Math.max(0, safeParseNumber(snapshot.couponBaseQuotedPrice)),
     couponAppliedAt: (row.coupon_applied_at as string | null) ?? snapshot.couponAppliedAt ?? null,
+    transferReference: String(row.transfer_reference ?? snapshot.transferReference ?? ""),
+    transferValidatedAt: (row.transfer_validated_at as string | null) ?? snapshot.transferValidatedAt ?? null,
+    transferValidatedByUserId:
+      (row.transfer_validated_by_user_id as string | null) ?? snapshot.transferValidatedByUserId ?? null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
     updatedAt: String(row.updated_at ?? new Date().toISOString()),
     paidAt: (row.paid_at as string | null) ?? null,
@@ -563,9 +596,13 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     billing_mode: normalized.billingMode,
     plan_period_months: normalized.periodMonths,
     status: normalized.status,
+    payment_method: normalized.paymentMethod,
     applied_coupon_id: normalized.appliedCouponId,
     applied_coupon_code: normalized.appliedCouponCode.trim() || null,
     coupon_applied_at: normalized.couponAppliedAt,
+    transfer_reference: normalized.transferReference.trim() || null,
+    transfer_validated_at: normalized.transferValidatedAt,
+    transfer_validated_by_user_id: normalized.transferValidatedByUserId,
     snapshot,
   };
 }
@@ -733,6 +770,7 @@ export function generateSalesProposalSlug(
 function normalizeSalesStatus(value: unknown): SalesProposalStatus {
   if (
     value === "checkout_pending" ||
+    value === "transfer_pending" ||
     value === "paid" ||
     value === "board_activated" ||
     value === "archived"

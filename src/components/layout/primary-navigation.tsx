@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronDown, House, LayoutGrid, MessageSquareText } from "lucide-react";
+import { ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { PlatformRole } from "@/lib/platform-access";
@@ -41,6 +41,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
   const canSeeCatalogs = platformRole === "admin" || platformRole === "superadmin";
   const canManageUsers = platformRole === "superadmin";
   const canSeeSales = platformRole === "superadmin";
+  const canSeeFinance = platformRole === "finance" || platformRole === "superadmin";
   const catalogLinksToRender = canSeeCatalogs
     ? canManageUsers
       ? [...catalogLinks, { href: "/cs/usuarios", label: "Usuarios" }]
@@ -60,6 +61,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
         ]
       : []),
     ...(canManageUsers ? [{ href: "/cs/usuarios", label: "Usuarios", icon: LayoutGrid }] : []),
+    ...(canSeeFinance ? [{ href: "/finanzas", label: "Finanzas", icon: CreditCard }] : []),
     ...(canSeeSales
       ? [
           { href: "/sales/dinterweb", label: "Sales Dinterweb", icon: LayoutGrid },
@@ -117,6 +119,13 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
               ))}
             </div>
           </div>
+        ) : null}
+
+        {canSeeFinance ? (
+          <Link href="/finanzas" className={getNavItemClass(isActive(pathname, "/finanzas"))}>
+            <CreditCard className="h-4 w-4 shrink-0" />
+            <span className={navLabelClass}>Finanzas</span>
+          </Link>
         ) : null}
 
         {canSeeSales ? (

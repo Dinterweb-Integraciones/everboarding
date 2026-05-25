@@ -16,7 +16,11 @@ export default async function SalesAssignmentsPage() {
     { data: proposalRows, error: proposalsError },
     { data: assignableProfiles, error: profilesError },
   ] = await Promise.all([
-    admin.from("sales_proposals").select("*").order("updated_at", { ascending: false }),
+    admin
+      .from("sales_proposals")
+      .select("*")
+      .neq("status", "transfer_pending")
+      .order("updated_at", { ascending: false }),
     supabase.rpc("list_assignable_profiles"),
   ]);
 

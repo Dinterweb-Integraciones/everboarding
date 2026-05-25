@@ -23,7 +23,7 @@ type PlatformUsersManagerProps = {
   currentUserId: string;
 };
 
-const roleOrder: PlatformRole[] = ["superadmin", "admin", "sales", "csm"];
+const roleOrder: PlatformRole[] = ["superadmin", "admin", "finance", "sales", "csm"];
 
 type InviteResponsePayload = {
   user?: PlatformProfile | null;

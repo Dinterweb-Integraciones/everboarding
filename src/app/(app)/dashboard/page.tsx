@@ -13,7 +13,7 @@ export default async function DashboardPage() {
   const platformRole = platformProfile?.platform_role ?? null;
   const canSeeAllClients = platformRole === "admin" || platformRole === "superadmin";
 
-  if (platformRole === "sales") {
+  if (platformRole === "sales" || platformRole === "finance") {
     redirect(getPlatformDefaultPath(platformRole));
   }
 

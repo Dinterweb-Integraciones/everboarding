@@ -2,13 +2,14 @@ create extension if not exists pgcrypto;
 
 create type public.client_access_role as enum ('viewer', 'editor', 'owner');
 create type public.client_profile_role as enum ('sales', 'csm', 'client', 'stakeholder');
-create type public.platform_role as enum ('superadmin', 'admin', 'sales', 'csm');
+create type public.platform_role as enum ('superadmin', 'admin', 'sales', 'csm', 'finance');
 create type public.initiative_status as enum ('backlog', 'planned', 'executing', 'completed');
 create type public.initiative_task_status as enum ('pending', 'in_progress', 'blocked', 'completed');
 create type public.custom_plan_type as enum ('mensual', 'proyecto');
 create type public.custom_plan_billing_mode as enum ('subscription', 'one_time');
 create type public.project_stage as enum ('sales', 'cs', 'client');
-create type public.sales_proposal_status as enum ('draft', 'checkout_pending', 'paid', 'board_activated', 'archived');
+create type public.sales_proposal_status as enum ('draft', 'checkout_pending', 'transfer_pending', 'paid', 'board_activated', 'archived');
+create type public.sales_payment_method as enum ('stripe', 'bank_transfer');
 
 create or replace function public.set_current_timestamp_updated_at()
 returns trigger
@@ -78,6 +79,7 @@ create table if not exists public.sales_proposals (
   billing_mode public.custom_plan_billing_mode not null default 'subscription',
   plan_period_months integer not null default 1 check (plan_period_months in (1, 3, 6, 12)),
   status public.sales_proposal_status not null default 'draft',
+  payment_method public.sales_payment_method not null default 'stripe',
   snapshot jsonb not null default '{"initiatives":[]}'::jsonb,
   hubspot_deal_id text,
   hubspot_pipeline_id text,
@@ -88,6 +90,9 @@ create table if not exists public.sales_proposals (
   activated_client_id uuid references public.clients(id) on delete set null,
   paid_at timestamptz,
   activated_at timestamptz,
+  transfer_reference text,
+  transfer_validated_at timestamptz,
+  transfer_validated_by_user_id uuid references auth.users(id) on delete set null,
   last_synced_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())

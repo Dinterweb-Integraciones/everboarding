@@ -10,6 +10,8 @@ import { Select } from "@/components/ui/select";
 import type { AssignableUser } from "@/lib/onboarding";
 import {
   getAssigneeName,
+  normalizeSalesPaymentMethod,
+  type SalesProposalPaymentMethod,
   type SalesProposalRecord,
   type SalesProposalStatus,
 } from "@/lib/sales-proposals";
@@ -29,6 +31,10 @@ const salesStatusMeta: Record<SalesProposalStatus, { label: string; tone: string
     label: "Checkout pendiente",
     tone: "bg-amber-100 text-amber-800",
   },
+  transfer_pending: {
+    label: "Pendiente finanzas",
+    tone: "bg-sky-100 text-sky-800",
+  },
   paid: {
     label: "Pagada",
     tone: "bg-emerald-100 text-emerald-800",
@@ -43,11 +49,23 @@ const salesStatusMeta: Record<SalesProposalStatus, { label: string; tone: string
   },
 };
 
+function shouldRouteProposalToFinance(
+  proposalStatus: SalesProposalStatus,
+  paymentMethod: SalesProposalPaymentMethod,
+) {
+  return paymentMethod === "bank_transfer" && proposalStatus === "draft";
+}
+
 export function SalesProposalAssignmentsManager({
   initialProposals,
   assignableUsers,
 }: SalesProposalAssignmentsManagerProps) {
   const [proposals, setProposals] = useState(initialProposals);
+  const [draftPaymentMethods, setDraftPaymentMethods] = useState<Record<string, SalesProposalPaymentMethod>>(
+    Object.fromEntries(
+      initialProposals.map((proposal) => [proposal.id ?? proposal.slug ?? "", proposal.paymentMethod]),
+    ),
+  );
   const [draftAssignments, setDraftAssignments] = useState<Record<string, string>>(
     Object.fromEntries(
       initialProposals.map((proposal) => [proposal.id ?? proposal.slug ?? "", proposal.assignedCsmUserId || ""]),
@@ -87,11 +105,23 @@ export function SalesProposalAssignmentsManager({
     setFeedback(null);
 
     try {
+      const selectedProposal = proposals.find((proposal) => (proposal.id ?? proposal.slug ?? "") === proposalId);
+
+      if (!selectedProposal) {
+        throw new Error("No encontramos la venta seleccionada.");
+      }
+
+      const selectedPaymentMethod = normalizeSalesPaymentMethod(draftPaymentMethods[proposalId]);
+      const shouldRouteToFinance = shouldRouteProposalToFinance(
+        selectedProposal.status,
+        selectedPaymentMethod,
+      );
       const response = await fetch(`/api/cs/sales-proposals/${proposalId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          assignedCsmUserId: draftAssignments[proposalId] ?? "",
+          assignedCsmUserId: shouldRouteToFinance ? "" : draftAssignments[proposalId] ?? "",
+          paymentMethod: selectedPaymentMethod,
         }),
       });
 
@@ -100,14 +130,28 @@ export function SalesProposalAssignmentsManager({
         throw new Error(payload.message || "No pudimos actualizar la asignacion.");
       }
 
-      setProposals((current) =>
-        current.map((proposal) => (proposal.id === proposalId ? payload : proposal)),
-      );
+      if (payload.status === "transfer_pending") {
+        setProposals((current) => current.filter((proposal) => proposal.id !== proposalId));
+      } else {
+        setProposals((current) =>
+          current.map((proposal) => (proposal.id === proposalId ? payload : proposal)),
+        );
+      }
+      setDraftPaymentMethods((current) => ({
+        ...current,
+        [proposalId]: payload.paymentMethod,
+      }));
       setDraftAssignments((current) => ({
         ...current,
         [proposalId]: payload.assignedCsmUserId || "",
       }));
-      setFeedback({ tone: "success", message: "Asignacion actualizada." });
+      setFeedback({
+        tone: "success",
+        message:
+          payload.status === "transfer_pending"
+            ? "Venta enviada a Finanzas para validar la transferencia."
+            : "Catalogo actualizado.",
+      });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
@@ -200,6 +244,9 @@ export function SalesProposalAssignmentsManager({
                           CS actual
                         </th>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                          Pago
+                        </th>
+                        <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                           Asignar CS
                         </th>
                         <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -211,9 +258,17 @@ export function SalesProposalAssignmentsManager({
                     <tbody className="divide-y divide-slate-200">
                       {sortedProposals.map((proposal) => {
                         const proposalId = proposal.id ?? proposal.slug ?? "";
+                        const selectedPaymentMethod =
+                          draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
                         const selectedAssignment = draftAssignments[proposalId] ?? proposal.assignedCsmUserId ?? "";
-                        const hasChanges = selectedAssignment !== (proposal.assignedCsmUserId || "");
+                        const hasChanges =
+                          selectedAssignment !== (proposal.assignedCsmUserId || "")
+                          || selectedPaymentMethod !== proposal.paymentMethod;
                         const assigneeName = getAssigneeName(assignableUsers, proposal.assignedCsmUserId);
+                        const shouldRouteToFinance = shouldRouteProposalToFinance(
+                          proposal.status,
+                          selectedPaymentMethod,
+                        );
 
                         return (
                           <tr
@@ -286,6 +341,30 @@ export function SalesProposalAssignmentsManager({
                               {assigneeName || "Sin asignar"}
                             </td>
                             <td className="px-4 py-4">
+                              <div className="min-w-[170px]">
+                                <Select
+                                  value={selectedPaymentMethod}
+                                  onChange={(event) => {
+                                    const nextPaymentMethod = normalizeSalesPaymentMethod(event.target.value);
+                                    setDraftPaymentMethods((current) => ({
+                                      ...current,
+                                      [proposalId]: nextPaymentMethod,
+                                    }));
+                                    if (nextPaymentMethod === "bank_transfer") {
+                                      setDraftAssignments((current) => ({
+                                        ...current,
+                                        [proposalId]: "",
+                                      }));
+                                    }
+                                  }}
+                                  disabled={!proposalId || proposal.status === "paid" || proposal.status === "board_activated"}
+                                >
+                                  <option value="stripe">Stripe</option>
+                                  <option value="bank_transfer">Transferencia</option>
+                                </Select>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
                               <div className="min-w-[180px]">
                                 <Select
                                   value={selectedAssignment}
@@ -295,7 +374,7 @@ export function SalesProposalAssignmentsManager({
                                       [proposalId]: event.target.value,
                                     }))
                                   }
-                                  disabled={!assignableUsers.length || !proposalId}
+                                  disabled={!assignableUsers.length || !proposalId || shouldRouteToFinance}
                                 >
                                   <option value="">Sin asignar</option>
                                   {assignableUsers.map((user) => (
@@ -314,7 +393,11 @@ export function SalesProposalAssignmentsManager({
                                   disabled={!proposalId || !hasChanges || savingProposalId === proposalId}
                                 >
                                   <Save className="mr-2 h-4 w-4" />
-                                  {savingProposalId === proposalId ? "Guardando..." : "Guardar"}
+                                  {savingProposalId === proposalId
+                                    ? "Guardando..."
+                                    : shouldRouteToFinance
+                                      ? "Enviar a Finanzas"
+                                      : "Guardar"}
                                 </Button>
                                 {proposal.slug ? (
                                   <Link
@@ -338,9 +421,17 @@ export function SalesProposalAssignmentsManager({
               <div className="space-y-4 lg:hidden">
                 {sortedProposals.map((proposal) => {
                   const proposalId = proposal.id ?? proposal.slug ?? "";
+                  const selectedPaymentMethod =
+                    draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
                   const selectedAssignment = draftAssignments[proposalId] ?? proposal.assignedCsmUserId ?? "";
-                  const hasChanges = selectedAssignment !== (proposal.assignedCsmUserId || "");
+                  const hasChanges =
+                    selectedAssignment !== (proposal.assignedCsmUserId || "")
+                    || selectedPaymentMethod !== proposal.paymentMethod;
                   const assigneeName = getAssigneeName(assignableUsers, proposal.assignedCsmUserId);
+                  const shouldRouteToFinance = shouldRouteProposalToFinance(
+                    proposal.status,
+                    selectedPaymentMethod,
+                  );
 
                   return (
                     <article
@@ -390,6 +481,12 @@ export function SalesProposalAssignmentsManager({
                           </p>
                         </div>
                         <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Pago</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                            {selectedPaymentMethod === "bank_transfer" ? "Transferencia" : "Stripe"}
+                          </p>
+                        </div>
+                        <div>
                           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Inicio</p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">{formatDate(proposal.startDate)}</p>
                         </div>
@@ -420,6 +517,27 @@ export function SalesProposalAssignmentsManager({
 
                       <div className="mt-4 space-y-3">
                         <Select
+                          value={selectedPaymentMethod}
+                          onChange={(event) => {
+                            const nextPaymentMethod = normalizeSalesPaymentMethod(event.target.value);
+                            setDraftPaymentMethods((current) => ({
+                              ...current,
+                              [proposalId]: nextPaymentMethod,
+                            }));
+                            if (nextPaymentMethod === "bank_transfer") {
+                              setDraftAssignments((current) => ({
+                                ...current,
+                                [proposalId]: "",
+                              }));
+                            }
+                          }}
+                          disabled={!proposalId || proposal.status === "paid" || proposal.status === "board_activated"}
+                        >
+                          <option value="stripe">Stripe</option>
+                          <option value="bank_transfer">Transferencia</option>
+                        </Select>
+
+                        <Select
                           value={selectedAssignment}
                           onChange={(event) =>
                             setDraftAssignments((current) => ({
@@ -427,7 +545,7 @@ export function SalesProposalAssignmentsManager({
                               [proposalId]: event.target.value,
                             }))
                           }
-                          disabled={!assignableUsers.length || !proposalId}
+                          disabled={!assignableUsers.length || !proposalId || shouldRouteToFinance}
                         >
                           <option value="">Sin asignar</option>
                           {assignableUsers.map((user) => (
@@ -444,7 +562,11 @@ export function SalesProposalAssignmentsManager({
                             disabled={!proposalId || !hasChanges || savingProposalId === proposalId}
                           >
                             <Save className="mr-2 h-4 w-4" />
-                            {savingProposalId === proposalId ? "Guardando..." : "Guardar"}
+                            {savingProposalId === proposalId
+                              ? "Guardando..."
+                              : shouldRouteToFinance
+                                ? "Enviar a Finanzas"
+                                : "Guardar"}
                           </Button>
                           {proposal.slug ? (
                             <Link

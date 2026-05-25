@@ -27,6 +27,10 @@ export const PLATFORM_ROLE_META: Record<
     label: "CS",
     description: "Gestiona clientes, onboarding y seguimiento operativo.",
   },
+  finance: {
+    label: "Finanzas",
+    description: "Valida pagos por transferencia y habilita ventas para Customer Success.",
+  },
 };
 
 export function normalizePlatformEmail(email: string) {
@@ -46,8 +50,12 @@ export function canAccessAdminCatalogs(role: PlatformRole | null | undefined) {
   return role === "admin" || role === "superadmin";
 }
 
+export function canAccessFinance(role: PlatformRole | null | undefined) {
+  return role === "finance" || role === "superadmin";
+}
+
 export function canAccessDashboard(role: PlatformRole | null | undefined) {
-  return role === "csm" || role === "admin" || role === "superadmin";
+  return role === "csm" || role === "admin" || role === "finance" || role === "superadmin";
 }
 
 export function canAccessDinterwebSales(role: PlatformRole | null | undefined) {
@@ -61,6 +69,10 @@ export function canAccessHubspotSales(role: PlatformRole | null | undefined) {
 export function getPlatformDefaultPath(role: PlatformRole | null | undefined) {
   if (role === "sales") {
     return "/sales/dinterweb";
+  }
+
+  if (role === "finance") {
+    return "/finanzas";
   }
 
   return "/dashboard";
