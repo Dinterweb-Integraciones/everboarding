@@ -80,6 +80,7 @@ export type SalesProposalDraft = {
   appliedCouponPercentageOff: number | null;
   couponBaseQuotedPrice: number | null;
   couponAppliedAt: string | null;
+  transferBank: string;
   transferReference: string;
   transferValidatedAt: string | null;
   transferValidatedByUserId: string | null;
@@ -203,6 +204,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    transferBank: "",
     transferReference: "",
     transferValidatedAt: null,
     transferValidatedByUserId: null,
@@ -248,6 +250,7 @@ export function createDuplicatedSalesProposalDraft(
     appliedCouponPercentageOff: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
+    transferBank: "",
     paymentMethod: "stripe",
     transferReference: "",
     transferValidatedAt: null,
@@ -482,6 +485,7 @@ export function normalizeSalesProposalDraft(
         ? null
         : Math.max(0, safeParseNumber(couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
+    transferBank: String(input.transferBank ?? base.transferBank ?? ""),
     transferReference: String(input.transferReference ?? base.transferReference ?? ""),
     transferValidatedAt:
       typeof input.transferValidatedAt === "string" && input.transferValidatedAt.trim()
@@ -558,6 +562,7 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
         ? null
         : Math.max(0, safeParseNumber(snapshot.couponBaseQuotedPrice)),
     couponAppliedAt: (row.coupon_applied_at as string | null) ?? snapshot.couponAppliedAt ?? null,
+    transferBank: String((row as Record<string, unknown>).transfer_bank ?? snapshot.transferBank ?? ""),
     transferReference: String(row.transfer_reference ?? snapshot.transferReference ?? ""),
     transferValidatedAt: (row.transfer_validated_at as string | null) ?? snapshot.transferValidatedAt ?? null,
     transferValidatedByUserId:
@@ -600,6 +605,7 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     applied_coupon_id: normalized.appliedCouponId,
     applied_coupon_code: normalized.appliedCouponCode.trim() || null,
     coupon_applied_at: normalized.couponAppliedAt,
+    transfer_bank: normalized.transferBank.trim() || null,
     transfer_reference: normalized.transferReference.trim() || null,
     transfer_validated_at: normalized.transferValidatedAt,
     transfer_validated_by_user_id: normalized.transferValidatedByUserId,

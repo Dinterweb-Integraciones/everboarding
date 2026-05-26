@@ -90,6 +90,7 @@ create table if not exists public.sales_proposals (
   activated_client_id uuid references public.clients(id) on delete set null,
   paid_at timestamptz,
   activated_at timestamptz,
+  transfer_bank text,
   transfer_reference text,
   transfer_validated_at timestamptz,
   transfer_validated_by_user_id uuid references auth.users(id) on delete set null,
@@ -284,6 +285,7 @@ $$;
 create table if not exists public.client_billing_cycles (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
+  sales_proposal_id uuid references public.sales_proposals(id) on delete set null,
   cycle_start_date date not null,
   cycle_end_date date not null,
   status text not null default 'unpaid' check (status in ('unpaid', 'paid', 'void')),
@@ -294,6 +296,11 @@ create table if not exists public.client_billing_cycles (
   stripe_invoice_id text,
   amount_cents integer check (amount_cents is null or amount_cents >= 0),
   currency text,
+  payment_method public.sales_payment_method not null default 'stripe',
+  transfer_bank text,
+  transfer_reference text,
+  transfer_validated_at timestamptz,
+  transfer_validated_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   unique (client_id, cycle_start_date)
@@ -301,7 +308,13 @@ create table if not exists public.client_billing_cycles (
 
 alter table public.client_billing_cycles
 add column if not exists stripe_subscription_id text,
-add column if not exists stripe_invoice_id text;
+add column if not exists stripe_invoice_id text,
+add column if not exists sales_proposal_id uuid references public.sales_proposals(id) on delete set null,
+add column if not exists payment_method public.sales_payment_method not null default 'stripe',
+add column if not exists transfer_bank text,
+add column if not exists transfer_reference text,
+add column if not exists transfer_validated_at timestamptz,
+add column if not exists transfer_validated_by_user_id uuid references auth.users(id) on delete set null;
 
 create table if not exists public.client_credit_grants (
   id uuid primary key default gen_random_uuid(),
@@ -377,6 +390,8 @@ create index if not exists client_members_user_id_idx on public.client_members (
 create index if not exists client_share_links_client_id_idx on public.client_share_links (client_id, created_at desc);
 create index if not exists client_billing_cycles_client_cycle_idx on public.client_billing_cycles (client_id, cycle_start_date desc);
 create index if not exists client_billing_cycles_paid_idx on public.client_billing_cycles (client_id, status, paid_at desc);
+create index if not exists client_billing_cycles_transfer_status_idx on public.client_billing_cycles (payment_method, status, cycle_start_date desc);
+create index if not exists client_billing_cycles_sales_proposal_idx on public.client_billing_cycles (sales_proposal_id, cycle_start_date desc);
 create index if not exists client_billing_cycles_stripe_checkout_session_idx on public.client_billing_cycles (stripe_checkout_session_id);
 create index if not exists client_billing_cycles_stripe_subscription_idx on public.client_billing_cycles (stripe_subscription_id);
 create index if not exists client_billing_cycles_stripe_invoice_idx on public.client_billing_cycles (stripe_invoice_id);

@@ -18,6 +18,7 @@ import {
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { recordManualTransferBillingCycles } from "@/lib/transfer-billing";
 import { isMissingSupabaseTable, safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
@@ -49,6 +50,7 @@ type SalesProposalPaymentContext = {
   invoiceId: string | null;
   amountCents: number;
   currency: string;
+  transferBank?: string | null;
   transferReference?: string | null;
   transferValidatedAt?: string | null;
   transferValidatedByUserId?: string | null;
@@ -512,6 +514,7 @@ async function setSalesProposalTransferPending(proposal: SalesProposalRecord) {
       stripe_checkout_session_id: null,
       stripe_payment_intent_id: null,
       stripe_subscription_id: null,
+      transfer_bank: null,
       transfer_reference: null,
       transfer_validated_at: null,
       transfer_validated_by_user_id: null,
@@ -716,6 +719,7 @@ export async function createSalesProposalCheckout(
     .update(({
       status: "checkout_pending",
       payment_method: "stripe",
+      transfer_bank: null,
       stripe_checkout_session_id: session.id,
       transfer_reference: null,
       transfer_validated_at: null,
@@ -772,6 +776,7 @@ async function activateSalesProposalWithPaymentContext(
           stripe_checkout_session_id: payment.checkoutSessionId,
           stripe_payment_intent_id: paymentIntentId,
           stripe_subscription_id: subscriptionId,
+          transfer_bank: payment.transferBank ?? typedProposalRow.transfer_bank,
           transfer_reference: payment.transferReference ?? typedProposalRow.transfer_reference,
           transfer_validated_at: payment.transferValidatedAt ?? typedProposalRow.transfer_validated_at,
           transfer_validated_by_user_id:
@@ -915,6 +920,19 @@ async function activateSalesProposalWithPaymentContext(
     if (paymentError) {
       throw paymentError;
     }
+  } else if ((payment.paymentMethod ?? normalizeSalesPaymentMethod(typedProposalRow.payment_method)) === "bank_transfer") {
+    await recordManualTransferBillingCycles({
+      clientId: activatedClientId,
+      proposalId: mappedProposalId,
+      cycleStartDate: payment.transferValidatedAt?.slice(0, 10) || toIsoDate(),
+      transferBank: payment.transferBank ?? typedProposalRow.transfer_bank ?? "",
+      transferReference: payment.transferReference ?? typedProposalRow.transfer_reference ?? "",
+      validatedAt: payment.transferValidatedAt ?? new Date().toISOString(),
+      validatedByUserId:
+        payment.transferValidatedByUserId ?? typedProposalRow.transfer_validated_by_user_id ?? "",
+      amountCents: payment.amountCents,
+      currency: resolveCurrency(payment.currency || proposal.currency),
+    });
   }
 
   if (subscriptionId && updateSubscriptionMetadata) {
@@ -998,6 +1016,7 @@ async function activateSalesProposalWithPaymentContext(
       stripe_checkout_session_id: payment.checkoutSessionId,
       stripe_payment_intent_id: paymentIntentId,
       stripe_subscription_id: subscriptionId,
+      transfer_bank: payment.transferBank ?? typedProposalRow.transfer_bank,
       transfer_reference: payment.transferReference ?? typedProposalRow.transfer_reference,
       transfer_validated_at: payment.transferValidatedAt ?? typedProposalRow.transfer_validated_at,
       transfer_validated_by_user_id:
@@ -1073,6 +1092,7 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
       invoiceId: null,
       amountCents: Math.round(safeParseNumber(typedProposalRow.quoted_price) * 100),
       currency: typedProposalRow.currency,
+      transferBank: typedProposalRow.transfer_bank,
       transferReference: typedProposalRow.transfer_reference,
       transferValidatedAt: typedProposalRow.transfer_validated_at,
       transferValidatedByUserId: typedProposalRow.transfer_validated_by_user_id,
@@ -1095,10 +1115,16 @@ export async function activatePaidSalesProposalAfterAssignment(proposalId: strin
 
 export async function confirmTransferredSalesProposalPayment(
   proposalId: string,
+  transferBank: string,
   transferReference: string,
   validatedByUserId: string,
 ) {
+  const normalizedBank = transferBank.trim();
   const normalizedReference = transferReference.trim();
+  if (!normalizedBank) {
+    throw new Error("Ingresa el banco antes de confirmar el pago.");
+  }
+
   if (!normalizedReference) {
     throw new Error("Ingresa la referencia de la transferencia antes de confirmar el pago.");
   }
@@ -1133,6 +1159,7 @@ export async function confirmTransferredSalesProposalPayment(
     invoiceId: null,
     amountCents: Math.round(safeParseNumber(typedProposalRow.quoted_price) * 100),
     currency: typedProposalRow.currency,
+    transferBank: normalizedBank,
     transferReference: normalizedReference,
     transferValidatedAt: validatedAt,
     transferValidatedByUserId: validatedByUserId,
@@ -1151,6 +1178,89 @@ export async function confirmTransferredSalesProposalPayment(
   }
 
   return mapSalesProposalRecord(typedRefreshedRow);
+}
+
+export async function confirmTransferredSalesProposalRenewalPayment(
+  proposalId: string,
+  cycleStartDate: string,
+  transferBank: string,
+  transferReference: string,
+  validatedByUserId: string,
+) {
+  const normalizedBank = transferBank.trim();
+  const normalizedReference = transferReference.trim();
+  const normalizedCycleStartDate = cycleStartDate.trim();
+
+  if (!normalizedBank) {
+    throw new Error("Ingresa el banco antes de confirmar el pago.");
+  }
+
+  if (!normalizedReference) {
+    throw new Error("Ingresa la referencia de la transferencia antes de confirmar el pago.");
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedCycleStartDate)) {
+    throw new Error("La renovacion no tiene una fecha de ciclo valida.");
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("id", proposalId)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la suscripcion por transferencia.");
+  }
+
+  if (normalizeSalesPaymentMethod(typedProposalRow.payment_method) !== "bank_transfer") {
+    throw new Error("Esta venta no usa transferencia como metodo de pago.");
+  }
+
+  if (typedProposalRow.billing_mode !== "subscription") {
+    throw new Error("Solo las suscripciones pueden generar renovaciones manuales.");
+  }
+
+  if (typedProposalRow.status !== "board_activated" || !typedProposalRow.activated_client_id) {
+    throw new Error("La suscripcion debe estar activa antes de registrar una renovacion.");
+  }
+
+  const validatedAt = new Date().toISOString();
+
+  await recordManualTransferBillingCycles({
+    clientId: typedProposalRow.activated_client_id,
+    proposalId,
+    cycleStartDate: normalizedCycleStartDate,
+    transferBank: normalizedBank,
+    transferReference: normalizedReference,
+    validatedAt,
+    validatedByUserId,
+    amountCents: Math.round(safeParseNumber(typedProposalRow.quoted_price) * 100),
+    currency: typedProposalRow.currency,
+  });
+
+  const { error: proposalUpdateError } = await admin
+    .from("sales_proposals")
+    .update(({
+      transfer_bank: normalizedBank,
+      transfer_reference: normalizedReference,
+      transfer_validated_at: validatedAt,
+      transfer_validated_by_user_id: validatedByUserId,
+      updated_at: validatedAt,
+    }) as never)
+    .eq("id", proposalId);
+
+  if (proposalUpdateError) {
+    throw proposalUpdateError;
+  }
+
+  const refreshedProposal = await mapSalesProposalRecord(typedProposalRow);
+  return {
+    ...refreshedProposal,
+    message: "Renovacion por transferencia confirmada y creditos recargados.",
+  };
 }
 
 export async function syncSalesProposalCheckoutStatus(

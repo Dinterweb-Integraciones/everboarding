@@ -155,6 +155,7 @@ export type Database = {
           activated_client_id: string | null;
           paid_at: string | null;
           activated_at: string | null;
+          transfer_bank: string | null;
           transfer_reference: string | null;
           transfer_validated_at: string | null;
           transfer_validated_by_user_id: string | null;
@@ -196,6 +197,7 @@ export type Database = {
           activated_client_id?: string | null;
           paid_at?: string | null;
           activated_at?: string | null;
+          transfer_bank?: string | null;
           transfer_reference?: string | null;
           transfer_validated_at?: string | null;
           transfer_validated_by_user_id?: string | null;
@@ -237,6 +239,7 @@ export type Database = {
           activated_client_id?: string | null;
           paid_at?: string | null;
           activated_at?: string | null;
+          transfer_bank?: string | null;
           transfer_reference?: string | null;
           transfer_validated_at?: string | null;
           transfer_validated_by_user_id?: string | null;
@@ -448,6 +451,7 @@ export type Database = {
         Row: {
           id: string;
           client_id: string;
+          sales_proposal_id: string | null;
           cycle_start_date: string;
           cycle_end_date: string;
           status: "unpaid" | "paid" | "void";
@@ -458,12 +462,18 @@ export type Database = {
           stripe_invoice_id: string | null;
           amount_cents: number | null;
           currency: string | null;
+          payment_method: Database["public"]["Enums"]["sales_payment_method"];
+          transfer_bank: string | null;
+          transfer_reference: string | null;
+          transfer_validated_at: string | null;
+          transfer_validated_by_user_id: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           client_id: string;
+          sales_proposal_id?: string | null;
           cycle_start_date: string;
           cycle_end_date: string;
           status?: "unpaid" | "paid" | "void";
@@ -474,12 +484,18 @@ export type Database = {
           stripe_invoice_id?: string | null;
           amount_cents?: number | null;
           currency?: string | null;
+          payment_method?: Database["public"]["Enums"]["sales_payment_method"];
+          transfer_bank?: string | null;
+          transfer_reference?: string | null;
+          transfer_validated_at?: string | null;
+          transfer_validated_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           id?: string;
           client_id?: string;
+          sales_proposal_id?: string | null;
           cycle_start_date?: string;
           cycle_end_date?: string;
           status?: "unpaid" | "paid" | "void";
@@ -490,6 +506,11 @@ export type Database = {
           stripe_invoice_id?: string | null;
           amount_cents?: number | null;
           currency?: string | null;
+          payment_method?: Database["public"]["Enums"]["sales_payment_method"];
+          transfer_bank?: string | null;
+          transfer_reference?: string | null;
+          transfer_validated_at?: string | null;
+          transfer_validated_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };

@@ -208,11 +208,11 @@ export default async function ClientDetailPage({
   }
 
   const requestedStage = resolvedSearchParams?.stage as ProjectStage | undefined;
+  const configRecord = (configRow as Tables<"onboarding_configs"> | null) ?? createDefaultConfig(clientRecord.id);
   const initialStage =
     requestedStage ??
     (membershipProfileRole ? resolveStageFromProfileRole(membershipProfileRole) : undefined) ??
-    ((configRow?.current_stage as ProjectStage | undefined) ?? "cs");
-  const configRecord = configRow ?? createDefaultConfig(clientRecord.id);
+    ((configRecord.current_stage as ProjectStage | undefined) ?? "cs");
   const billingStatusArgs: Database["public"]["Functions"]["get_client_billing_status"]["Args"] = {
     p_client_id: clientRecord.id,
   };

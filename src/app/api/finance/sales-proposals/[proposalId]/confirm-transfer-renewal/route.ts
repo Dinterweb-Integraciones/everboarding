@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
 import { canAccessFinance } from "@/lib/platform-access";
-import { confirmTransferredSalesProposalPayment } from "@/lib/sales-proposals-server";
+import { confirmTransferredSalesProposalRenewalPayment } from "@/lib/sales-proposals-server";
 import { formatUserError } from "@/lib/utils";
 
-type ConfirmTransferPaymentRouteProps = {
+type ConfirmTransferRenewalPaymentRouteProps = {
   params: Promise<{ proposalId: string }>;
 };
 
-export async function PUT(request: Request, { params }: ConfirmTransferPaymentRouteProps) {
+export async function PUT(request: Request, { params }: ConfirmTransferRenewalPaymentRouteProps) {
   try {
     const { proposalId } = await params;
     const { user, platformProfile } = await requireUser("/finanzas");
@@ -25,19 +25,21 @@ export async function PUT(request: Request, { params }: ConfirmTransferPaymentRo
     const body = (await request.json()) as {
       transferBank?: string;
       transferReference?: string;
+      cycleStartDate?: string;
     };
 
-    const proposal = await confirmTransferredSalesProposalPayment(
+    const result = await confirmTransferredSalesProposalRenewalPayment(
       proposalId,
+      body.cycleStartDate ?? "",
       body.transferBank ?? "",
       body.transferReference ?? "",
       user.id,
     );
 
-    return NextResponse.json(proposal);
+    return NextResponse.json(result);
   } catch (caughtError) {
     return NextResponse.json(
-      { message: formatUserError(caughtError, "No pudimos confirmar el pago por transferencia.") },
+      { message: formatUserError(caughtError, "No pudimos confirmar la renovacion por transferencia.") },
       { status: 400 },
     );
   }
