@@ -22,6 +22,7 @@ import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   CS_UPSELL_CREDIT_OPTIONS,
   RISK_INACTIVE_DAYS,
@@ -227,6 +228,11 @@ function addCalendarDays(value: Date, amount: number) {
   const next = new Date(value);
   next.setDate(next.getDate() + amount);
   return next;
+}
+
+function getDropPosition(event: { clientY: number; currentTarget: EventTarget & HTMLElement }): DropPosition {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return event.clientY >= bounds.top + bounds.height / 2 ? "after" : "before";
 }
 
 function addCalendarMonths(value: Date, amount: number) {
@@ -444,6 +450,11 @@ export function OnboardingClientPage({
   });
   const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{
+    status: InitiativeStatus;
+    initiativeId: string | null;
+    position: DropPosition;
+  } | null>(null);
   const [ganttDrag, setGanttDrag] = useState<{
     initiativeId: string;
     originX: number;
@@ -1533,26 +1544,61 @@ export function OnboardingClientPage({
     }
   }
 
-  async function moveInitiativeToStatus(initiative: InitiativeRecord, targetStatus: InitiativeStatus) {
-    if (!writable || initiative.status === targetStatus) {
+  async function moveInitiativeToStatus(
+    initiative: InitiativeRecord,
+    targetStatus: InitiativeStatus,
+    options?: {
+      targetInitiativeId?: string | null;
+      position?: DropPosition;
+    },
+  ) {
+    if (!writable) {
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
+
+    const reorderResult = reorderBoardItems({
+      items: initiatives,
+      draggedId: initiative.id,
+      targetStatus,
+      targetId: options?.targetInitiativeId,
+      position: options?.position,
+      getId: (item) => item.id,
+      getStatus: (item) => item.status,
+      getSortOrder: (item) => item.sort_order,
+      updateItem: (item, patch) => ({
+        ...item,
+        status: patch.status,
+        sort_order: patch.sortOrder,
+      }),
+    });
+
+    if (!reorderResult) {
+      setDraggedInitiativeId(null);
+      setDropTargetStatus(null);
+      setDropIndicator(null);
+      return;
+    }
+
+    const statusChanged = reorderResult.statusChanged;
 
     setFeedback(null);
 
-    if (!canUseReservedStage(targetStatus)) {
+    if (statusChanged && !canUseReservedStage(targetStatus)) {
       showPaymentRequiredMessage();
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
 
-    if (initiative.is_blocked) {
+    if (statusChanged && initiative.is_blocked) {
       showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de moverla de etapa.");
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
 
@@ -1560,15 +1606,19 @@ export function OnboardingClientPage({
     const nextReserved = isReservedStatus(targetStatus) ? initiative.credits : 0;
     const capacityNeeded = nextReserved - currentReserved;
 
-    if (capacityNeeded > metrics.available) {
+    if (statusChanged && capacityNeeded > metrics.available) {
       showError(`Capacidad insuficiente. Faltan ${capacityNeeded - metrics.available} creditos.`);
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
 
     const penalty =
-      initiative.status !== "completed" && initiative.status !== "backlog" && targetStatus === "backlog"
+      statusChanged &&
+      initiative.status !== "completed" &&
+      initiative.status !== "backlog" &&
+      targetStatus === "backlog"
         ? Math.ceil(initiative.credits * 0.2)
         : 0;
 
@@ -1579,6 +1629,7 @@ export function OnboardingClientPage({
       if (!confirmed) {
         setDraggedInitiativeId(null);
         setDropTargetStatus(null);
+        setDropIndicator(null);
         return;
       }
     }
@@ -1605,24 +1656,46 @@ export function OnboardingClientPage({
       }
 
       const nowDate = toIsoDate();
-      const { data: updatedInitiative, error: updateError } = await supabase
-        .from("onboarding_initiatives")
-        .update({
-          status: targetStatus,
-          sort_order: groupedInitiatives[targetStatus].length,
-          last_activity: nowDate,
-          updated_by_user_id: userId,
-        })
-        .eq("id", initiative.id)
-        .select("*")
-        .single();
+      const nextInitiatives = reorderResult.items.map((item) =>
+        item.id === initiative.id && statusChanged
+          ? {
+              ...item,
+              last_activity: nowDate,
+            }
+          : item,
+      );
 
+      const changedIds = new Set(reorderResult.changedItems.map((item) => item.id));
+      const changedInitiatives = nextInitiatives.filter((item) => changedIds.has(item.id));
+
+      const updateResults = await Promise.all(
+        changedInitiatives.map(async (item) => {
+          const payload: {
+            sort_order: number;
+            updated_by_user_id: string;
+            status?: InitiativeStatus;
+            last_activity?: string;
+          } = {
+            sort_order: item.sort_order,
+            updated_by_user_id: userId,
+          };
+
+          if (item.id === initiative.id && statusChanged) {
+            payload.status = targetStatus;
+            payload.last_activity = nowDate;
+          }
+
+          return supabase.from("onboarding_initiatives").update(payload).eq("id", item.id);
+        }),
+      );
+
+      const updateError = updateResults.find((result) => result.error)?.error;
       if (updateError) {
         throw updateError;
       }
 
       const logMessages = [
-        `Cambio a ${STATUS_META[targetStatus].label}.`,
+        statusChanged ? `Cambio a ${STATUS_META[targetStatus].label}.` : "",
         penalty > 0 ? `Penalidad ${penalty} CR.` : "",
       ].filter(Boolean);
 
@@ -1643,18 +1716,20 @@ export function OnboardingClientPage({
         throw logsError;
       }
 
-      setInitiatives((current) =>
-        current.map((item) =>
+      setInitiatives(
+        nextInitiatives.map((item) =>
           item.id === initiative.id
             ? {
                 ...item,
-                ...updatedInitiative,
                 logs: [...(insertedLogs ?? []), ...item.logs],
               }
             : item,
         ),
       );
-      showSuccess(`Iniciativa movida a ${STATUS_META[targetStatus].label}.`);
+
+      if (statusChanged) {
+        showSuccess(`Iniciativa movida a ${STATUS_META[targetStatus].label}.`);
+      }
     } catch (caughtError) {
       showError(
         caughtError instanceof Error ? caughtError.message : "No fue posible mover la iniciativa.",
@@ -1662,6 +1737,7 @@ export function OnboardingClientPage({
     } finally {
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       setIsSavingInitiative(false);
     }
   }
@@ -2511,11 +2587,16 @@ export function OnboardingClientPage({
                     onDragOver={(event) => {
                       if (!writable) return;
                       event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
                       setDropTargetStatus(status);
+                      setDropIndicator({ status, initiativeId: null, position: "after" });
                     }}
                     onDragLeave={(event) => {
                       if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                       setDropTargetStatus((current) => (current === status ? null : current));
+                      setDropIndicator((current) =>
+                        current?.status === status && current.initiativeId === null ? null : current,
+                      );
                     }}
                     onDrop={(event) => {
                       if (!writable) return;
@@ -2563,9 +2644,9 @@ export function OnboardingClientPage({
                             key={initiative.id}
                             type="button"
                             onClick={() => openEditModal(initiative)}
-                            draggable={writable && !initiative.is_blocked}
+                            draggable={writable}
                             onDragStart={(event) => {
-                              if (!writable || initiative.is_blocked) {
+                              if (!writable) {
                                 event.preventDefault();
                                 return;
                               }
@@ -2573,11 +2654,58 @@ export function OnboardingClientPage({
                               event.dataTransfer.effectAllowed = "move";
                               setDraggedInitiativeId(initiative.id);
                             }}
+                            onDragOver={(event) => {
+                              if (!writable || draggedInitiativeId === initiative.id) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.dataTransfer.dropEffect = "move";
+                              setDropTargetStatus(status);
+                              setDropIndicator({
+                                status,
+                                initiativeId: initiative.id,
+                                position: getDropPosition(event),
+                              });
+                            }}
+                            onDrop={(event) => {
+                              if (!writable) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const initiativeId =
+                                event.dataTransfer.getData("text/plain") || draggedInitiativeId;
+                              const draggedInitiative = initiatives.find((item) => item.id === initiativeId);
+
+                              if (!draggedInitiative) {
+                                setDraggedInitiativeId(null);
+                                setDropTargetStatus(null);
+                                setDropIndicator(null);
+                                return;
+                              }
+
+                              void moveInitiativeToStatus(draggedInitiative, status, {
+                                targetInitiativeId: initiative.id,
+                                position: getDropPosition(event),
+                              });
+                            }}
                             onDragEnd={() => {
                               setDraggedInitiativeId(null);
                               setDropTargetStatus(null);
+                              setDropIndicator(null);
                             }}
-                            className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm transition hover:border-[#cbd6e2] hover:shadow"
+                            className={`relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm transition hover:border-[#cbd6e2] hover:shadow ${
+                              writable ? "cursor-grab active:cursor-grabbing" : ""
+                            } ${
+                              dropIndicator?.status === status &&
+                              dropIndicator.initiativeId === initiative.id &&
+                              dropIndicator.position === "before"
+                                ? "ring-2 ring-inset ring-[#8fb3d9] before:absolute before:left-2 before:right-2 before:top-0 before:h-[3px] before:rounded-full before:bg-[#00bda5] before:content-['']"
+                                : ""
+                            } ${
+                              dropIndicator?.status === status &&
+                              dropIndicator.initiativeId === initiative.id &&
+                              dropIndicator.position === "after"
+                                ? "ring-2 ring-inset ring-[#8fb3d9] after:absolute after:left-2 after:right-2 after:bottom-0 after:h-[3px] after:rounded-full after:bg-[#00bda5] after:content-['']"
+                                : ""
+                            }`}
                           >
                             <div
                               className={`absolute left-0 top-0 h-full w-[3px] ${

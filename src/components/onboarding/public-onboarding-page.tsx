@@ -231,6 +231,7 @@ export function PublicOnboardingPage({
     initialData.prospectProposal?.extraPackageQuantity ?? 0,
   );
   const [isSavingProspectExtraPackages, setIsSavingProspectExtraPackages] = useState(false);
+  const [activeInitiativePreview, setActiveInitiativePreview] = useState<InitiativeRecord | null>(null);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
@@ -403,6 +404,15 @@ export function PublicOnboardingPage({
   useEffect(() => {
     setProspectExtraPackageQuantity(prospectProposal?.extraPackageQuantity ?? 0);
   }, [prospectProposal?.extraPackageQuantity]);
+
+  function openInitiativePreview(initiative: InitiativeRecord) {
+    setActiveInitiativePreview(initiative);
+  }
+
+  function closeInitiativePreview() {
+    setActiveInitiativePreview(null);
+  }
+
   const timeline = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -1349,8 +1359,10 @@ export function PublicOnboardingPage({
                       const progressPercent = Math.max(0, Math.min(100, initiative.progressPercent ?? 0));
 
                       return (
-                        <div
+                        <button
                           key={initiative.id}
+                          type="button"
+                          onClick={() => openInitiativePreview(initiative)}
                           className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm"
                         >
                           <div
@@ -1407,15 +1419,20 @@ export function PublicOnboardingPage({
                             </div>
 
                             <div className="mt-3 flex items-center justify-between border-t border-[#eaf0f6] pt-2">
-                              <span className="text-[10px] font-bold text-[#9cb1c6]">
-                                {spanLabel}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-[#9cb1c6]">
+                                  {spanLabel}
+                                </span>
+                                <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
+                                  Ver detalle
+                                </span>
+                              </div>
                               <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[10px] font-bold text-[#33475b]">
                                 {initiative.credits} CR
                               </span>
                             </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
 
@@ -1650,9 +1667,11 @@ export function PublicOnboardingPage({
                     </div>
                     <div className="divide-y divide-[#eef2f7]">
                       {items.map((initiative) => (
-                        <div
+                        <button
                           key={`summary-card-${initiative.id}`}
-                          className="grid gap-6 px-5 py-5 lg:grid-cols-[1.35fr_0.65fr]"
+                          type="button"
+                          onClick={() => openInitiativePreview(initiative)}
+                          className="grid w-full gap-6 px-5 py-5 text-left transition hover:bg-[#fcfcfc] lg:grid-cols-[1.35fr_0.65fr]"
                         >
                           <div>
                             <div className="flex items-start justify-between gap-3">
@@ -1677,7 +1696,7 @@ export function PublicOnboardingPage({
                               </p>
                             </div>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1702,6 +1721,155 @@ export function PublicOnboardingPage({
           </div>
         </section>
       </main>
+
+      {activeInitiativePreview ? (
+        <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={closeInitiativePreview}
+            aria-label="Cerrar detalle del caso de uso"
+          />
+          <aside className="relative z-10 h-full w-full max-w-[760px] overflow-y-auto border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
+            <div className="border-b border-[#dfe3eb] bg-white px-6 py-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={`inline-flex rounded-[3px] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${
+                      getSafeStatusMeta(activeInitiativePreview.status).muted
+                    }`}
+                  >
+                    {getSafeStatusMeta(activeInitiativePreview.status).label}
+                  </span>
+                  <h3 className="mt-4 text-[22px] font-extrabold leading-[1.1] text-[#33475b]">
+                    {activeInitiativePreview.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeInitiativePreview}
+                  className="rounded-[2px] p-1 text-[#9cb1c6] hover:bg-white hover:text-[#33475b]"
+                  aria-label="Cerrar detalle del caso de uso"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-6 border-t border-dashed border-[#dfe3eb] pt-6">
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
+                    {formatDateRange(
+                      activeInitiativePreview.est_start_date,
+                      activeInitiativePreview.est_end_date,
+                    )}
+                  </span>
+                  <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
+                    {Math.max(0, Math.min(100, activeInitiativePreview.progressPercent ?? 0))}% progreso
+                  </span>
+                  <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
+                    {activeInitiativePreview.credits} CR
+                  </span>
+                  <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
+                    {activeInitiativePreview.subitems.length} actividades
+                  </span>
+                </div>
+                <p className="mt-3 text-[11px] text-[#8aa0b4]">
+                  Vista informativa para prospectos. Aqui solo puedes revisar el alcance del caso de uso.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-6 px-6 py-6">
+              <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Rango estimado
+                </p>
+                <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <div className="h-9 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-semibold leading-9 text-[#33475b]">
+                    {activeInitiativePreview.est_start_date || "--"}
+                  </div>
+                  <span className="text-[11px] font-bold text-[#516f90]">al</span>
+                  <div className="h-9 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-semibold leading-9 text-[#33475b]">
+                    {activeInitiativePreview.est_end_date || "--"}
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Descripcion
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
+                  <div className="min-h-[220px] rounded-[2px] border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b]">
+                    <p className="whitespace-pre-wrap">
+                      {activeInitiativePreview.description || "Sin descripcion ejecutiva."}
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Actividades incluidas
+                  </p>
+                  <span className="text-[13px] font-bold text-[#ff7a59]">
+                    {activeInitiativePreview.credits} CR
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {activeInitiativePreview.subitems.length ? (
+                    activeInitiativePreview.subitems.map((subitem) => (
+                      <div
+                        key={`preview-subitem-${subitem.id}`}
+                        className="rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[12px] font-bold leading-[1.25] text-[#33475b]">
+                              {subitem.name}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="text-[9px] text-[#516f90]">{subitem.unit_credits} CR c/u</span>
+                              <span className="inline-flex items-center rounded-[999px] px-2 py-1 text-[9px] font-bold bg-white text-[#516f90] border border-[#cbd6e2]">
+                                {subitem.status}
+                              </span>
+                              <span className="h-7 rounded-[999px] border border-[#cbd6e2] bg-white px-2 text-[9px] leading-7 text-[#516f90]">
+                                {subitem.target_date || "Sin fecha"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="pl-2 text-right">
+                            <p className="text-[11px] font-bold text-[#33475b]">
+                              x{subitem.quantity}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-[12px] text-[#516f90]">
+                      Este caso de uso todavia no tiene actividades detalladas registradas.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Nota mas reciente
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  <p className="text-[13px] leading-relaxed text-[#33475b]">
+                    {activeInitiativePreview.logs[0]?.entry || "Sin notas registradas."}
+                  </p>
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       {isCatalogModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/70 p-4 backdrop-blur-sm">

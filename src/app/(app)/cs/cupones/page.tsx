@@ -1,13 +1,15 @@
 import { SalesCouponsManager } from "@/components/cs/sales-coupons-manager";
 import { requireUser } from "@/lib/auth";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/types/database";
 
 type SalesCoupon = Database["public"]["Tables"]["sales_coupons"]["Row"];
 
 export default async function SalesCouponsPage() {
-  const { supabase } = await requireUser();
+  await requireUser("/cs/cupones");
+  const admin = createSupabaseAdminClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("sales_coupons")
     .select("*")
     .order("created_at", { ascending: false })

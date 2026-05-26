@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
+import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   SALES_PROPOSAL_BASE_CREDITS,
   SALES_PROPOSAL_BASE_PRICE,
@@ -200,6 +201,13 @@ function canMoveSalesInitiativeToStatus(
   );
 }
 
+function canDropSalesInitiativeIntoStatus(
+  currentStatus: InitiativeStatus,
+  targetStatus: InitiativeStatus,
+) {
+  return currentStatus === targetStatus || canMoveSalesInitiativeToStatus(currentStatus, targetStatus);
+}
+
 function getAllowedSalesStageTargets(currentStatus: InitiativeStatus) {
   return boardStatuses.filter((status) => canMoveSalesInitiativeToStatus(currentStatus, status));
 }
@@ -313,6 +321,11 @@ function addCalendarDays(value: Date, amount: number) {
   const next = new Date(value);
   next.setDate(next.getDate() + amount);
   return next;
+}
+
+function getDropPosition(event: { clientY: number; currentTarget: EventTarget & HTMLElement }): DropPosition {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return event.clientY >= bounds.top + bounds.height / 2 ? "after" : "before";
 }
 
 function addCalendarMonths(value: Date, amount: number) {
@@ -700,6 +713,11 @@ export function SalesProposalWorkspace({
   });
   const [draggedInitiativeId, setDraggedInitiativeId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<InitiativeStatus | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{
+    status: InitiativeStatus;
+    initiativeId: string | null;
+    position: DropPosition;
+  } | null>(null);
   const [ganttDrag, setGanttDrag] = useState<{
     initiativeId: string;
     originX: number;
@@ -1014,14 +1032,40 @@ export function SalesProposalWorkspace({
   function moveInitiativeToStatus(
     initiative: SalesProposalInitiativeDraft,
     targetStatus: InitiativeStatus,
+    options?: {
+      targetInitiativeId?: string | null;
+      position?: DropPosition;
+    },
   ) {
-    if (initiative.status === targetStatus) {
+    const reorderResult = reorderBoardItems({
+      items: proposal.initiatives,
+      draggedId: initiative.id,
+      targetStatus,
+      targetId: options?.targetInitiativeId,
+      position: options?.position,
+      getId: (item) => item.id,
+      getStatus: (item) => item.status,
+      getSortOrder: (item) => item.sortOrder,
+      updateItem: (item, patch) => ({
+        ...item,
+        status: patch.status,
+        sortOrder: patch.sortOrder,
+      }),
+    });
+
+    if (!reorderResult) {
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
 
-    if (!canMoveSalesInitiativeToStatus(initiative.status, targetStatus)) {
+    const statusChanged = reorderResult.statusChanged;
+
+    if (
+      statusChanged &&
+      !canMoveSalesInitiativeToStatus(initiative.status, targetStatus)
+    ) {
       setFeedback({
         tone: "error",
         message:
@@ -1029,27 +1073,13 @@ export function SalesProposalWorkspace({
       });
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
+      setDropIndicator(null);
       return;
     }
 
     setProposal((current) => {
-      const targetSortOrder = current.initiatives.filter(
-        (currentInitiative) =>
-          currentInitiative.id !== initiative.id && currentInitiative.status === targetStatus,
-      ).length;
-
-      const nextInitiatives = current.initiatives.map((currentInitiative) =>
-        currentInitiative.id === initiative.id
-          ? {
-              ...currentInitiative,
-              status: targetStatus,
-              sortOrder: targetSortOrder,
-            }
-          : currentInitiative,
-      );
-
       const scheduledInitiatives = scheduleRecommendedInitiatives(
-        nextInitiatives,
+        reorderResult.items,
         [initiative.id],
         current.startDate,
         stageSchedulingOptions,
@@ -1061,12 +1091,17 @@ export function SalesProposalWorkspace({
       };
     });
 
-    setFeedback({
-      tone: "success",
-      message: `Caso de uso movido a ${STATUS_META[targetStatus].label}.`,
-    });
+    if (statusChanged) {
+      setFeedback({
+        tone: "success",
+        message: `Caso de uso movido a ${STATUS_META[targetStatus].label}.`,
+      });
+    } else {
+      setFeedback(null);
+    }
     setDraggedInitiativeId(null);
     setDropTargetStatus(null);
+    setDropIndicator(null);
   }
 
   function saveInitiativeDraft() {
@@ -2745,18 +2780,131 @@ function mergeRecommendedGroups(
                               </span>
                             </div>
 
-                            <div className="min-h-[360px] flex-1 space-y-2.5 rounded-[6px] px-1 pt-1">
+                            <div
+                              className={`min-h-[360px] flex-1 space-y-2.5 rounded-[6px] px-1 pt-1 transition ${
+                                dropTargetStatus === emptyStatus ? "bg-[#eef6ff] ring-1 ring-inset ring-[#bfd4ec]" : ""
+                              }`}
+                              onDragOver={(event) => {
+                                const draggedInitiative = proposal.initiatives.find(
+                                  (item) => item.id === draggedInitiativeId,
+                                );
+
+                                if (
+                                  !draggedInitiative ||
+                                  !canDropSalesInitiativeIntoStatus(draggedInitiative.status, emptyStatus)
+                                ) {
+                                  return;
+                                }
+
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                setDropTargetStatus(emptyStatus);
+                                setDropIndicator({ status: emptyStatus, initiativeId: null, position: "after" });
+                              }}
+                              onDragLeave={(event) => {
+                                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                                setDropTargetStatus((current) => (current === emptyStatus ? null : current));
+                                setDropIndicator((current) =>
+                                  current?.status === emptyStatus && current.initiativeId === null ? null : current,
+                                );
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+
+                                const initiativeId =
+                                  event.dataTransfer.getData("text/plain") || draggedInitiativeId;
+                                const initiative = proposal.initiatives.find((item) => item.id === initiativeId);
+
+                                if (!initiative) {
+                                  setDraggedInitiativeId(null);
+                                  setDropTargetStatus(null);
+                                  setDropIndicator(null);
+                                  return;
+                                }
+
+                                moveInitiativeToStatus(initiative, emptyStatus);
+                              }}
+                            >
                               {stageItems.length ? (
                                 stageItems.map((initiative) => {
                                   const credits = calculateSalesInitiativeCredits(initiative);
                                   const progress = calculateSalesInitiativeProgress(initiative);
+                                  const isDraggable = true;
 
                                   return (
                                     <button
                                       key={initiative.id}
                                       type="button"
                                       onClick={() => openInitiativeEditor(initiative)}
-                                      className="w-full cursor-pointer rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)]"
+                                      draggable={isDraggable}
+                                      onDragStart={(event) => {
+                                        event.dataTransfer.setData("text/plain", initiative.id);
+                                        event.dataTransfer.effectAllowed = "move";
+                                        setDraggedInitiativeId(initiative.id);
+                                      }}
+                                      onDragOver={(event) => {
+                                        if (draggedInitiativeId === initiative.id) return;
+                                        const draggedInitiative = proposal.initiatives.find(
+                                          (item) => item.id === draggedInitiativeId,
+                                        );
+
+                                        if (
+                                          !draggedInitiative ||
+                                          !canDropSalesInitiativeIntoStatus(draggedInitiative.status, emptyStatus)
+                                        ) {
+                                          return;
+                                        }
+
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        event.dataTransfer.dropEffect = "move";
+                                        setDropTargetStatus(emptyStatus);
+                                        setDropIndicator({
+                                          status: emptyStatus,
+                                          initiativeId: initiative.id,
+                                          position: getDropPosition(event),
+                                        });
+                                      }}
+                                      onDrop={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+
+                                        const initiativeId =
+                                          event.dataTransfer.getData("text/plain") || draggedInitiativeId;
+                                        const draggedInitiative = proposal.initiatives.find(
+                                          (item) => item.id === initiativeId,
+                                        );
+
+                                        if (!draggedInitiative) {
+                                          setDraggedInitiativeId(null);
+                                          setDropTargetStatus(null);
+                                          setDropIndicator(null);
+                                          return;
+                                        }
+
+                                        moveInitiativeToStatus(draggedInitiative, emptyStatus, {
+                                          targetInitiativeId: initiative.id,
+                                          position: getDropPosition(event),
+                                        });
+                                      }}
+                                      onDragEnd={() => {
+                                        setDraggedInitiativeId(null);
+                                        setDropTargetStatus(null);
+                                        setDropIndicator(null);
+                                      }}
+                                      className={`relative w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] cursor-grab active:cursor-grabbing ${
+                                        dropIndicator?.status === emptyStatus &&
+                                        dropIndicator.initiativeId === initiative.id &&
+                                        dropIndicator.position === "before"
+                                          ? "ring-2 ring-inset ring-[#8fb3d9] before:absolute before:left-2 before:right-2 before:top-0 before:h-[3px] before:rounded-full before:bg-[#00bda5] before:content-['']"
+                                          : ""
+                                      } ${
+                                        dropIndicator?.status === emptyStatus &&
+                                        dropIndicator.initiativeId === initiative.id &&
+                                        dropIndicator.position === "after"
+                                          ? "ring-2 ring-inset ring-[#8fb3d9] after:absolute after:left-2 after:right-2 after:bottom-0 after:h-[3px] after:rounded-full after:bg-[#00bda5] after:content-['']"
+                                          : ""
+                                      }`}
                                     >
                                       <div className="min-w-0">
                                         <div className="min-w-0">
@@ -2822,7 +2970,7 @@ function mergeRecommendedGroups(
 
                         if (
                           !draggedInitiative ||
-                          !canMoveSalesInitiativeToStatus(draggedInitiative.status, status)
+                          !canDropSalesInitiativeIntoStatus(draggedInitiative.status, status)
                         ) {
                           return;
                         }
@@ -2830,10 +2978,14 @@ function mergeRecommendedGroups(
                         event.preventDefault();
                         event.dataTransfer.dropEffect = "move";
                         setDropTargetStatus(status);
+                        setDropIndicator({ status, initiativeId: null, position: "after" });
                       }}
                       onDragLeave={(event) => {
                         if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                         setDropTargetStatus((current) => (current === status ? null : current));
+                        setDropIndicator((current) =>
+                          current?.status === status && current.initiativeId === null ? null : current,
+                        );
                       }}
                       onDrop={(event) => {
                         event.preventDefault();
@@ -2845,6 +2997,7 @@ function mergeRecommendedGroups(
                         if (!initiative) {
                           setDraggedInitiativeId(null);
                           setDropTargetStatus(null);
+                          setDropIndicator(null);
                           return;
                         }
 
@@ -2854,7 +3007,7 @@ function mergeRecommendedGroups(
                       {items.map((initiative) => {
                         const credits = calculateSalesInitiativeCredits(initiative);
                         const progress = calculateSalesInitiativeProgress(initiative);
-                        const isDraggable = canManageSalesStage(initiative.status);
+                        const isDraggable = true;
 
                         return (
                           <button
@@ -2872,12 +3025,70 @@ function mergeRecommendedGroups(
                               event.dataTransfer.effectAllowed = "move";
                               setDraggedInitiativeId(initiative.id);
                             }}
+                            onDragOver={(event) => {
+                              if (draggedInitiativeId === initiative.id) return;
+                              const draggedInitiative = proposal.initiatives.find(
+                                (item) => item.id === draggedInitiativeId,
+                              );
+
+                              if (
+                                !draggedInitiative ||
+                                !canDropSalesInitiativeIntoStatus(draggedInitiative.status, status)
+                              ) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.dataTransfer.dropEffect = "move";
+                              setDropTargetStatus(status);
+                              setDropIndicator({
+                                status,
+                                initiativeId: initiative.id,
+                                position: getDropPosition(event),
+                              });
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+
+                              const initiativeId =
+                                event.dataTransfer.getData("text/plain") || draggedInitiativeId;
+                              const draggedInitiative = proposal.initiatives.find(
+                                (item) => item.id === initiativeId,
+                              );
+
+                              if (!draggedInitiative) {
+                                setDraggedInitiativeId(null);
+                                setDropTargetStatus(null);
+                                setDropIndicator(null);
+                                return;
+                              }
+
+                              moveInitiativeToStatus(draggedInitiative, status, {
+                                targetInitiativeId: initiative.id,
+                                position: getDropPosition(event),
+                              });
+                            }}
                             onDragEnd={() => {
                               setDraggedInitiativeId(null);
                               setDropTargetStatus(null);
+                              setDropIndicator(null);
                             }}
-                            className={`w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] ${
+                            className={`relative w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] ${
                               isDraggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                            } ${
+                              dropIndicator?.status === status &&
+                              dropIndicator.initiativeId === initiative.id &&
+                              dropIndicator.position === "before"
+                                ? "ring-2 ring-inset ring-[#8fb3d9] before:absolute before:left-2 before:right-2 before:top-0 before:h-[3px] before:rounded-full before:bg-[#00bda5] before:content-['']"
+                                : ""
+                            } ${
+                              dropIndicator?.status === status &&
+                              dropIndicator.initiativeId === initiative.id &&
+                              dropIndicator.position === "after"
+                                ? "ring-2 ring-inset ring-[#8fb3d9] after:absolute after:left-2 after:right-2 after:bottom-0 after:h-[3px] after:rounded-full after:bg-[#00bda5] after:content-['']"
+                                : ""
                             }`}
                           >
                             <div className="min-w-0">
