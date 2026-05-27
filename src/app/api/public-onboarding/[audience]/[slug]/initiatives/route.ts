@@ -457,3 +457,143 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 }
+
+export async function DELETE(request: Request, context: RouteContext) {
+  const { audience, slug } = await context.params;
+
+  if (audience !== "client" && audience !== "prospect") {
+    return NextResponse.json(
+      { message: "Esta vista publica no permite eliminar iniciativas." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const body = (await request.json()) as {
+      initiativeId?: string;
+    };
+    const initiativeId = body.initiativeId?.trim();
+
+    if (!initiativeId) {
+      return NextResponse.json(
+        { message: "Indica una iniciativa valida para quitar." },
+        { status: 400 },
+      );
+    }
+
+    const admin = createSupabaseAdminClient();
+
+    if (audience === "prospect") {
+      const proposal = await getSalesProposalBySlug(slug);
+
+      if (!proposal) {
+        return NextResponse.json(
+          { message: "No fue posible ubicar la propuesta del prospecto." },
+          { status: 404 },
+        );
+      }
+
+      const initiativeExists = proposal.initiatives.some((initiative) => initiative.id === initiativeId);
+      if (!initiativeExists) {
+        return NextResponse.json(
+          { message: "La iniciativa seleccionada ya no existe." },
+          { status: 404 },
+        );
+      }
+
+      const nextInitiatives = proposal.initiatives
+        .filter((initiative) => initiative.id !== initiativeId)
+        .map((initiative, index) => ({
+          ...initiative,
+          sortOrder: index,
+        }));
+
+      await saveSalesProposal(
+        {
+          ...proposal,
+          initiatives: nextInitiatives,
+        },
+        proposal.slug || proposal.id || slug,
+      );
+
+      return NextResponse.json({ initiativeId });
+    }
+
+    const { data: snapshot, error: snapshotError } = await admin.rpc(
+      "get_public_onboarding_snapshot" as never,
+      {
+        p_slug: slug,
+      } as never,
+    );
+    const snapshotData = snapshot as { client?: { id?: string } } | null;
+    const clientId = snapshotData?.client?.id ?? null;
+
+    if (snapshotError || !clientId) {
+      return NextResponse.json(
+        {
+          message: formatUserError(
+            snapshotError,
+            "No fue posible ubicar el cliente para esta vista publica.",
+          ),
+        },
+        { status: 400 },
+      );
+    }
+
+    const { data: initiative, error: initiativeError } = await admin
+      .from("onboarding_initiatives")
+      .select("id")
+      .eq("id", initiativeId)
+      .eq("client_id", clientId)
+      .maybeSingle();
+
+    if (initiativeError) {
+      return NextResponse.json(
+        {
+          message: formatUserError(
+            initiativeError,
+            "No fue posible validar la iniciativa que quieres quitar.",
+          ),
+        },
+        { status: 400 },
+      );
+    }
+
+    if (!initiative) {
+      return NextResponse.json(
+        { message: "La iniciativa seleccionada ya no existe." },
+        { status: 404 },
+      );
+    }
+
+    const { error: deleteError } = await admin
+      .from("onboarding_initiatives")
+      .delete()
+      .eq("id", initiativeId)
+      .eq("client_id", clientId);
+
+    if (deleteError) {
+      return NextResponse.json(
+        {
+          message: formatUserError(
+            deleteError,
+            "No fue posible quitar la iniciativa seleccionada.",
+          ),
+        },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({ initiativeId });
+  } catch (caughtError) {
+    return NextResponse.json(
+      {
+        message: formatUserError(
+          caughtError,
+          "No fue posible quitar la iniciativa seleccionada.",
+        ),
+      },
+      { status: 500 },
+    );
+  }
+}

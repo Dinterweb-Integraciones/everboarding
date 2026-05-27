@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, CreditCard, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
+import { CalendarDays, CreditCard, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
@@ -58,6 +58,22 @@ function normalizeCatalogText(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
+  const normalizedQuery = normalizeCatalogText(query);
+  if (!normalizedQuery) return true;
+
+  const searchableText = [
+    group.name,
+    group.description,
+    group.modalCategory,
+    ...group.items.map((item) => `${item.label} ${item.category}`),
+  ]
+    .map((value) => normalizeCatalogText(value))
+    .join(" ");
+
+  return searchableText.includes(normalizedQuery);
 }
 
 function parseCalendarDate(value: string) {
@@ -214,6 +230,8 @@ export function PublicOnboardingPage({
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [isExtraCreditsModalOpen, setIsExtraCreditsModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState("");
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
+  const [catalogTagFilter, setCatalogTagFilter] = useState<string | null>(null);
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -300,6 +318,26 @@ export function PublicOnboardingPage({
     return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData.catalogGroupCategories]);
   const defaultCatalogLibraryTab = catalogGroupOptions[0]?.id ?? "";
+  const activeCatalogCategory = useMemo(
+    () => catalogGroupOptions.find((category) => category.id === activeCatalogTab) ?? null,
+    [activeCatalogTab, catalogGroupOptions],
+  );
+  const isGlobalCatalogSearch = catalogSearchQuery.trim().length > 0;
+  const visibleCatalogGroups = useMemo(() => {
+    const sourceGroups = (isGlobalCatalogSearch || catalogTagFilter)
+      ? Array.from(
+          new Map(
+            catalogGroupOptions.flatMap((category) => category.groups).map((group) => [group.id, group]),
+          ).values(),
+        )
+      : (activeCatalogCategory?.groups ?? []);
+
+    return sourceGroups.filter(
+      (group) =>
+        matchesCatalogGroupSearch(group, catalogSearchQuery) &&
+        (!catalogTagFilter || group.tags.includes(catalogTagFilter)),
+    );
+  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
   const selectedCatalogItems = useMemo(
     () =>
       requestDraft.selectedCatalogItemIds
@@ -968,6 +1006,8 @@ export function PublicOnboardingPage({
     setFeedback(null);
     setRequestTargetStatus(targetStatus);
     setActiveCatalogTab(defaultCatalogLibraryTab);
+    setCatalogSearchQuery("");
+    setCatalogTagFilter(null);
     setCatalogPreviewGroup(null);
     setIsCatalogModalOpen(true);
   }
@@ -975,6 +1015,8 @@ export function PublicOnboardingPage({
   function closeCatalogModal() {
     setIsCatalogModalOpen(false);
     setCatalogPreviewGroup(null);
+    setCatalogSearchQuery("");
+    setCatalogTagFilter(null);
   }
 
   function openCatalogGroupPreview(group: CatalogModalGroup) {
@@ -1006,7 +1048,59 @@ export function PublicOnboardingPage({
       selectedGroupId: group.id,
     }, requestTargetStatus);
     setCatalogPreviewGroup(null);
-    setIsCatalogModalOpen(false);
+  }
+
+  async function removeCatalogGroup(group: CatalogModalGroup) {
+    const matchingInitiative = initiatives.find(
+      (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+    );
+    if (!matchingInitiative) return;
+
+    const confirmed = window.confirm(
+      `Se quitara la iniciativa "${matchingInitiative.title}" de esta propuesta.`,
+    );
+    if (!confirmed) return;
+
+    setFeedback(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`/api/public-onboarding/${audience}/${publicSlug}/initiatives`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          initiativeId: matchingInitiative.id,
+        }),
+      });
+      const payload = (await response.json()) as { message?: string; initiativeId?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No fue posible quitar la iniciativa.");
+      }
+
+      setInitiatives((current) => current.filter((initiative) => initiative.id !== matchingInitiative.id));
+
+      if (
+        catalogPreviewGroup &&
+        normalizeCatalogText(catalogPreviewGroup.name) === normalizeCatalogText(group.name)
+      ) {
+        setCatalogPreviewGroup(null);
+      }
+
+      setFeedback({
+        tone: "success",
+        message: "Caso de uso quitado de En evaluacion.",
+      });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No fue posible quitar la iniciativa."),
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -1092,82 +1186,50 @@ export function PublicOnboardingPage({
               >
                 {audience === "prospect" ? (
                   <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
-                    <div className="flex flex-wrap items-stretch">
-                      <div className="flex min-w-[148px] flex-1 flex-col justify-center px-4 py-3">
-                        <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
+                    <div className="flex flex-col items-stretch sm:flex-row">
+                      <div className="flex min-w-0 flex-1 flex-col justify-center px-3 py-2 sm:min-w-[118px]">
+                        <p className="text-[7px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
                           {paymentAmountLabel}
                         </p>
-                        <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
+                        <p className="mt-1 whitespace-nowrap text-[18px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums] sm:text-[20px]">
                           {formatCurrency(prospectDisplayedPaymentAmount)}
                         </p>
                       </div>
-                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
-                      <div className="flex shrink-0 items-center px-4 py-3">
-                        <span className="inline-flex h-11 min-w-[96px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[16px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
+                      <div className="mx-1 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex shrink-0 items-center px-2.5 py-2">
+                        <span className="inline-flex h-10 min-w-[80px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-3 text-[13px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
                           {prospectDisplayedPlanCredits} CR
                         </span>
                       </div>
-                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
-                      <div className="flex min-w-[178px] shrink-0 items-center px-3 py-3">
-                        <div className="w-full rounded-[4px] border border-[#dfe3eb] bg-[#f8fbfd] px-3 py-2">
-                          <p className="text-[8px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
-                            Paquetes extra 80 CR
-                          </p>
-                          <div className="mt-2 flex items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void updateProspectExtraPackages(prospectExtraPackageQuantity - 1)
-                              }
-                              disabled={
-                                isStartingPayment ||
-                                isSyncingPayment ||
-                                isSavingProspectExtraPackages ||
-                                hasPaidCycleAccess ||
-                                prospectExtraPackageQuantity <= 0
-                              }
-                              className="grid h-8 w-8 place-items-center rounded-[4px] border border-[#cbd6e2] bg-white text-[16px] font-bold text-[#33475b] transition hover:border-[#9cb1c6] disabled:cursor-not-allowed disabled:opacity-50"
-                              aria-label="Quitar paquete extra"
-                            >
-                              -
-                            </button>
-                            <div className="min-w-[72px] text-center">
-                              <p className="text-[16px] font-extrabold leading-none text-[#33475b]">
-                                {prospectExtraPackageQuantity}
-                              </p>
-                              <p className="mt-1 text-[9px] font-medium text-[#516f90]">
-                                {prospectExtraCreditsAdded} CR
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void updateProspectExtraPackages(prospectExtraPackageQuantity + 1)
-                              }
-                              disabled={
-                                isStartingPayment ||
-                                isSyncingPayment ||
-                                isSavingProspectExtraPackages ||
-                                hasPaidCycleAccess
-                              }
-                              className="grid h-8 w-8 place-items-center rounded-[4px] border border-[#cbd6e2] bg-white text-[16px] font-bold text-[#33475b] transition hover:border-[#9cb1c6] disabled:cursor-not-allowed disabled:opacity-50"
-                              aria-label="Agregar paquete extra"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
+                      <div className="mx-1 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex shrink-0 items-center px-1.5 py-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void updateProspectExtraPackages(prospectExtraPackageQuantity + 1)
+                          }
+                          disabled={
+                            isStartingPayment ||
+                            isSyncingPayment ||
+                            isSavingProspectExtraPackages ||
+                            hasPaidCycleAccess
+                          }
+                          className="grid h-7 w-7 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Agregar paquete extra"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
                       </div>
-                      <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
-                      <div className="flex min-w-[220px] flex-1 items-center px-3 py-3">
+                      <div className="mx-1 hidden w-px bg-[#dfe3eb] sm:block" />
+                      <div className="flex min-w-0 flex-[1.15] items-center px-1.5 py-1">
                         <button
                           type="button"
                           onClick={() => void startStripeCheckout("plan")}
                           disabled={hasPaidCycleAccess || isStartingPayment || isSyncingPayment}
-                          className="inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[14px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+                          className="inline-flex h-10 w-full min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-3 text-[12px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70 sm:px-4 sm:text-[13px]"
                         >
-                          <span className="whitespace-nowrap">{prospectPlanActionLabel}</span>
-                          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{prospectPlanActionLabel}</span>
+                          <Sparkles className="h-3 w-3 shrink-0" />
                         </button>
                       </div>
                     </div>
@@ -1180,10 +1242,24 @@ export function PublicOnboardingPage({
                               <span className="font-semibold text-[#33475b]">
                                 {prospectExtraPackageQuantity}x paquete extra de {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR
                               </span>
-                              <span className="font-bold text-[#00a88f]">
-                                {prospectExtraPriceAdded >= 0 ? "+" : "-"}
-                                {formatCurrency(Math.abs(prospectExtraPriceAdded))}
-                              </span>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void updateProspectExtraPackages(prospectExtraPackageQuantity - 1)
+                                  }
+                                  disabled={
+                                    isStartingPayment ||
+                                    isSyncingPayment ||
+                                    isSavingProspectExtraPackages ||
+                                    hasPaidCycleAccess ||
+                                    prospectExtraPackageQuantity <= 0
+                                  }
+                                  className="inline-flex h-7 items-center justify-center rounded-[4px] border border-[#cbd6e2] bg-white px-2.5 text-[10px] font-bold text-[#516f90] transition hover:border-[#9cb1c6] hover:bg-[#f8fbfd] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Quitar
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ) : null}
@@ -1484,10 +1560,10 @@ export function PublicOnboardingPage({
                         {allowsCatalogAdd ? (
                           <Button
                             variant="primary"
-                            className="w-full !rounded-[4px] !border-2 !border-dashed !border-[#00bda5] !bg-[#effdfa] px-3 py-5 !text-[11px] !font-bold !text-[#00bda5] !shadow-none transition hover:!border-[#00a894] hover:!bg-[#e6fcf8] hover:!text-[#00a894]"
+                            className="w-full !rounded-[4px] !border-2 !border-dashed !border-[#00bda5] !bg-[#effdfa] px-3 py-5 !text-[15px] !font-semibold !tracking-[-0.01em] !text-[#00bda5] !shadow-none transition hover:!border-[#00a894] hover:!bg-[#e6fcf8] hover:!text-[#00a894]"
                             onClick={() => openCatalogModal("backlog")}
                           >
-                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                            <Plus className="mr-2 h-4.5 w-4.5" />
                             Agregar Caso de Uso
                           </Button>
                         ) : null}
@@ -1917,50 +1993,159 @@ export function PublicOnboardingPage({
               </aside>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).length ? (
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    {(catalogGroupOptions.find((category) => category.id === activeCatalogTab)?.groups ?? []).map((group) => (
-                      <div
-                        key={group.id}
-                        className={`flex flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
-                          initiatives.some(
-                            (initiative) =>
-                              normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
-                          )
-                            ? "border-[#eaf0f6] bg-[#f8fafc]"
-                            : "border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
-                        }`}
-                      >
-                        <div className="mb-3 flex flex-wrap gap-1.5">
-                          <span className="rounded-[2px] border border-[#00bda5]/20 bg-[#f0fdfa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#00bda5]">
-                            {group.modalCategory}
-                          </span>
-                          <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                            {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
-                          </span>
-                        </div>
-                        <h4 className="text-[14px] font-bold leading-snug text-[#33475b]">{group.name}</h4>
-                        <p className="mt-2 text-[11px] leading-relaxed text-[#516f90]">
-                          {group.description || "Grupo sugerido desde el catalogo para sumarlo al board del cliente."}
-                        </p>
-                        <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                          <span className="text-[14px] font-bold text-[#ff7a59]">{group.credits} CR</span>
+                <div className="space-y-5">
+                  <div className="rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="relative block min-w-[200px] flex-1">
+                        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8aa0b4]" />
+                        <input
+                          type="search"
+                          value={catalogSearchQuery}
+                          onChange={(event) => setCatalogSearchQuery(event.target.value)}
+                          placeholder="Buscar grupo, caso de uso o tarea..."
+                          className="h-11 w-full rounded-[8px] border border-[#cbd6e2] bg-[#fbfcfe] pl-11 pr-4 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6] focus:bg-white"
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {["Inmobiliaria", "Salud", "Ecommerce"].map((tag) => (
                           <button
+                            key={tag}
                             type="button"
-                            onClick={() => openCatalogGroupPreview(group)}
-                            className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                            onClick={() => setCatalogTagFilter((current) => (current === tag ? null : tag))}
+                            className={`rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
+                              catalogTagFilter === tag
+                                ? "bg-[#14b8a6] text-white"
+                                : "border border-[#14b8a6]/40 bg-[#f0fdfa] text-[#0e9488] hover:bg-[#ccfbf1]"
+                            }`}
                           >
-                            Ver detalles
+                            {tag}
                           </button>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
                   </div>
-                ) : (
-                  <div className="rounded-[10px] border border-dashed border-[#cbd6e2] bg-[#fcfcfc] p-6 text-center text-[12px] text-[#8aa0b4]">
-                    No hay grupos activos en esta categoria todavia.
-                  </div>
-                )}
+
+                  {visibleCatalogGroups.length ? (
+                    <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                      {visibleCatalogGroups.map((group) => {
+                        const alreadyAdded = initiatives.some(
+                          (initiative) =>
+                            normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+                        );
+
+                        return (
+                          <div
+                            key={group.id}
+                            role={alreadyAdded ? undefined : "button"}
+                            tabIndex={alreadyAdded ? -1 : 0}
+                            onClick={() => {
+                              if (!alreadyAdded) openCatalogGroupPreview(group);
+                            }}
+                            onKeyDown={(event) => {
+                              if (!alreadyAdded && (event.key === "Enter" || event.key === " ")) {
+                                event.preventDefault();
+                                openCatalogGroupPreview(group);
+                              }
+                            }}
+                            className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
+                              alreadyAdded
+                                ? "cursor-default border-[#d7dee8] bg-[#f3f5f7]"
+                                : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                            }`}
+                          >
+                            <div className="mb-3 flex flex-wrap gap-1.5">
+                              <span
+                                className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                  alreadyAdded
+                                    ? "border border-[#d7dee8] bg-[#eef2f6] text-[#7c8da1]"
+                                    : "border border-[#00bda5]/20 bg-[#f0fdfa] text-[#00bda5]"
+                                }`}
+                              >
+                                {group.modalCategory}
+                              </span>
+                              <span
+                                className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                  alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
+                                }`}
+                              >
+                                {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
+                              </span>
+                            </div>
+                            <h4
+                              className={`min-h-[44px] text-[14px] font-bold leading-snug ${
+                                alreadyAdded ? "text-[#6b7d91]" : "text-[#33475b]"
+                              }`}
+                              style={{
+                                display: "-webkit-box",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: 2,
+                                overflow: "hidden",
+                              }}
+                            >
+                              {group.name}
+                            </h4>
+                            <div className="mt-2 flex-1 overflow-hidden">
+                              <p
+                                className={`text-[11px] leading-relaxed ${
+                                  alreadyAdded ? "text-[#7c8da1]" : "text-[#516f90]"
+                                }`}
+                                style={{
+                                  display: "-webkit-box",
+                                  WebkitBoxOrient: "vertical",
+                                  WebkitLineClamp: 7,
+                                  overflow: "hidden",
+                                }}
+                              >
+                                {group.description || "Grupo sugerido desde el catalogo para sumarlo al board del cliente."}
+                              </p>
+                            </div>
+                            <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
+                              <span className={`text-[14px] font-bold ${alreadyAdded ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
+                                {group.credits} CR
+                              </span>
+                              <div className="flex items-center gap-3">
+                                <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
+                                  {alreadyAdded ? "Ya agregado" : "Disponible"}
+                                </span>
+                                {alreadyAdded ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void removeCatalogGroup(group);
+                                    }}
+                                    disabled={isSubmitting}
+                                    className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5] disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Quitar
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openCatalogGroupPreview(group);
+                                    }}
+                                    className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                                  >
+                                    Ver detalles
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-[8px] border border-dashed border-[#bfd9d4] bg-[#f8fffd] px-6 py-12 text-center shadow-sm">
+                      <p className="text-[15px] font-bold text-[#33475b]">No encontramos grupos con esa busqueda.</p>
+                      <p className="mt-2 text-[12px] text-[#7c98b6]">
+                        Prueba con otra palabra clave o cambia de categoria.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -2055,16 +2240,18 @@ export function PublicOnboardingPage({
 
             <div className="border-t border-[#dfe3eb] bg-white px-5 py-5">
               <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={() => loadGroupIntoBuilder(catalogPreviewGroup)}
-                  className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#14b8a6] px-5 py-4 text-white shadow-md transition hover:bg-[#0ea899]"
-                >
-                  <span className="text-[14px] font-extrabold">Editar antes de enviar</span>
-                  <span className="mt-1 text-[11px] font-medium opacity-90">
-                    Carga el caso completo en {getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}
-                  </span>
-                </button>
+                {audience !== "prospect" ? (
+                  <button
+                    type="button"
+                    onClick={() => loadGroupIntoBuilder(catalogPreviewGroup)}
+                    className="flex w-full flex-col items-center justify-center rounded-[6px] bg-[#14b8a6] px-5 py-4 text-white shadow-md transition hover:bg-[#0ea899]"
+                  >
+                    <span className="text-[14px] font-extrabold">Editar antes de enviar</span>
+                    <span className="mt-1 text-[11px] font-medium opacity-90">
+                      Carga el caso completo en {getPublicDraftStatusLabel(requestTargetStatus).toLowerCase()}
+                    </span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => void quickAddCatalogGroup(catalogPreviewGroup)}
