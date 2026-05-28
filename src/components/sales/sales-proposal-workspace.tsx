@@ -683,11 +683,11 @@ export function SalesProposalWorkspace({
     packageOptions[0].credits,
   );
   const [upsellCartCount, setUpsellCartCount] = useState(0);
-  const [dinterwebExtraCreditsDraft, setDinterwebExtraCreditsDraft] = useState(
-    String(Math.max(0, getDinterwebMonthlyCredits(initialDraft) - DINTERWEB_BASE_PACKAGE.credits)),
+  const [dinterwebPlanCreditsDraft, setDinterwebPlanCreditsDraft] = useState(
+    String(Math.max(DINTERWEB_BASE_PACKAGE.credits, getDinterwebMonthlyCredits(initialDraft))),
   );
-  const [dinterwebExtraPriceDraft, setDinterwebExtraPriceDraft] = useState(
-    String(Math.max(0, getDinterwebMonthlyPrice(initialDraft) - DINTERWEB_BASE_PACKAGE.price)),
+  const [dinterwebPlanPriceDraft, setDinterwebPlanPriceDraft] = useState(
+    String(Math.max(DINTERWEB_BASE_PACKAGE.price, getDinterwebMonthlyPrice(initialDraft))),
   );
   const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
     Boolean(initialProposal?.appliedCouponCode?.trim()),
@@ -1193,11 +1193,11 @@ export function SalesProposalWorkspace({
     }
 
     if (isDinterwebVariant) {
-      setDinterwebExtraCreditsDraft(
-        String(Math.max(0, getDinterwebMonthlyCredits(proposal) - DINTERWEB_BASE_PACKAGE.credits)),
+      setDinterwebPlanCreditsDraft(
+        String(Math.max(DINTERWEB_BASE_PACKAGE.credits, getDinterwebMonthlyCredits(proposal))),
       );
-      setDinterwebExtraPriceDraft(
-        String(Math.max(0, getDinterwebMonthlyPrice(proposal) - DINTERWEB_BASE_PACKAGE.price)),
+      setDinterwebPlanPriceDraft(
+        String(Math.max(DINTERWEB_BASE_PACKAGE.price, getDinterwebMonthlyPrice(proposal))),
       );
       setIsUpsellModalOpen(true);
       return;
@@ -1244,8 +1244,8 @@ export function SalesProposalWorkspace({
       proposal.billingMode,
       proposal.periodMonths,
     );
-    setDinterwebExtraCreditsDraft("0");
-    setDinterwebExtraPriceDraft("0");
+    setDinterwebPlanCreditsDraft(String(DINTERWEB_BASE_PACKAGE.credits));
+    setDinterwebPlanPriceDraft(String(DINTERWEB_BASE_PACKAGE.price));
     setFeedback({
       tone: "success",
       message: "El paquete volvio a la base de 60 creditos.",
@@ -1255,15 +1255,30 @@ export function SalesProposalWorkspace({
 
   function confirmUpsell() {
     if (isDinterwebVariant) {
-      const extraCredits = Math.max(0, safeParseNumber(dinterwebExtraCreditsDraft));
-      const extraPrice = Math.max(0, safeParseNumber(dinterwebExtraPriceDraft));
-      const nextMonthlyCredits = DINTERWEB_BASE_PACKAGE.credits + extraCredits;
-      const nextMonthlyPrice = DINTERWEB_BASE_PACKAGE.price + extraPrice;
+      const nextMonthlyCredits = Math.max(
+        DINTERWEB_BASE_PACKAGE.credits,
+        safeParseNumber(dinterwebPlanCreditsDraft),
+      );
+      const nextMonthlyPrice = Math.max(
+        DINTERWEB_BASE_PACKAGE.price,
+        safeParseNumber(dinterwebPlanPriceDraft),
+      );
 
       if (!nextMonthlyCredits || !nextMonthlyPrice) {
         setFeedback({
           tone: "error",
           message: "Define un paquete valido con creditos e inversion mayores a cero.",
+        });
+        return;
+      }
+
+      if (
+        nextMonthlyCredits < DINTERWEB_BASE_PACKAGE.credits ||
+        nextMonthlyPrice < DINTERWEB_BASE_PACKAGE.price
+      ) {
+        setFeedback({
+          tone: "error",
+          message: `El plan no puede bajar de ${DINTERWEB_BASE_PACKAGE.credits} creditos ni de ${formatCurrency(DINTERWEB_BASE_PACKAGE.price, proposal.currency.toUpperCase())}.`,
         });
         return;
       }
@@ -1276,7 +1291,7 @@ export function SalesProposalWorkspace({
       );
       setFeedback({
         tone: "success",
-        message: `Paquete configurado en ${nextMonthlyCredits} creditos por ciclo base.`,
+        message: `Plan configurado en ${nextMonthlyCredits} creditos por periodo.`,
       });
       closeUpsellModal();
       return;
@@ -2245,10 +2260,6 @@ function mergeRecommendedGroups(
   const isActivatePlanDisabled =
     isActivating || isSyncingPayment || isProposalCheckoutLocked;
   const isUpsellDisabled = hasAppliedCoupon || isProposalCheckoutLocked;
-  const billingModeSummary =
-    proposal.billingMode === "subscription"
-      ? `Facturacion recurrente ${proposal.periodMonths === 3 ? "trimestral" : proposal.periodMonths === 6 ? "semestral" : proposal.periodMonths === 12 ? "anual" : "mensual"}.`
-      : "Cobro unico por este paquete.";
   const wizardLoadingMessage =
     WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
 
@@ -2556,13 +2567,6 @@ function mergeRecommendedGroups(
                       </label>
                     </div>
 
-                    <div className="rounded-[4px] border border-[#eaf0f6] bg-[#f8fbfd] px-3 py-2 text-[11px] text-[#516f90]">
-                      <p>
-                        Base mensual: <strong>{dinterwebMonthlyCredits} CR</strong> ·{" "}
-                        <strong>{formatCurrency(dinterwebMonthlyPrice, proposal.currency.toUpperCase())}</strong>.
-                      </p>
-                      <p className="mt-1">{billingModeSummary}</p>
-                    </div>
                   </div>
                 </div>
               ) : null}
@@ -3990,7 +3994,7 @@ function mergeRecommendedGroups(
             <div className="text-center">
               <h3 className="text-[18px] font-bold text-[#33475b]">Expandir paquete base</h3>
               <p className="mt-2 text-[13px] text-[#516f90]">
-                El paquete base incluye 60 creditos. Desde aqui puedes sumarle creditos e inversion de forma personalizada.
+                El paquete base siempre existe. Desde aqui puedes redefinir los creditos y la inversion del plan, sin bajar de 60 creditos ni de USD 897.
               </p>
             </div>
 
@@ -4012,25 +4016,25 @@ function mergeRecommendedGroups(
             <div className="mt-5 grid gap-3 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbfd] p-4 sm:grid-cols-2">
               <label className="space-y-2">
                 <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
-                  Creditos extra
+                  Creditos del plan
                 </span>
                 <input
                   type="number"
-                  min="0"
-                  value={dinterwebExtraCreditsDraft}
-                  onChange={(event) => setDinterwebExtraCreditsDraft(event.target.value)}
+                  min={String(DINTERWEB_BASE_PACKAGE.credits)}
+                  value={dinterwebPlanCreditsDraft}
+                  onChange={(event) => setDinterwebPlanCreditsDraft(event.target.value)}
                   className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 />
               </label>
               <label className="space-y-2">
                 <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
-                  Inversion extra
+                  Inversion del plan
                 </span>
                 <input
                   type="number"
-                  min="0"
-                  value={dinterwebExtraPriceDraft}
-                  onChange={(event) => setDinterwebExtraPriceDraft(event.target.value)}
+                  min={String(DINTERWEB_BASE_PACKAGE.price)}
+                  value={dinterwebPlanPriceDraft}
+                  onChange={(event) => setDinterwebPlanPriceDraft(event.target.value)}
                   className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 />
               </label>
@@ -4038,16 +4042,16 @@ function mergeRecommendedGroups(
 
             <div className="mt-5 rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] p-4">
               <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#33475b]">
-                <span>Total mensual base</span>
+                <span>Total del plan</span>
                 <span>
-                  {DINTERWEB_BASE_PACKAGE.credits + Math.max(0, safeParseNumber(dinterwebExtraCreditsDraft))} CR
+                  {Math.max(DINTERWEB_BASE_PACKAGE.credits, safeParseNumber(dinterwebPlanCreditsDraft))} CR
                 </span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-4 text-[15px] font-extrabold">
-                <span className="text-[#33475b]">Valor por periodo base</span>
+                <span className="text-[#33475b]">Valor por periodo</span>
                 <span className="text-[#ff7a59]">
                   {formatCurrency(
-                    DINTERWEB_BASE_PACKAGE.price + Math.max(0, safeParseNumber(dinterwebExtraPriceDraft)),
+                    Math.max(DINTERWEB_BASE_PACKAGE.price, safeParseNumber(dinterwebPlanPriceDraft)),
                     proposal.currency.toUpperCase(),
                   )}
                 </span>
