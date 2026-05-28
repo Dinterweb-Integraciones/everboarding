@@ -47,6 +47,7 @@ import {
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
+  suggestPlanPrice,
   type CatalogModalGroup,
   type CustomPlanBillingMode,
   type PlanPeriodMonths,
