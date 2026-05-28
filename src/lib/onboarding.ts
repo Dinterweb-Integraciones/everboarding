@@ -760,6 +760,16 @@ export function getMonthlyContractCredits(config: Pick<OnboardingConfig, "base_c
   return splitCreditsAcrossMonths(contractedCredits, config.custom_plan_period_months)[0] ?? 0;
 }
 
+export function getEffectivePlanPrice(
+  config: Pick<OnboardingConfig, "base_capacity" | "custom_plan_credits" | "custom_plan_price">,
+) {
+  const contractedCredits = config.custom_plan_credits ?? config.base_capacity;
+  const suggestedPrice = suggestPlanPrice(contractedCredits);
+  const configuredPrice = safeParseNumber(config.custom_plan_price);
+
+  return Math.max(configuredPrice, suggestedPrice);
+}
+
 export function calculateReductionPenalty(previousCredits: number, nextCredits: number) {
   if (nextCredits >= previousCredits) {
     return 0;

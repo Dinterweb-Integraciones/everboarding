@@ -16,9 +16,9 @@ import {
   calculateMetrics,
   formatDateRange,
   getEstimatedStatus,
+  getEffectivePlanPrice,
   getPlanCadenceLabel,
   resolveStageFromPublicAudience,
-  suggestPlanPrice,
   type CatalogModalGroup,
   type ClientBillingStatus,
   type InitiativeRecord,
@@ -351,9 +351,7 @@ export function PublicOnboardingPage({
   );
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
-  const paymentAmount = Number(
-    config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity),
-  );
+  const paymentAmount = getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =

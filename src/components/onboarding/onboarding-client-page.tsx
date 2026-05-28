@@ -42,11 +42,11 @@ import {
   formatDateRange,
   getExtraCapacityCredits,
   getEstimatedStatus,
+  getEffectivePlanPrice,
   getMonthlyContractCredits,
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
-  suggestPlanPrice,
   type CatalogModalGroup,
   type CustomPlanBillingMode,
   type PlanPeriodMonths,
@@ -437,7 +437,7 @@ export function OnboardingClientPage({
     validityDays: number;
   }>({
     credits: config.custom_plan_credits ?? config.base_capacity,
-    price: Number(config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity)),
+    price: getEffectivePlanPrice(config),
     billingMode: config.custom_plan_billing_mode ?? "subscription",
     periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
     validityDays: config.credit_validity_days,
@@ -491,7 +491,7 @@ export function OnboardingClientPage({
 
   const negotiatedPlanCredits = config.custom_plan_credits ?? config.base_capacity;
   const negotiatedPlanPeriodMonths = (config.custom_plan_period_months ?? 1) as PlanPeriodMonths;
-  const negotiatedPlanPrice = Number(config.custom_plan_price ?? suggestPlanPrice(negotiatedPlanCredits));
+  const negotiatedPlanPrice = getEffectivePlanPrice(config);
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
   const isRecurringPlan = negotiatedPlanBillingMode === "subscription";
   const negotiatedPlanCadence =
@@ -771,7 +771,7 @@ export function OnboardingClientPage({
   function openOfferModal() {
     setOfferDraft({
       credits: config.custom_plan_credits ?? config.base_capacity,
-      price: Number(config.custom_plan_price ?? suggestPlanPrice(config.custom_plan_credits ?? config.base_capacity)),
+      price: getEffectivePlanPrice(config),
       billingMode: config.custom_plan_billing_mode ?? (config.custom_plan_type === "proyecto" ? "one_time" : "subscription"),
       periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
       validityDays: config.credit_validity_days,
