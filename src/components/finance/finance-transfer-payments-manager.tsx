@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type { FinanceTransferPaymentItem } from "@/lib/finance-transfer-payments";
 import { formatCurrency, formatDate, formatUserError } from "@/lib/utils";
 
@@ -221,7 +222,7 @@ export function FinanceTransferPaymentsManager({
                           </td>
                           <td className="px-4 py-4">
                             <div className="min-w-[220px] space-y-2">
-                              <Input
+                              <Select
                                 value={draftBanks[item.id] ?? ""}
                                 onChange={(event) =>
                                   setDraftBanks((current) => ({
@@ -229,8 +230,14 @@ export function FinanceTransferPaymentsManager({
                                     [item.id]: event.target.value,
                                   }))
                                 }
-                                placeholder="Banco"
-                              />
+                              >
+                                <option value="" disabled hidden>
+                                  Elige el banco
+                                </option>
+                                <option value="BanColombia">BanColombia</option>
+                                <option value="BBVA">BBVA</option>
+                                <option value="BAC">BAC</option>
+                              </Select>
                               <Input
                                 value={draftReferences[item.id] ?? ""}
                                 onChange={(event) =>
