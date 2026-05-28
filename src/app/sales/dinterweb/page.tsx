@@ -2,6 +2,7 @@ import { DinterwebSellerDashboard } from "@/components/sales/dinterweb-seller-da
 import { requireUser } from "@/lib/auth";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import { canManagePlatformUsers } from "@/lib/platform-access";
+import { resolveLiveSalesProposalRecords } from "@/lib/sales-proposal-live-view";
 import { mapSalesProposalRow, type SalesProposalRecord } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/types/database";
@@ -31,11 +32,12 @@ export default async function DinterwebSalesIndexPage() {
   const proposals = ((data ?? []) as SalesProposalRow[])
     .map((row) => mapSalesProposalRow(row))
     .filter((proposal) => proposal.workspaceVariant === "dinterweb") as SalesProposalRecord[];
+  const liveProposals = await resolveLiveSalesProposalRecords(proposals);
 
   return (
     <DinterwebSellerDashboard
       sellerName={seller.name}
-      proposals={proposals}
+      proposals={liveProposals}
       isGlobalView={isGlobalView}
     />
   );

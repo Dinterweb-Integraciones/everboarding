@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
 import { canAccessAdminCatalogs } from "@/lib/platform-access";
-import { mapSalesProposalRow, normalizeSalesPaymentMethod } from "@/lib/sales-proposals";
-import { activatePaidSalesProposalAfterAssignment } from "@/lib/sales-proposals-server";
+import { getSalesProposalBySlug } from "@/lib/sales-proposal-access";
+import { normalizeSalesPaymentMethod } from "@/lib/sales-proposals";
+import { activatePaidSalesProposalAfterAssignment, saveSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 import type { Database } from "@/types/database";
@@ -27,9 +28,11 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
     }
 
     const body = (await request.json()) as {
+      sellerProfileId?: string | null;
       assignedCsmUserId?: string | null;
       paymentMethod?: string | null;
     };
+    const sellerProfileId = body.sellerProfileId?.trim() || null;
     const assignedCsmUserId = body.assignedCsmUserId?.trim() || null;
     const paymentMethod = normalizeSalesPaymentMethod(body.paymentMethod);
     const admin = createSupabaseAdminClient();
@@ -47,6 +50,12 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
 
     if (!currentProposal) {
       return NextResponse.json({ message: "No encontramos la venta seleccionada." }, { status: 404 });
+    }
+
+    const storedProposal = await getSalesProposalBySlug(currentProposal.slug);
+
+    if (!storedProposal) {
+      return NextResponse.json({ message: "No encontramos el plan completo de la venta seleccionada." }, { status: 404 });
     }
 
     const isTransferFlowRequest = paymentMethod === "bank_transfer";
@@ -79,61 +88,82 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
       );
     }
 
-    const currentSnapshot =
-      currentProposal.snapshot && typeof currentProposal.snapshot === "object"
-        ? (currentProposal.snapshot as Record<string, unknown>)
-        : {};
+    let resolvedSellerProfile:
+      | Pick<Database["public"]["Tables"]["profiles"]["Row"], "id" | "email" | "full_name" | "platform_role">
+      | null = null;
+
+    if (sellerProfileId) {
+      const { data: sellerProfileData, error: sellerProfileError } = await admin
+        .from("profiles")
+        .select("id, email, full_name, platform_role")
+        .eq("id", sellerProfileId)
+        .eq("is_platform_active", true)
+        .maybeSingle();
+      const sellerProfile = sellerProfileData as
+        | Pick<Database["public"]["Tables"]["profiles"]["Row"], "id" | "email" | "full_name" | "platform_role">
+        | null;
+
+      if (sellerProfileError) {
+        throw sellerProfileError;
+      }
+
+      if (!sellerProfile || (sellerProfile.platform_role !== "sales" && sellerProfile.platform_role !== "superadmin")) {
+        return NextResponse.json(
+          { message: "El vendedor seleccionado ya no esta disponible." },
+          { status: 400 },
+        );
+      }
+
+      resolvedSellerProfile = sellerProfile;
+    }
 
     const nextAssignedCsmUserId = shouldRouteToFinance ? null : assignedCsmUserId;
-    const nextStatus = shouldRouteToFinance ? "transfer_pending" : currentProposal.status;
+    const nextStatus = shouldRouteToFinance ? "transfer_pending" : storedProposal.proposal.status;
+    const nextSellerName = resolvedSellerProfile?.full_name?.trim() || "";
+    const nextSellerEmail = resolvedSellerProfile?.email.trim().toLowerCase() || "";
+    const nextSellerCompany = resolvedSellerProfile ? "Dinterweb" : "";
+    const nextWorkspaceVariant =
+      resolvedSellerProfile &&
+      (resolvedSellerProfile.platform_role === "sales" || resolvedSellerProfile.platform_role === "superadmin")
+        ? "dinterweb"
+        : storedProposal.proposal.workspaceVariant;
 
     const shouldActivateAfterAssignment =
       Boolean(nextAssignedCsmUserId) &&
       !currentProposal.activated_client_id &&
       currentProposal.status === "paid";
 
-    const { data: updatedData, error: updateError } = await admin
-      .from("sales_proposals")
-      .update(({
-        assigned_csm_user_id: nextAssignedCsmUserId,
-        payment_method: paymentMethod,
+    const updatedProposal = await saveSalesProposal(
+      {
+        ...storedProposal.proposal,
+        sellerName: nextSellerName,
+        sellerEmail: nextSellerEmail,
+        sellerCompany: nextSellerCompany,
+        assignedCsmUserId: nextAssignedCsmUserId || "",
+        paymentMethod,
         status: nextStatus,
-        snapshot: {
-          ...currentSnapshot,
-          assignedCsmUserId: nextAssignedCsmUserId ?? "",
-          paymentMethod,
-        },
-      }) as never)
-      .eq("id", proposalId)
-      .select("*")
-      .single();
-    const updatedProposal = updatedData as SalesProposalRow | null;
-
-    if (updateError || !updatedProposal) {
-      throw updateError ?? new Error("No pudimos actualizar la venta.");
-    }
+        workspaceVariant: nextWorkspaceVariant,
+      },
+      storedProposal.proposal.slug ?? currentProposal.slug,
+    );
 
     if (shouldActivateAfterAssignment) {
       await activatePaidSalesProposalAfterAssignment(proposalId);
 
-      const { data: activatedData, error: activatedError } = await admin
-        .from("sales_proposals")
-        .select("*")
-        .eq("id", proposalId)
-        .single();
-      const activatedProposal = activatedData as SalesProposalRow | null;
+      const activatedProposal = await getSalesProposalBySlug(currentProposal.slug);
 
-      if (activatedError || !activatedProposal) {
-        throw activatedError ?? new Error("No pudimos refrescar la venta activada.");
+      if (!activatedProposal) {
+        throw new Error("No pudimos refrescar la venta activada.");
       }
 
-      return NextResponse.json(mapSalesProposalRow(activatedProposal));
+      return NextResponse.json(activatedProposal.proposal);
     }
 
     if (currentProposal.activated_client_id && nextAssignedCsmUserId) {
       const { error: clientError } = await admin
         .from("clients")
         .update(({
+          seller_user_id: sellerProfileId,
           owner_user_id: nextAssignedCsmUserId,
           csm_user_id: nextAssignedCsmUserId,
         }) as never)
@@ -165,9 +195,20 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
       if (configError) {
         throw configError;
       }
+    } else if (currentProposal.activated_client_id) {
+      const { error: sellerClientError } = await admin
+        .from("clients")
+        .update(({
+          seller_user_id: sellerProfileId,
+        }) as never)
+        .eq("id", currentProposal.activated_client_id);
+
+      if (sellerClientError) {
+        throw sellerClientError;
+      }
     }
 
-    return NextResponse.json(mapSalesProposalRow(updatedProposal as SalesProposalRow));
+    return NextResponse.json(updatedProposal);
   } catch (caughtError) {
     return NextResponse.json(
       { message: formatUserError(caughtError, "No pudimos actualizar la asignacion de CS.") },

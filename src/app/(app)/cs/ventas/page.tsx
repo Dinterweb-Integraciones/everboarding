@@ -15,6 +15,7 @@ export default async function SalesAssignmentsPage() {
   const [
     { data: proposalRows, error: proposalsError },
     { data: assignableProfiles, error: profilesError },
+    { data: sellerProfiles, error: sellerProfilesError },
   ] = await Promise.all([
     admin
       .from("sales_proposals")
@@ -22,6 +23,13 @@ export default async function SalesAssignmentsPage() {
       .neq("status", "transfer_pending")
       .order("updated_at", { ascending: false }),
     supabase.rpc("list_assignable_profiles"),
+    admin
+      .from("profiles")
+      .select("id, email, full_name")
+      .in("platform_role", ["sales", "superadmin"])
+      .eq("is_platform_active", true)
+      .order("full_name")
+      .order("email"),
   ]);
 
   if (proposalsError) {
@@ -32,12 +40,17 @@ export default async function SalesAssignmentsPage() {
     console.error("cs_sales_assignable_profiles_load_failed", profilesError);
   }
 
+  if (sellerProfilesError) {
+    console.error("cs_sales_seller_profiles_load_failed", sellerProfilesError);
+  }
+
   return (
     <SalesProposalAssignmentsManager
       initialProposals={((proposalRows ?? []) as Database["public"]["Tables"]["sales_proposals"]["Row"][]).map(
         (proposal) => mapSalesProposalRow(proposal),
       ) as SalesProposalRecord[]}
       assignableUsers={(assignableProfiles ?? []) as AssignableUser[]}
+      sellerUsers={(sellerProfiles ?? []) as AssignableUser[]}
     />
   );
 }

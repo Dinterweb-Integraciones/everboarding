@@ -12,6 +12,7 @@ import type {
   CreditCatalogItem,
 } from "@/lib/onboarding";
 import { getSalesProposalBySlug } from "@/lib/sales-proposal-access";
+import { resolveLiveSalesProposalRecord } from "@/lib/sales-proposal-live-view";
 import type { SalesProposalRecord } from "@/lib/sales-proposals";
 import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -97,6 +98,7 @@ export default async function DinterwebSalesProposalPage({
       storedProposal.proposal.status === "checkout_pending"
         ? await syncSalesProposalCheckoutStatus(slug)
         : storedProposal.proposal;
+    initialProposal = await resolveLiveSalesProposalRecord(initialProposal);
     catalogRows = fetchedCatalog ?? [];
     groupRows = fetchedGroups ?? [];
     groupCategoryRows = fetchedGroupCategories ?? [];

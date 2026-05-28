@@ -9,6 +9,7 @@ import type {
   CreditCatalogItem,
 } from "@/lib/onboarding";
 import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
+import { resolveLiveSalesProposalRecord } from "@/lib/sales-proposal-live-view";
 import { createDuplicatedSalesProposalDraft, type SalesProposalDraft } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -101,7 +102,9 @@ export default async function NewDinterwebSalesProposalPage({
         throw new Error("Solo puedes duplicar propuestas de Dinterweb desde esta vista.");
       }
 
-      initialProposal = createDuplicatedSalesProposalDraft(proposalAccess.proposal);
+      initialProposal = createDuplicatedSalesProposalDraft(
+        await resolveLiveSalesProposalRecord(proposalAccess.proposal),
+      );
     } catch (error) {
       console.error("dinterweb_sales_duplicate_template_load_failed", {
         duplicateFromSlug,
