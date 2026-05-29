@@ -1,6 +1,8 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
+import { requireUser } from "@/lib/auth";
+import { canAccessAdminCatalogs, canAccessHubspotSales } from "@/lib/platform-access";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -25,6 +27,27 @@ export const revalidate = 0;
 
 export default async function SalesProposalPage({ params }: SalesProposalPageProps) {
   const { slug } = await params;
+  const { platformProfile } = await requireUser(`/sales/proposals/${slug}`);
+  const platformRole = platformProfile?.platform_role ?? null;
+
+  if (!canAccessHubspotSales(platformRole) && !canAccessAdminCatalogs(platformRole)) {
+    notFound();
+  }
+
+  const storedProposal = await getSalesProposalBySlug(slug);
+
+  if (!storedProposal) {
+    notFound();
+  }
+
+  if (storedProposal.proposal.workspaceVariant === "dinterweb") {
+    redirect(`/sales/dinterweb/proposals/${slug}`);
+  }
+
+  if (storedProposal.proposal.workspaceVariant !== "hubspot") {
+    notFound();
+  }
+
   let proposalRow: SalesProposalRow | null = null;
   let catalogRows: CreditCatalogItem[] = [];
   let groupRows: CreditCatalogGroup[] = [];
@@ -34,12 +57,6 @@ export default async function SalesProposalPage({ params }: SalesProposalPagePro
 
   try {
     const admin = createSupabaseAdminClient();
-    const storedProposal = await getSalesProposalBySlug(slug);
-
-    if (!storedProposal || storedProposal.proposal.workspaceVariant !== "hubspot") {
-      notFound();
-    }
-
     proposalRow = storedProposal.proposalRow;
     const [
       { data: fetchedCatalog, error: catalogError },
