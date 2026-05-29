@@ -11,6 +11,8 @@ import {
   type SalesProposalInitiativeDraft,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
+import { resolveLiveSalesProposalRecord } from "@/lib/sales-proposal-live-view";
+import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isMissingSupabaseTable } from "@/lib/utils";
 import { toIsoDate } from "@/lib/utils";
@@ -184,7 +186,7 @@ export async function getSalesProposalBySlug(slug: string) {
     throw snapshotError;
   }
 
-  return mapSalesProposalRow(
+  const mappedProposal = mapSalesProposalRow(
     snapshotRow?.snapshot
       ? ({
           ...proposalRow,
@@ -192,4 +194,11 @@ export async function getSalesProposalBySlug(slug: string) {
         } as SalesProposalRow)
       : proposalRow,
   );
+
+  const syncedProposal =
+    mappedProposal.status === "checkout_pending"
+      ? await syncSalesProposalCheckoutStatus(slug)
+      : mappedProposal;
+
+  return resolveLiveSalesProposalRecord(syncedProposal);
 }

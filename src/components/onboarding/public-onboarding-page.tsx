@@ -351,7 +351,10 @@ export function PublicOnboardingPage({
   );
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
-  const paymentAmount = getEffectivePlanPrice(config);
+  const paymentAmount =
+    audience === "prospect" && config.custom_plan_price !== null
+      ? Math.max(0, Number(config.custom_plan_price))
+      : getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =

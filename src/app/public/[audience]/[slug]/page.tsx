@@ -47,6 +47,9 @@ type PublicOnboardingRpcResponse = {
   payment_email: string | null;
 };
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function isPublicAudience(value: string): value is PublicOnboardingAudience {
   return value === "client" || value === "prospect";
 }
