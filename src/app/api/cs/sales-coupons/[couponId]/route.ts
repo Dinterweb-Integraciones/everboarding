@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
 import { normalizeCouponPercentageOff, normalizeSalesCouponType } from "@/lib/sales-proposals";
+import { normalizeSalesCouponSchedule } from "@/lib/sales-proposals-server";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type SalesCouponRouteProps = {
@@ -18,6 +19,8 @@ export async function PUT(request: Request, { params }: SalesCouponRouteProps) {
       grantedCredits?: number;
       discountedPrice?: number;
       percentageOff?: number | null;
+      startsAt?: string | null;
+      endsAt?: string | null;
       isActive?: boolean;
     };
 
@@ -29,6 +32,7 @@ export async function PUT(request: Request, { params }: SalesCouponRouteProps) {
       body.percentageOff === null || body.percentageOff === undefined
         ? null
         : normalizeCouponPercentageOff(body.percentageOff);
+    const { startsAt, endsAt } = normalizeSalesCouponSchedule(body);
     const isActive = body.isActive ?? true;
 
     if (!code) {
@@ -64,6 +68,8 @@ export async function PUT(request: Request, { params }: SalesCouponRouteProps) {
         granted_credits: couponType === "package_override" ? grantedCredits : 0,
         discounted_price: couponType === "package_override" ? discountedPrice : 0,
         percentage_off: couponType === "percentage" ? percentageOff : null,
+        starts_at: startsAt,
+        ends_at: endsAt,
         is_active: isActive,
       })
       .eq("id", couponId)

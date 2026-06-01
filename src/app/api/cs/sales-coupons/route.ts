@@ -15,6 +15,9 @@ export async function POST(request: Request) {
       grantedCredits?: number;
       discountedPrice?: number;
       percentageOff?: number | null;
+      startsAt?: string | null;
+      endsAt?: string | null;
+      isActive?: boolean;
     };
 
     const coupon = await createSalesCoupon({
@@ -26,6 +29,9 @@ export async function POST(request: Request) {
         body.percentageOff === null || body.percentageOff === undefined
           ? null
           : normalizeCouponPercentageOff(body.percentageOff),
+      startsAt: body.startsAt ?? null,
+      endsAt: body.endsAt ?? null,
+      isActive: body.isActive ?? true,
     });
 
     return NextResponse.json(coupon);

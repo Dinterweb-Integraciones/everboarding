@@ -4,7 +4,7 @@ import { BadgePercent, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { normalizeCouponPercentageOff, normalizeSalesCouponType, type SalesCouponType } from "@/lib/sales-proposals";
-import { formatCurrency, formatUserError, safeParseNumber } from "@/lib/utils";
+import { formatCurrency, formatDate, formatUserError, safeParseNumber } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
@@ -16,14 +16,29 @@ type SalesCouponsManagerProps = {
   initialCoupons: SalesCoupon[];
 };
 
-const emptyForm = {
-  code: "",
-  couponType: "package_override" as SalesCouponType,
-  grantedCredits: "60",
-  discountedPrice: "852",
-  percentageOff: "20",
-  isActive: true,
+type SalesCouponFormState = {
+  code: string;
+  couponType: SalesCouponType;
+  grantedCredits: string;
+  discountedPrice: string;
+  percentageOff: string;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
 };
+
+function createEmptyForm(): SalesCouponFormState {
+  return {
+    code: "",
+    couponType: "package_override",
+    grantedCredits: "60",
+    discountedPrice: "852",
+    percentageOff: "20",
+    startsAt: "",
+    endsAt: "",
+    isActive: true,
+  };
+}
 
 function getCouponTypeLabel(couponType: string | null | undefined) {
   return normalizeSalesCouponType(couponType) === "percentage" ? "Descuento %" : "Paquete";
@@ -39,10 +54,86 @@ function getCouponBenefitLabel(coupon: SalesCoupon) {
   return `${coupon.granted_credits} CR por ${formatCurrency(Number(coupon.discounted_price ?? 0))}`;
 }
 
+function getCouponValidityLabel(coupon: SalesCoupon) {
+  if (coupon.starts_at && coupon.ends_at) {
+    return `${formatDate(coupon.starts_at)} - ${formatDate(coupon.ends_at)}`;
+  }
+
+  if (coupon.starts_at) {
+    return `Desde ${formatDate(coupon.starts_at)}`;
+  }
+
+  if (coupon.ends_at) {
+    return `Hasta ${formatDate(coupon.ends_at)}`;
+  }
+
+  return "Sin vencimiento";
+}
+
+function getCouponStatus(coupon: SalesCoupon) {
+  if (!coupon.is_active) {
+    return {
+      label: "Inactivo",
+      className: "bg-slate-100 text-slate-500",
+    };
+  }
+
+  const now = new Date();
+  const startsAt = coupon.starts_at ? new Date(coupon.starts_at) : null;
+  const endsAt = coupon.ends_at ? new Date(coupon.ends_at) : null;
+
+  if (startsAt && startsAt > now) {
+    return {
+      label: "Programado",
+      className: "bg-amber-100 text-amber-700",
+    };
+  }
+
+  if (endsAt && endsAt < now) {
+    return {
+      label: "Vencido",
+      className: "bg-rose-100 text-rose-700",
+    };
+  }
+
+  return {
+    label: "Activo",
+    className: "bg-emerald-100 text-emerald-700",
+  };
+}
+
+function toDateInputValue(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Managua",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(parsedDate);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return "";
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
 export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps) {
   const [coupons, setCoupons] = useState(initialCoupons);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<SalesCouponFormState>(() => createEmptyForm());
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -61,7 +152,7 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
 
   function resetForm() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(createEmptyForm());
   }
 
   function startEdit(coupon: SalesCoupon) {
@@ -72,6 +163,8 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
       grantedCredits: String(coupon.granted_credits ?? 0),
       discountedPrice: String(coupon.discounted_price ?? 0),
       percentageOff: String(normalizeCouponPercentageOff(coupon.percentage_off)),
+      startsAt: toDateInputValue(coupon.starts_at),
+      endsAt: toDateInputValue(coupon.ends_at),
       isActive: coupon.is_active,
     });
   }
@@ -93,6 +186,8 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
             grantedCredits: Math.max(0, Math.round(safeParseNumber(form.grantedCredits))),
             discountedPrice: Math.max(0, safeParseNumber(form.discountedPrice)),
             percentageOff: Math.max(0, normalizeCouponPercentageOff(form.percentageOff)),
+            startsAt: form.startsAt || null,
+            endsAt: form.endsAt || null,
             isActive: form.isActive,
           }),
         },
@@ -260,6 +355,47 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                 : "Este cupon conserva el board y los creditos ya armados, y solo recalcula el precio con el porcentaje indicado."}
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Valido desde
+                </label>
+                <Input
+                  type="date"
+                  value={form.startsAt}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      startsAt: event.target.value,
+                      endsAt:
+                        current.endsAt && event.target.value && current.endsAt < event.target.value
+                          ? event.target.value
+                          : current.endsAt,
+                    }))
+                  }
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Valido hasta
+                </label>
+                <Input
+                  type="date"
+                  min={form.startsAt || undefined}
+                  value={form.endsAt}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, endsAt: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="rounded-[12px] border border-dashed border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-600">
+              Si dejas estas fechas vacias, el cupon queda sin limite de vigencia. Puedes usar solo
+              una fecha para programar inicio o vencimiento.
+            </div>
+
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3">
               <label className="flex items-center gap-3 text-sm text-slate-700">
                 <input
@@ -313,6 +449,9 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                     Beneficio
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Vigencia
+                  </th>
+                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Estado
                   </th>
                   <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
@@ -321,34 +460,37 @@ export function SalesCouponsManager({ initialCoupons }: SalesCouponsManagerProps
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {rows.map((coupon) => (
-                  <tr key={coupon.id}>
-                    <td className="px-4 py-3 font-semibold text-slate-800">{coupon.code}</td>
-                    <td className="px-4 py-3 text-slate-600">{getCouponTypeLabel(coupon.coupon_type)}</td>
-                    <td className="px-4 py-3 text-slate-600">{getCouponBenefitLabel(coupon)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                          coupon.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
-                        }`}
-                      >
-                        {coupon.is_active ? "Activo" : "Inactivo"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" variant="ghost" onClick={() => startEdit(coupon)}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Editar
-                        </Button>
-                        <Button type="button" variant="ghost" onClick={() => void handleDelete(coupon)}>
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Eliminar
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((coupon) => {
+                  const status = getCouponStatus(coupon);
+
+                  return (
+                    <tr key={coupon.id}>
+                      <td className="px-4 py-3 font-semibold text-slate-800">{coupon.code}</td>
+                      <td className="px-4 py-3 text-slate-600">{getCouponTypeLabel(coupon.coupon_type)}</td>
+                      <td className="px-4 py-3 text-slate-600">{getCouponBenefitLabel(coupon)}</td>
+                      <td className="px-4 py-3 text-slate-600">{getCouponValidityLabel(coupon)}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${status.className}`}
+                        >
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="ghost" onClick={() => startEdit(coupon)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Editar
+                          </Button>
+                          <Button type="button" variant="ghost" onClick={() => void handleDelete(coupon)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Eliminar
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

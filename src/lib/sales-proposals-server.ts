@@ -59,6 +59,7 @@ type SalesProposalPaymentContext = {
 
 const LEGACY_SALES_COUPON_GRANTED_CREDITS = 40;
 const LEGACY_SALES_COUPON_PRICE = 0;
+const MANAGUA_UTC_OFFSET = "-06:00";
 
 async function loadSalesProposalSnapshot(proposalId: string) {
   const admin = createSupabaseAdminClient();
@@ -135,6 +136,46 @@ function isSalesProposalSlugConflict(error: unknown) {
 
 function normalizeSalesCouponCode(value: string) {
   return value.trim().toUpperCase();
+}
+
+function normalizeSalesCouponBoundary(
+  value: string | null | undefined,
+  boundary: "start" | "end",
+) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return boundary === "start"
+      ? `${normalized}T00:00:00.000${MANAGUA_UTC_OFFSET}`
+      : `${normalized}T23:59:59.999${MANAGUA_UTC_OFFSET}`;
+  }
+
+  const parsedDate = new Date(normalized);
+  if (Number.isNaN(parsedDate.getTime())) {
+    throw new Error("Ingresa una fecha de vigencia valida.");
+  }
+
+  return parsedDate.toISOString();
+}
+
+export function normalizeSalesCouponSchedule(input: {
+  startsAt?: string | null;
+  endsAt?: string | null;
+}) {
+  const startsAt = normalizeSalesCouponBoundary(input.startsAt, "start");
+  const endsAt = normalizeSalesCouponBoundary(input.endsAt, "end");
+
+  if (startsAt && endsAt && new Date(startsAt) > new Date(endsAt)) {
+    throw new Error("La fecha final del cupon no puede ser anterior a la fecha inicial.");
+  }
+
+  return {
+    startsAt,
+    endsAt,
+  };
 }
 
 function getSalesCouponGrantedCredits(coupon: SalesCouponRow) {
@@ -253,6 +294,9 @@ export async function createSalesCoupon(input: {
   grantedCredits: number;
   discountedPrice: number;
   percentageOff: number | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isActive?: boolean;
 }) {
   const normalizedCode = normalizeSalesCouponCode(input.code);
   const couponType = normalizeSalesCouponType(input.couponType);
@@ -262,6 +306,8 @@ export async function createSalesCoupon(input: {
     input.percentageOff === null || input.percentageOff === undefined
       ? null
       : normalizeCouponPercentageOff(input.percentageOff);
+  const { startsAt, endsAt } = normalizeSalesCouponSchedule(input);
+  const isActive = input.isActive ?? true;
 
   if (!normalizedCode) {
     throw new Error("Ingresa un codigo de cupon.");
@@ -298,7 +344,9 @@ export async function createSalesCoupon(input: {
       granted_credits: couponType === "package_override" ? grantedCredits : 0,
       discounted_price: couponType === "package_override" ? discountedPrice : 0,
       percentage_off: couponType === "percentage" ? percentageOff : null,
-      is_active: true,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      is_active: isActive,
     }) as never)
     .select("*")
     .single();
