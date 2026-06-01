@@ -731,6 +731,7 @@ export function SalesProposalWorkspace({
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
   const pendingProposalSlugRef = useRef<string | null>(initialDraft.slug ?? null);
   const persistProposalRef = useRef<((draftOverride?: SalesProposalDraft, options?: { mergeWithCurrent?: boolean }) => Promise<SalesProposalDraft>) | null>(null);
+  const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   function applyDinterwebCommercialTerms(
     monthlyCredits: number,
@@ -809,6 +810,15 @@ export function SalesProposalWorkspace({
     );
   }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
 
+  useEffect(() => {
+    if (!isCatalogModalOpen) return;
+
+    const node = catalogContentRef.current;
+    if (!node) return;
+
+    node.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeCatalogTab, isCatalogModalOpen]);
+
   const wizardOptionLabels = useMemo(() => {
     return [...WIZARD_HUB_OPTIONS];
   }, []);
@@ -832,7 +842,7 @@ export function SalesProposalWorkspace({
   const timelineRows = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const windowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
 
     const datedRows = proposal.initiatives
       .map((initiative) => {
@@ -846,6 +856,16 @@ export function SalesProposalWorkspace({
         if (!right.start) return -1;
         return left.start.getTime() - right.start.getTime();
       });
+
+    const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
+      if (!row.end) return latest;
+      if (!latest || row.end > latest) return row.end;
+      return latest;
+    }, null);
+    const windowEnd =
+      latestScheduledEnd && latestScheduledEnd >= minimumWindowEnd
+        ? addCalendarDays(addRollingCalendarMonths(latestScheduledEnd, 1), 1)
+        : minimumWindowEnd;
 
     const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
     const monthSegments = buildRollingTimelineMonthSegments(windowStart, windowEnd);
@@ -3163,10 +3183,16 @@ function mergeRecommendedGroups(
               >
                 <div className="overflow-hidden border-r-0 bg-white" />
                 <div className="overflow-hidden border-b border-[#dfe3eb] bg-[#f5f8fa]">
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(3, minmax(0, 1fr))` }}>
+                  <div
+                    className="grid"
+                    style={{
+                      gridTemplateColumns: `repeat(${timelineRows.timelineDays}, ${timelineRows.dayWidth}px)`,
+                    }}
+                  >
                     {timelineRows.monthSegments.map((month) => (
                       <div
                         key={month.key}
+                        style={{ gridColumn: `span ${month.days} / span ${month.days}` }}
                         className="border-r border-[#dfe3eb] px-3 py-2 text-[11px] font-bold capitalize text-[#516f90] last:border-r-0"
                       >
                         {month.label}
@@ -3411,11 +3437,9 @@ function mergeRecommendedGroups(
                   </div>
                   <div className="divide-y divide-[#eef2f7]">
                     {items.map((initiative) => (
-                      <button
+                      <div
                         key={`summary-card-${initiative.id}`}
-                        type="button"
-                        onClick={() => openInitiativeEditor(initiative)}
-                        className="grid w-full gap-6 px-5 py-5 text-left transition hover:bg-[#fcfcfc] lg:grid-cols-[1.35fr_0.65fr]"
+                        className="grid w-full gap-6 px-5 py-5 text-left lg:grid-cols-[1.35fr_0.65fr]"
                       >
                         <div>
                           <div className="flex items-start justify-between gap-3">
@@ -3440,7 +3464,7 @@ function mergeRecommendedGroups(
                             </p>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -3555,7 +3579,7 @@ function mergeRecommendedGroups(
                 </div>
               </aside>
 
-              <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
+              <div ref={catalogContentRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
                 {activeCatalogTab === "wizard" ? (
                   <div className="relative mx-auto flex max-w-[770px] flex-col rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
                     <div className="text-center">

@@ -468,6 +468,7 @@ export function OnboardingClientPage({
     ((initiative: InitiativeRecord, startDate: string, endDate: string) => Promise<void>) | null
   >(null);
   const draftSubitemDateInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   const writable = canEdit(initialData.accessRole);
   const ownerCanShare = initialData.accessRole === "owner";
@@ -555,11 +556,20 @@ export function OnboardingClientPage({
     );
   }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
 
+  useEffect(() => {
+    if (!isCatalogModalOpen) return;
+
+    const node = catalogContentRef.current;
+    if (!node) return;
+
+    node.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeCatalogTab, isCatalogModalOpen]);
+
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const windowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
 
     const datedRows = initiatives
       .map((initiative) => {
@@ -603,6 +613,16 @@ export function OnboardingClientPage({
         if (!right.start) return -1;
         return left.start.getTime() - right.start.getTime();
       });
+
+    const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
+      if (!row.end) return latest;
+      if (!latest || row.end > latest) return row.end;
+      return latest;
+    }, null);
+    const windowEnd =
+      latestScheduledEnd && latestScheduledEnd >= minimumWindowEnd
+        ? addCalendarDays(addRollingCalendarMonths(latestScheduledEnd, 1), 1)
+        : minimumWindowEnd;
 
     const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
     const monthSegments = buildRollingTimelineMonthSegments(windowStart, windowEnd);
@@ -2955,10 +2975,14 @@ export function OnboardingClientPage({
               >
                 <div className="overflow-hidden border-r-0 bg-white" />
                 <div className="overflow-hidden border-b border-[#dfe3eb] bg-[#f5f8fa]">
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(3, minmax(0, 1fr))` }}>
+                  <div
+                    className="grid"
+                    style={{ gridTemplateColumns: `repeat(${ganttTimeline.timelineDays}, ${ganttTimeline.dayWidth}px)` }}
+                  >
                     {ganttTimeline.monthSegments.map((segment) => (
                       <div
                         key={segment.key}
+                        style={{ gridColumn: `span ${segment.days} / span ${segment.days}` }}
                         className="border-r border-[#dfe3eb] px-3 py-2 text-[11px] font-bold capitalize text-[#516f90] last:border-r-0"
                       >
                         {segment.label}
@@ -3197,11 +3221,9 @@ export function OnboardingClientPage({
 
                 <div className="divide-y divide-[#eaf0f6]">
                   {items.map((initiative) => (
-                    <button
+                    <div
                       key={initiative.id}
-                      type="button"
-                      onClick={() => openEditModal(initiative)}
-                      className="grid w-full gap-4 px-4 py-4 text-left transition hover:bg-[#fcfcfc] lg:grid-cols-[1.2fr_0.8fr]"
+                      className="grid w-full gap-4 px-4 py-4 text-left lg:grid-cols-[1.2fr_0.8fr]"
                     >
                       <div>
                         <div className="flex items-start justify-between gap-3">
@@ -3245,7 +3267,7 @@ export function OnboardingClientPage({
                           ))}
                         </div>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -3797,7 +3819,7 @@ export function OnboardingClientPage({
                 </div>
               </aside>
 
-              <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
+              <div ref={catalogContentRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f8fa] p-6">
                 {activeCatalogTab === "wizard" ? (
                   <div className="relative mx-auto max-w-[770px] rounded-[8px] border border-[#dfe3eb] bg-white p-8 shadow-sm">
                     <div className="text-center">

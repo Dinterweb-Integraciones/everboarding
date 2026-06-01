@@ -1,7 +1,7 @@
 "use client";
 
 import { CalendarDays, CreditCard, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { Badge } from "@/components/ui/badge";
@@ -250,6 +250,7 @@ export function PublicOnboardingPage({
   );
   const [isSavingProspectExtraPackages, setIsSavingProspectExtraPackages] = useState(false);
   const [activeInitiativePreview, setActiveInitiativePreview] = useState<InitiativeRecord | null>(null);
+  const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
@@ -338,6 +339,15 @@ export function PublicOnboardingPage({
         (!catalogTagFilter || group.tags.includes(catalogTagFilter)),
     );
   }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
+
+  useEffect(() => {
+    if (!isCatalogModalOpen) return;
+
+    const node = catalogContentRef.current;
+    if (!node) return;
+
+    node.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeCatalogTab, isCatalogModalOpen]);
   const selectedCatalogItems = useMemo(
     () =>
       requestDraft.selectedCatalogItemIds
@@ -455,7 +465,7 @@ export function PublicOnboardingPage({
   const timeline = useMemo(() => {
     const today = new Date();
     const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const windowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
 
     const datedRows = initiatives
       .map((initiative) => {
@@ -498,6 +508,16 @@ export function PublicOnboardingPage({
         if (!right.start) return -1;
         return left.start.getTime() - right.start.getTime();
       });
+
+    const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
+      if (!row.end) return latest;
+      if (!latest || row.end > latest) return row.end;
+      return latest;
+    }, null);
+    const windowEnd =
+      latestScheduledEnd && latestScheduledEnd >= minimumWindowEnd
+        ? addCalendarDays(addRollingCalendarMonths(latestScheduledEnd, 1), 1)
+        : minimumWindowEnd;
 
     const timelineDays = Math.max(diffCalendarDays(windowStart, windowEnd), 1);
     const monthSegments = buildRollingTimelineMonthSegments(windowStart, windowEnd);
@@ -1599,10 +1619,14 @@ export function PublicOnboardingPage({
                 >
                   <div className="overflow-hidden border-r-0 bg-white" />
                   <div className="overflow-hidden border-b border-[#dfe3eb] bg-[#f5f8fa]">
-                    <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+                    <div
+                      className="grid"
+                      style={{ gridTemplateColumns: `repeat(${timeline.timelineDays}, ${timeline.dayWidth}px)` }}
+                    >
                       {timeline.monthSegments.map((segment) => (
                         <div
                           key={segment.key}
+                          style={{ gridColumn: `span ${segment.days} / span ${segment.days}` }}
                           className="border-r border-[#dfe3eb] px-3 py-2 text-[11px] font-bold capitalize text-[#516f90] last:border-r-0"
                         >
                           {segment.label}
@@ -1743,12 +1767,10 @@ export function PublicOnboardingPage({
                       </span>
                     </div>
                     <div className="divide-y divide-[#eef2f7]">
-                      {items.map((initiative) => (
-                        <button
+                    {items.map((initiative) => (
+                        <div
                           key={`summary-card-${initiative.id}`}
-                          type="button"
-                          onClick={() => openInitiativePreview(initiative)}
-                          className="grid w-full gap-6 px-5 py-5 text-left transition hover:bg-[#fcfcfc] lg:grid-cols-[1.35fr_0.65fr]"
+                          className="grid w-full gap-6 px-5 py-5 text-left lg:grid-cols-[1.35fr_0.65fr]"
                         >
                           <div>
                             <div className="flex items-start justify-between gap-3">
@@ -1773,8 +1795,8 @@ export function PublicOnboardingPage({
                               </p>
                             </div>
                           </div>
-                        </button>
-                      ))}
+                        </div>
+                    ))}
                     </div>
                   </div>
                 );
@@ -1993,7 +2015,7 @@ export function PublicOnboardingPage({
                 </div>
               </aside>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div ref={catalogContentRef} className="min-h-0 flex-1 overflow-y-auto p-5">
                 <div className="space-y-5">
                   <div className="rounded-[8px] border border-[#dfe3eb] bg-white px-5 py-4 shadow-sm">
                     <div className="flex flex-wrap items-center gap-3">
