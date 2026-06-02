@@ -690,6 +690,9 @@ export type Database = {
           id: string;
           name: string;
           description: string | null;
+          preview: string | null;
+          completion_outcome: string | null;
+          success_milestone: string | null;
           modal_category: string | null;
           modal_category_id: string | null;
           credits: number;
@@ -705,6 +708,9 @@ export type Database = {
           id?: string;
           name: string;
           description?: string | null;
+          preview?: string | null;
+          completion_outcome?: string | null;
+          success_milestone?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
           credits?: number;
@@ -720,6 +726,9 @@ export type Database = {
           id?: string;
           name?: string;
           description?: string | null;
+          preview?: string | null;
+          completion_outcome?: string | null;
+          success_milestone?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
           credits?: number;

@@ -20,8 +20,8 @@ import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
+import { RichTextDisplay, RichTextTextarea } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -41,10 +41,27 @@ type CatalogGroupsManagerProps = {
 
 const AVAILABLE_TAGS = ["Inmobiliaria", "Salud", "Ecommerce"] as const;
 type AvailableTag = (typeof AVAILABLE_TAGS)[number];
+const FORM_STEPS = [
+  {
+    title: "Datos basicos",
+    description: "Define identidad, categorias, prioridad y filtros.",
+  },
+  {
+    title: "Contenido",
+    description: "Redacta el preview, descripcion y resultados esperados.",
+  },
+  {
+    title: "Composicion",
+    description: "Asocia tareas o confirma creditos manuales.",
+  },
+] as const;
 
 type CatalogGroupForm = {
   name: string;
   description: string;
+  preview: string;
+  completionOutcome: string;
+  successMilestone: string;
   modalCategoryIds: string[];
   priorityStatus: "normal" | "prioritario";
   credits: string;
@@ -56,6 +73,9 @@ type CatalogGroupForm = {
 const emptyForm: CatalogGroupForm = {
   name: "",
   description: "",
+  preview: "",
+  completionOutcome: "",
+  successMilestone: "",
   modalCategoryIds: [],
   priorityStatus: "normal",
   credits: "0",
@@ -114,6 +134,7 @@ export function CatalogGroupsManager({
   const [memberships, setMemberships] = useState(initialMemberships);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<CatalogGroupForm>(emptyForm);
+  const [activeFormStep, setActiveFormStep] = useState(0);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -344,6 +365,9 @@ export function CatalogGroupsManager({
       [
         group.name,
         group.description ?? "",
+        group.preview ?? "",
+        group.completion_outcome ?? "",
+        group.success_milestone ?? "",
         group.modalCategoryNames.join(" "),
         group.priorityStatus,
         group.priorityStatus === "prioritario" ? "prioritario" : "normal",
@@ -420,6 +444,7 @@ export function CatalogGroupsManager({
     setForm(emptyForm);
     setSelectedTaskIds([]);
     setTaskToAdd("");
+    setActiveFormStep(0);
     setIsCategoryMenuOpen(false);
   }
 
@@ -435,6 +460,9 @@ export function CatalogGroupsManager({
     setForm({
       name: group.name,
       description: group.description ?? "",
+      preview: group.preview ?? "",
+      completionOutcome: group.completion_outcome ?? "",
+      successMilestone: group.success_milestone ?? "",
       modalCategoryIds: selectedCategoryIds.length
         ? selectedCategoryIds
         : group.modal_category_id
@@ -455,7 +483,23 @@ export function CatalogGroupsManager({
         .map((membership) => membership.catalog_item_id),
     );
     setTaskToAdd("");
+    setActiveFormStep(0);
     setIsCategoryMenuOpen(false);
+  }
+
+  function goToNextFormStep() {
+    if (activeFormStep === 0 && !form.name.trim()) {
+      setFeedback({ tone: "error", message: "Escribe el titulo del caso de uso antes de continuar." });
+      return;
+    }
+
+    setFeedback(null);
+    setActiveFormStep((current) => Math.min(FORM_STEPS.length - 1, current + 1));
+  }
+
+  function goToPreviousFormStep() {
+    setFeedback(null);
+    setActiveFormStep((current) => Math.max(0, current - 1));
   }
 
   function attachTaskToDraft() {
@@ -594,8 +638,7 @@ export function CatalogGroupsManager({
     void persistCategoryOrdering(categoryId, nextOrderedGroupIds);
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function saveGroup() {
     setIsSaving(true);
     setFeedback(null);
 
@@ -619,6 +662,9 @@ export function CatalogGroupsManager({
           body: JSON.stringify({
             name: form.name,
             description: form.description,
+            preview: form.preview,
+            completionOutcome: form.completionOutcome,
+            successMilestone: form.successMilestone,
             modalCategoryIds: form.modalCategoryIds,
             priorityStatus: form.priorityStatus,
             credits: manualCredits,
@@ -730,7 +776,51 @@ export function CatalogGroupsManager({
             Administra grupos de tareas o casos de uso con creditos manuales.
           </p>
 
-          <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
+          <form className="mt-6 space-y-5" onSubmit={(event) => event.preventDefault()}>
+            <div className="grid gap-3 lg:grid-cols-3">
+              {FORM_STEPS.map((step, index) => {
+                const isActive = activeFormStep === index;
+                const isCompleted = activeFormStep > index;
+
+                return (
+                  <button
+                    key={step.title}
+                    type="button"
+                    onClick={() => {
+                      if (index <= activeFormStep || form.name.trim()) {
+                        setActiveFormStep(index);
+                      }
+                    }}
+                    className={`rounded-[14px] border px-4 py-3 text-left transition ${
+                      isActive
+                        ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_8%,white)] shadow-sm"
+                        : isCompleted
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${
+                          isActive
+                            ? "bg-[var(--accent)] text-white"
+                            : isCompleted
+                              ? "bg-emerald-500 text-white"
+                              : "bg-white text-slate-500"
+                        }`}
+                      >
+                        {index + 1}
+                      </span>
+                      <span className="font-bold text-slate-900">{step.title}</span>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">{step.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeFormStep === 0 ? (
+              <>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_220px]">
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -776,7 +866,6 @@ export function CatalogGroupsManager({
                 </label>
               </div>
             </div>
-
             <div className="grid gap-4 lg:grid-cols-2">
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -877,20 +966,66 @@ export function CatalogGroupsManager({
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                Descripcion
-              </label>
-              <Textarea
-                rows={3}
-                value={form.description ?? ""}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, description: event.target.value }))
-                }
-                placeholder="Describe para que sirve este caso de uso o conglomerado de tareas."
-              />
-            </div>
+              </>
+            ) : null}
 
+            {activeFormStep === 1 ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Preview
+                </label>
+                <RichTextTextarea
+                  rows={3}
+                  value={form.preview}
+                  onChange={(value) => setForm((current) => ({ ...current, preview: value }))}
+                  placeholder="Resumen corto para mostrar en tarjetas del catalogo."
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Descripcion
+                </label>
+                <RichTextTextarea
+                  rows={3}
+                  value={form.description}
+                  onChange={(value) => setForm((current) => ({ ...current, description: value }))}
+                  placeholder="Describe para que sirve este caso de uso o conglomerado de tareas."
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Al terminar el caso de uso
+                </label>
+                <RichTextTextarea
+                  rows={3}
+                  value={form.completionOutcome}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, completionOutcome: value }))
+                  }
+                  placeholder="Describe que deberia quedar implementado al finalizar."
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Hito de exito
+                </label>
+                <RichTextTextarea
+                  rows={3}
+                  value={form.successMilestone}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, successMilestone: value }))
+                  }
+                  placeholder="Define el indicador o resultado que confirma el exito."
+                />
+              </div>
+            </div>
+            ) : null}
+
+            {activeFormStep === 0 ? (
             <div>
               <label className="mb-3 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                 Etiquetas de industria
@@ -927,7 +1062,9 @@ export function CatalogGroupsManager({
               </div>
               <p className="mt-2 text-xs text-slate-400">Opcional. Permite filtrar grupos por industria.</p>
             </div>
+            ) : null}
 
+            {activeFormStep === 2 ? (
             <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-4">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-dashed border-slate-200 bg-white px-4 py-3">
                 <div>
@@ -1028,12 +1165,25 @@ export function CatalogGroupsManager({
                 </table>
               </div>
             </div>
+            ) : null}
 
             <div className="flex flex-wrap gap-3">
-              <Button type="submit" disabled={isSaving}>
-                <Plus className="mr-2 h-4 w-4" />
-                {isSaving ? "Guardando..." : editingId ? "Actualizar grupo" : "Crear grupo"}
-              </Button>
+              {activeFormStep > 0 ? (
+                <Button type="button" variant="secondary" onClick={goToPreviousFormStep} disabled={isSaving}>
+                  Anterior
+                </Button>
+              ) : null}
+              {activeFormStep < FORM_STEPS.length - 1 ? (
+                <Button type="button" onClick={goToNextFormStep} disabled={isSaving}>
+                  Siguiente
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              ) : (
+                <Button type="button" onClick={() => void saveGroup()} disabled={isSaving}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {isSaving ? "Guardando..." : editingId ? "Actualizar caso" : "Guardar caso"}
+                </Button>
+              )}
               <Button type="button" variant="secondary" onClick={resetForm} disabled={isSaving}>
                 Limpiar
               </Button>
@@ -1179,9 +1329,11 @@ export function CatalogGroupsManager({
                                     </span>
                                   ) : null}
                                 </div>
-                                <p className="mt-1 text-sm text-slate-600">
-                                  {group.description || "Sin descripcion"}
-                                </p>
+                                <RichTextDisplay
+                                  value={group.preview || group.description}
+                                  fallback="Sin preview"
+                                  className="mt-1 text-sm text-slate-600"
+                                />
                               </div>
 
                               <div className="flex shrink-0 flex-col gap-2">
@@ -1377,11 +1529,43 @@ export function CatalogGroupsManager({
                                 <div className="grid gap-4 lg:grid-cols-3">
                                   <div className="lg:col-span-1">
                                     <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                      Descripcion del grupo
+                                      Preview
                                     </p>
-                                    <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">
-                                      {group.description || "Sin descripcion"}
-                                    </p>
+                                    <RichTextDisplay
+                                      value={group.preview}
+                                      fallback="Sin preview"
+                                      className="mt-2"
+                                    />
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Descripcion
+                                      </p>
+                                      <RichTextDisplay
+                                        value={group.description}
+                                        fallback="Sin descripcion"
+                                        className="mt-2"
+                                      />
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Al terminar el caso de uso
+                                      </p>
+                                      <RichTextDisplay
+                                        value={group.completion_outcome}
+                                        fallback="Sin resultado definido"
+                                        className="mt-2"
+                                      />
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Hito de exito
+                                      </p>
+                                      <RichTextDisplay
+                                        value={group.success_milestone}
+                                        fallback="Sin hito definido"
+                                        className="mt-2"
+                                      />
+                                    </div>
                                     <div className="mt-4">
                                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                                         Estado de prioridad

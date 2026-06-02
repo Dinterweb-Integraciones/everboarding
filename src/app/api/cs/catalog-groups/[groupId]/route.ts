@@ -14,6 +14,9 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
+      preview?: string | null;
+      completionOutcome?: string | null;
+      successMilestone?: string | null;
       modalCategoryIds?: string[] | null;
       modalCategoryId?: string | null;
       modalCategory?: string | null;
@@ -27,6 +30,9 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     const name = body.name?.trim();
     const description = body.description?.trim() || null;
+    const preview = body.preview?.trim() || null;
+    const completionOutcome = body.completionOutcome?.trim() || null;
+    const successMilestone = body.successMilestone?.trim() || null;
     const requestedModalCategoryIds = Array.isArray(body.modalCategoryIds)
       ? [...new Set(body.modalCategoryIds.map((categoryId) => categoryId.trim()).filter(Boolean))]
       : [];
@@ -108,6 +114,9 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .update({
         name,
         description,
+        preview,
+        completion_outcome: completionOutcome,
+        success_milestone: successMilestone,
         modal_category: primaryCategory?.name ?? null,
         modal_category_id: primaryCategory?.id ?? null,
         credits,

@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
+import { RichTextDisplay } from "@/components/ui/rich-text";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   SALES_PROPOSAL_BASE_CREDITS,
@@ -68,7 +69,10 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
 
   const searchableText = [
     group.name,
+    group.preview,
     group.description,
+    group.completionOutcome,
+    group.successMilestone,
     group.modalCategory,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
@@ -3841,7 +3845,7 @@ function mergeRecommendedGroups(
                                 overflow: "hidden",
                               }}
                             >
-                              {group.description || "Grupo sugerido desde el catalogo para incluirlo dentro de la propuesta comercial."}
+                              {group.preview || group.description || "Grupo sugerido desde el catalogo para incluirlo dentro de la propuesta comercial."}
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
@@ -3928,16 +3932,60 @@ function mergeRecommendedGroups(
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+              {catalogPreviewGroup.preview ? (
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Preview
+                  </p>
+                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                    <RichTextDisplay
+                      value={catalogPreviewGroup.preview}
+                      className="text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </div>
+                </section>
+              ) : null}
+
               <section>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
                   Alcance y descripcion detallada
                 </p>
                 <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                  <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#33475b]">
-                    {catalogPreviewGroup.description || "Este grupo no tiene descripcion detallada todavia."}
-                  </p>
+                  <RichTextDisplay
+                    value={catalogPreviewGroup.description}
+                    fallback="Este grupo no tiene descripcion detallada todavia."
+                    className="text-[13px] leading-relaxed text-[#33475b]"
+                  />
                 </div>
               </section>
+
+              {catalogPreviewGroup.completionOutcome ? (
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Al terminar el caso de uso
+                  </p>
+                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                    <RichTextDisplay
+                      value={catalogPreviewGroup.completionOutcome}
+                      className="text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {catalogPreviewGroup.successMilestone ? (
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Hito de exito
+                  </p>
+                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                    <RichTextDisplay
+                      value={catalogPreviewGroup.successMilestone}
+                      className="text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </div>
+                </section>
+              ) : null}
 
               <section className="rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">

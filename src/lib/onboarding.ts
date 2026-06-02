@@ -110,6 +110,9 @@ export type CatalogModalGroup = {
   id: string;
   name: string;
   description: string;
+  preview: string;
+  completionOutcome: string;
+  successMilestone: string;
   modalCategoryId: string | null;
   modalCategory: string;
   modalCategoryIds: string[];
@@ -398,6 +401,9 @@ export function buildCatalogModalGroups({
         id: group.id,
         name: group.name,
         description: group.description?.trim() || "",
+        preview: group.preview?.trim() || "",
+        completionOutcome: group.completion_outcome?.trim() || "",
+        successMilestone: group.success_milestone?.trim() || "",
         modalCategoryId: resolvedCategoryId,
         modalCategory: resolvedCategoryName,
         modalCategoryIds: categoryIds,
