@@ -229,6 +229,7 @@ export function PublicOnboardingPage({
   const [isGroupBuilderOpen, setIsGroupBuilderOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [isExtraCreditsModalOpen, setIsExtraCreditsModalOpen] = useState(false);
+  const [prospectExtraPackageDraftQuantity, setProspectExtraPackageDraftQuantity] = useState(0);
   const [activeCatalogTab, setActiveCatalogTab] = useState("");
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [catalogTagFilter, setCatalogTagFilter] = useState<string | null>(null);
@@ -390,6 +391,19 @@ export function PublicOnboardingPage({
         ? applyPercentageDiscount(prospectBaseQuotedPrice + prospectExtraPriceAdded, prospectPercentageOff)
         : paymentAmount + prospectExtraPriceAdded
       : paymentAmount;
+  const prospectExtraPackageDraftCredits =
+    prospectExtraPackageDraftQuantity * PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+  const prospectExtraPackageDraftPrice =
+    prospectExtraPackageDraftQuantity * PUBLIC_EXTRA_CREDIT_PACKAGE.price;
+  const prospectExtraPackageDraftTotalCredits =
+    contractedPlanCredits + prospectExtraPackageDraftCredits;
+  const prospectExtraPackageDraftTotalPrice =
+    prospectPercentageOff > 0
+      ? applyPercentageDiscount(
+          prospectBaseQuotedPrice + prospectExtraPackageDraftPrice,
+          prospectPercentageOff,
+        )
+      : paymentAmount + prospectExtraPackageDraftPrice;
   const extraPackageResultingCredits = metrics.total + PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
   const isRecurringPlan = config.custom_plan_billing_mode !== "one_time";
   const paymentAmountLabel = isRecurringPlan
@@ -790,9 +804,38 @@ export function PublicOnboardingPage({
     await createPublicRequest(requestDraft);
   }
 
+  function openProspectExtraCreditsModal() {
+    setProspectExtraPackageDraftQuantity(0);
+    setIsExtraCreditsModalOpen(true);
+  }
+
+  function closeExtraCreditsModal() {
+    if (isSavingProspectExtraPackages) {
+      return;
+    }
+
+    setIsExtraCreditsModalOpen(false);
+    setProspectExtraPackageDraftQuantity(0);
+  }
+
+  async function confirmProspectExtraPackages() {
+    if (prospectExtraPackageDraftQuantity <= 0) {
+      closeExtraCreditsModal();
+      return;
+    }
+
+    const wasUpdated = await updateProspectExtraPackages(
+      persistedProspectExtraPackageQuantity + prospectExtraPackageDraftQuantity,
+    );
+    if (wasUpdated) {
+      setIsExtraCreditsModalOpen(false);
+      setProspectExtraPackageDraftQuantity(0);
+    }
+  }
+
   async function updateProspectExtraPackages(nextQuantity: number) {
     if (audience !== "prospect" || isSavingProspectExtraPackages) {
-      return;
+      return false;
     }
 
     const normalizedQuantity = Math.max(0, nextQuantity);
@@ -830,12 +873,14 @@ export function PublicOnboardingPage({
         tone: "success",
         message: payload.message || "La propuesta quedo actualizada con los paquetes extra.",
       });
+      return true;
     } catch (caughtError) {
       setProspectExtraPackageQuantity(previousQuantity);
       setFeedback({
         tone: "error",
         message: formatUserError(caughtError, "No pudimos guardar los paquetes extra del prospecto."),
       });
+      return false;
     } finally {
       setIsSavingProspectExtraPackages(false);
     }
@@ -1226,9 +1271,7 @@ export function PublicOnboardingPage({
                       <div className="flex shrink-0 items-center px-1.5 py-2">
                         <button
                           type="button"
-                          onClick={() =>
-                            void updateProspectExtraPackages(prospectExtraPackageQuantity + 1)
-                          }
+                          onClick={openProspectExtraCreditsModal}
                           disabled={
                             isStartingPayment ||
                             isSyncingPayment ||
@@ -2441,6 +2484,122 @@ export function PublicOnboardingPage({
               </Button>
             </div>
           </aside>
+        </div>
+      ) : null}
+
+      {isExtraCreditsModalOpen && audience === "prospect" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#33475b]/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[640px] rounded-[6px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
+            <div className="text-center">
+              <h3 className="text-[18px] font-bold text-[#33475b]">Incremento de Capacidad</h3>
+              <p className="mt-2 text-[13px] text-[#516f90]">
+                Añade paquetes adicionales de créditos a tu plan actual.
+              </p>
+            </div>
+
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <div className="flex w-full max-w-[340px] items-center gap-3">
+                <select
+                  value={PUBLIC_EXTRA_CREDIT_PACKAGE.credits}
+                  onChange={() => undefined}
+                  className="h-9 flex-1 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                >
+                  <option value={PUBLIC_EXTRA_CREDIT_PACKAGE.credits}>
+                    {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setProspectExtraPackageDraftQuantity((current) => current + 1)}
+                  disabled={isSavingProspectExtraPackages}
+                  className="inline-flex h-9 items-center justify-center rounded-[4px] bg-[#14b8a6] px-5 text-[13px] font-bold text-white transition hover:bg-[#0ea899] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  + Añadir
+                </button>
+              </div>
+              <p className="text-[12px] text-[#516f90]">
+                Valor por paquete: {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}
+              </p>
+            </div>
+
+            <div className="mt-5 rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00bda5]">
+                Resumen de inversión {isRecurringPlan ? getPlanCadenceLabel(config.custom_plan_period_months) : "total"}
+              </p>
+
+              <div className="mt-4 space-y-3 text-[13px] text-[#33475b]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="font-bold">Plan actual {contractedPlanCredits} CR:</span>
+                  <span className="font-bold">{formatCurrency(paymentAmount)}</span>
+                </div>
+
+                {prospectExtraPackageDraftQuantity > 0 ? (
+                  <div className="flex items-center justify-between gap-4">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProspectExtraPackageDraftQuantity((current) => Math.max(0, current - 1))
+                      }
+                      disabled={isSavingProspectExtraPackages}
+                      className="mr-1 text-[16px] font-bold text-[#9cb1c6] transition hover:text-[#ef4444] disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label="Quitar paquete del incremento"
+                    >
+                      ×
+                    </button>
+                    <span className="flex-1">
+                      {prospectExtraPackageDraftQuantity}x Paquete {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR{" "}
+                      <span className="text-[11px] text-[#516f90]">
+                        ({formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)} c/u)
+                      </span>
+                      :
+                    </span>
+                    <span className="font-bold">
+                      {formatCurrency(prospectExtraPackageDraftPrice)}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-[#516f90]">
+                    Aún no has agregado paquetes a este incremento.
+                  </p>
+                )}
+
+                <div className="border-t border-[#99f6e4] pt-3">
+                  <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">
+                    <span>Créditos totales:</span>
+                    <span>{prospectExtraPackageDraftTotalCredits} CR</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-[#99f6e4] pt-3">
+                  <div className="flex items-center justify-between gap-4 text-[15px] font-extrabold">
+                    <span className="text-[#33475b]">Total a pagar:</span>
+                    <span className="text-[#ff7a59]">
+                      {formatCurrency(prospectExtraPackageDraftTotalPrice)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={closeExtraCreditsModal}
+                disabled={isSavingProspectExtraPackages}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white px-4 text-[13px] font-bold text-[#33475b] transition hover:bg-[#f5f8fa] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmProspectExtraPackages()}
+                disabled={isSavingProspectExtraPackages}
+                className="inline-flex h-10 flex-1 items-center justify-center rounded-[4px] bg-[#ff7a59] px-4 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingProspectExtraPackages ? "Guardando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
