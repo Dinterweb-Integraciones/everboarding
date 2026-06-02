@@ -14,7 +14,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -40,6 +48,7 @@ import {
   calculateReductionPenalty,
   canEdit,
   createEmptyDraft,
+  getEvaluationValidationLabel,
   formatDateRange,
   getExtraCapacityCredits,
   getEstimatedStatus,
@@ -48,9 +57,11 @@ import {
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
+  setEvaluationValidationLabel,
   suggestPlanPrice,
   type CatalogModalGroup,
   type CustomPlanBillingMode,
+  type EvaluationValidationLabel,
   type PlanPeriodMonths,
   type InitiativeEditorDraft,
   type InitiativeRecord,
@@ -118,6 +129,14 @@ const WIZARD_LOADING_MESSAGES = [
   "Organizando Plan de Trabajo...",
   "Afinando ultimos detalles...",
 ];
+const EVALUATION_VALIDATION_META = {
+  "En revisión": {
+    className: "border-[#facc15] bg-[#fef9c3] text-[#854d0e]",
+  },
+  Validado: {
+    className: "border-[#99f6e4] bg-[#ecfffb] text-[#008f7f]",
+  },
+} satisfies Record<EvaluationValidationLabel, { className: string }>;
 
 async function parseJsonResponse<T>(response: Response) {
   const rawText = await response.text();
@@ -1767,6 +1786,57 @@ export function OnboardingClientPage({
     }
   }
 
+  async function updateInitiativeValidationLabel(
+    initiative: InitiativeRecord,
+    label: EvaluationValidationLabel,
+    event: KeyboardEvent | MouseEvent,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!writable || initiative.status !== "backlog" || isSavingInitiative) return;
+
+    const currentLabel = getEvaluationValidationLabel(initiative.labels);
+    const nextLabel = currentLabel === label ? null : label;
+    const nextLabels = setEvaluationValidationLabel(initiative.labels, nextLabel);
+
+    setFeedback(null);
+    setIsSavingInitiative(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("onboarding_initiatives")
+        .update({
+          labels: nextLabels,
+          updated_by_user_id: userId,
+        })
+        .eq("id", initiative.id)
+        .select("*")
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      setInitiatives((current) =>
+        current.map((item) =>
+          item.id === initiative.id
+            ? {
+                ...item,
+                ...data,
+                labels: data.labels ?? [],
+              }
+            : item,
+        ),
+      );
+      showSuccess(nextLabel ? `Caso marcado como ${nextLabel}.` : "Marca de validacion removida.");
+    } catch (caughtError) {
+      showError(formatUserError(caughtError, "No pudimos actualizar la validacion del caso."));
+    } finally {
+      setIsSavingInitiative(false);
+    }
+  }
+
   async function saveInitiative() {
     if (!draft) return;
 
@@ -2663,6 +2733,7 @@ export function OnboardingClientPage({
                           0,
                           Math.min(100, initiative.progressPercent ?? 0),
                         );
+                        const validationLabel = getEvaluationValidationLabel(initiative.labels);
 
                         return (
                           <button
@@ -2771,6 +2842,46 @@ export function OnboardingClientPage({
                                   <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
                                     {initiative.description || "Sin descripcion ejecutiva."}
                                   </p>
+                                  {status === "backlog" ? (
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      {!writable && validationLabel ? (
+                                        <span
+                                          className={`rounded-[3px] border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${EVALUATION_VALIDATION_META[validationLabel].className}`}
+                                        >
+                                          {validationLabel}
+                                        </span>
+                                      ) : null}
+                                      {writable ? (
+                                        <>
+                                          {(["En revisión", "Validado"] as const).map((label) => {
+                                            const isSelected = validationLabel === label;
+
+                                            return (
+                                              <span
+                                                key={label}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={(event) =>
+                                                  void updateInitiativeValidationLabel(initiative, label, event)
+                                                }
+                                                onKeyDown={(event) => {
+                                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                                  void updateInitiativeValidationLabel(initiative, label, event);
+                                                }}
+                                                className={`rounded-[3px] border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] transition ${
+                                                  isSelected
+                                                    ? EVALUATION_VALIDATION_META[label].className
+                                                    : "border-[#dfe3eb] bg-white text-[#516f90] hover:border-[#8fb3d9] hover:bg-[#f8fbff]"
+                                                }`}
+                                              >
+                                                {label}
+                                              </span>
+                                            );
+                                          })}
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
 

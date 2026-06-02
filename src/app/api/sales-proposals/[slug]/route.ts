@@ -42,24 +42,16 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
       }
 
       const seller = getDinterwebSellerIdentity(user);
-
-      if (
-        existingProposal &&
-        existingProposal.sellerEmail.trim().toLowerCase() &&
-        existingProposal.sellerEmail.trim().toLowerCase() !== seller.email
-      ) {
-        return NextResponse.json(
-          { message: "Esta propuesta pertenece a otro vendedor de Dinterweb." },
-          { status: 403 },
-        );
-      }
+      const existingSellerEmail = existingProposal.sellerEmail.trim().toLowerCase();
+      const shouldPreserveExistingSeller =
+        Boolean(existingSellerEmail) && existingSellerEmail !== seller.email;
 
       body = {
         ...body,
         workspaceVariant: "dinterweb",
-        sellerName: seller.name,
-        sellerEmail: seller.email,
-        sellerCompany: seller.company,
+        sellerName: shouldPreserveExistingSeller ? existingProposal.sellerName : seller.name,
+        sellerEmail: shouldPreserveExistingSeller ? existingProposal.sellerEmail : seller.email,
+        sellerCompany: shouldPreserveExistingSeller ? existingProposal.sellerCompany : seller.company,
       };
     }
 

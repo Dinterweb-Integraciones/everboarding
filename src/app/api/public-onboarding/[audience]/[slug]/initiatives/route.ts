@@ -253,6 +253,7 @@ export async function POST(request: Request, context: RouteContext) {
         title: input.title.trim(),
         type: input.type,
         status: "backlog" as const,
+        validationStatus: null,
         description: input.description || "",
         estStartDate: "",
         estEndDate: "",

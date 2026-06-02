@@ -110,6 +110,16 @@ const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,
 } as const;
+const EVALUATION_VALIDATION_META = {
+  reviewing: {
+    label: "En revisión",
+    className: "border-[#facc15] bg-[#fef9c3] text-[#854d0e]",
+  },
+  validated: {
+    label: "Validado",
+    className: "border-[#99f6e4] bg-[#ecfffb] text-[#008f7f]",
+  },
+} as const;
 const WIZARD_HUB_OPTIONS = ["Sales", "Marketing", "Service", "Content"] as const;
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
@@ -1126,6 +1136,23 @@ export function SalesProposalWorkspace({
     setDraggedInitiativeId(null);
     setDropTargetStatus(null);
     setDropIndicator(null);
+  }
+
+  function updateEvaluationValidationStatus(
+    initiativeId: string,
+    status: SalesProposalInitiativeDraft["validationStatus"],
+  ) {
+    setProposal((current) => ({
+      ...current,
+      initiatives: current.initiatives.map((initiative) =>
+        initiative.id === initiativeId
+          ? {
+              ...initiative,
+              validationStatus: initiative.validationStatus === status ? null : status,
+            }
+          : initiative,
+      ),
+    }));
   }
 
   function saveInitiativeDraft() {
@@ -2942,6 +2969,46 @@ function mergeRecommendedGroups(
                                           <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
                                             {initiative.description || "Sin descripcion ejecutiva."}
                                           </p>
+                                          {initiative.status === "backlog" ? (
+                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                              {(["reviewing", "validated"] as const).map((validationStatus) => {
+                                                const isSelected = initiative.validationStatus === validationStatus;
+                                                const meta = EVALUATION_VALIDATION_META[validationStatus];
+
+                                                return (
+                                                  <span
+                                                    key={validationStatus}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={(event) => {
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      updateEvaluationValidationStatus(
+                                                        initiative.id,
+                                                        validationStatus,
+                                                      );
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                      if (event.key !== "Enter" && event.key !== " ") return;
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      updateEvaluationValidationStatus(
+                                                        initiative.id,
+                                                        validationStatus,
+                                                      );
+                                                    }}
+                                                    className={`rounded-[3px] border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] transition ${
+                                                      isSelected
+                                                        ? meta.className
+                                                        : "border-[#dfe3eb] bg-white text-[#516f90] hover:border-[#8fb3d9] hover:bg-[#f8fbff]"
+                                                    }`}
+                                                  >
+                                                    {meta.label}
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                          ) : null}
                                           <div className="mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 text-[9px] font-bold leading-none text-[#33475b]">
                                             {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                                           </div>
@@ -3125,6 +3192,46 @@ function mergeRecommendedGroups(
                                 <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
                                   {initiative.description || "Sin descripción ejecutiva."}
                                 </p>
+                                {initiative.status === "backlog" ? (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {(["reviewing", "validated"] as const).map((validationStatus) => {
+                                      const isSelected = initiative.validationStatus === validationStatus;
+                                      const meta = EVALUATION_VALIDATION_META[validationStatus];
+
+                                      return (
+                                        <span
+                                          key={validationStatus}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            updateEvaluationValidationStatus(
+                                              initiative.id,
+                                              validationStatus,
+                                            );
+                                          }}
+                                          onKeyDown={(event) => {
+                                            if (event.key !== "Enter" && event.key !== " ") return;
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            updateEvaluationValidationStatus(
+                                              initiative.id,
+                                              validationStatus,
+                                            );
+                                          }}
+                                          className={`rounded-[3px] border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] transition ${
+                                            isSelected
+                                              ? meta.className
+                                              : "border-[#dfe3eb] bg-white text-[#516f90] hover:border-[#8fb3d9] hover:bg-[#f8fbff]"
+                                          }`}
+                                        >
+                                          {meta.label}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
                                 <div className="mt-2.5 flex min-h-[18px] w-full items-center rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 text-[9px] font-bold leading-none text-[#33475b]">
                                   {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}
                                 </div>

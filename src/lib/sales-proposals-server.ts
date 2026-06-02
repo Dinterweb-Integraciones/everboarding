@@ -1009,6 +1009,13 @@ async function activateSalesProposalWithPaymentContext(
           est_start_date: initiative.estStartDate || null,
           est_end_date: initiative.estEndDate || null,
           date_planned: proposal.startDate || null,
+          labels: [
+            initiative.validationStatus === "validated"
+              ? "Validado"
+              : initiative.validationStatus === "reviewing"
+                ? "En revisión"
+                : null,
+          ].filter(Boolean),
           last_activity: toIsoDate(),
           is_blocked: initiative.isBlocked,
           sort_order: initiative.sortOrder ?? initiativeIndex,

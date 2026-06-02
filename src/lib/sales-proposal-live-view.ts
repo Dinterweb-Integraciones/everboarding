@@ -24,6 +24,14 @@ function buildUpdatedAt(proposal: SalesProposalRecord, timestamps: Array<string 
     );
 }
 
+function getSalesValidationStatusFromLabels(
+  labels: string[] | null | undefined,
+): SalesProposalRecord["initiatives"][number]["validationStatus"] {
+  if (labels?.includes("Validado")) return "validated";
+  if (labels?.includes("En revisión")) return "reviewing";
+  return null;
+}
+
 export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRecord[]) {
   const targetProposals = proposals.filter(
     (proposal) => proposal.status === "board_activated" && Boolean(proposal.activatedClientId),
@@ -105,11 +113,12 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
     const subitemsForClient = typedSubitems.filter((subitem) =>
       initiativesForClient.some((initiative) => initiative.id === subitem.initiative_id),
     );
-    const liveInitiatives = initiativesForClient.map((initiative) => ({
+    const liveInitiatives: SalesProposalRecord["initiatives"] = initiativesForClient.map((initiative) => ({
       id: initiative.id,
       title: initiative.title,
       type: initiative.type ?? "",
       status: initiative.status,
+      validationStatus: getSalesValidationStatusFromLabels(initiative.labels),
       description: initiative.description ?? "",
       estStartDate: initiative.est_start_date ?? "",
       estEndDate: initiative.est_end_date ?? "",

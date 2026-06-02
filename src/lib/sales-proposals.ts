@@ -42,6 +42,7 @@ export type SalesProposalInitiativeDraft = {
   title: string;
   type: string;
   status: InitiativeStatus;
+  validationStatus: "reviewing" | "validated" | null;
   description: string;
   estStartDate: string;
   estEndDate: string;
@@ -116,6 +117,7 @@ type CompactSalesProposalInitiativeSnapshot = [
   sortOrder?: number,
   isBlocked?: number | boolean,
   subitems?: CompactSalesProposalSubitemSnapshot[],
+  validationStatus?: "reviewing" | "validated" | null,
 ];
 
 type CompactSalesProposalSnapshot = {
@@ -163,6 +165,7 @@ function createCompactSalesProposalSnapshot(
         subitem.unitCredits,
         subitem.quantity,
       ]),
+      initiative.validationStatus,
     ]),
   };
 }
@@ -372,6 +375,7 @@ export function createEmptySalesInitiative(status: InitiativeStatus): SalesPropo
     title: "",
     type: "",
     status,
+    validationStatus: null,
     description: "",
     estStartDate: "",
     estEndDate: "",
@@ -429,6 +433,8 @@ function normalizeSalesProposalInitiativeDraft(
       title: initiative[1] || "",
       type: initiative[2] || "",
       status: initiative[3] || "backlog",
+      validationStatus:
+        initiative[10] === "reviewing" || initiative[10] === "validated" ? initiative[10] : null,
       description: initiative[4] || "",
       estStartDate: initiative[5] || "",
       estEndDate: initiative[6] || "",
@@ -443,6 +449,10 @@ function normalizeSalesProposalInitiativeDraft(
     title: initiative.title || "",
     type: initiative.type || "",
     status: initiative.status || "backlog",
+    validationStatus:
+      initiative.validationStatus === "reviewing" || initiative.validationStatus === "validated"
+        ? initiative.validationStatus
+        : null,
     description: initiative.description || "",
     estStartDate: initiative.estStartDate || "",
     estEndDate: initiative.estEndDate || "",

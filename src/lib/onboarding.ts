@@ -17,10 +17,31 @@ export type CustomPlanBillingMode = Database["public"]["Enums"]["custom_plan_bil
 export type ProjectStage = Database["public"]["Enums"]["project_stage"];
 export type PublicOnboardingAudience = "client" | "prospect";
 export type PlanPeriodMonths = 1 | 3 | 6 | 12;
+export const EVALUATION_VALIDATION_LABELS = ["En revisión", "Validado"] as const;
+export type EvaluationValidationLabel = (typeof EVALUATION_VALIDATION_LABELS)[number];
 
 export type ClientSummary = Tables<"clients"> & {
   access_role: ClientAccessRole;
 };
+
+export function getEvaluationValidationLabel(
+  labels: string[] | null | undefined,
+): EvaluationValidationLabel | null {
+  if (labels?.includes("Validado")) return "Validado";
+  if (labels?.includes("En revisión")) return "En revisión";
+  return null;
+}
+
+export function setEvaluationValidationLabel(
+  labels: string[] | null | undefined,
+  nextLabel: EvaluationValidationLabel | null,
+) {
+  const filteredLabels = (labels ?? []).filter(
+    (label) => !EVALUATION_VALIDATION_LABELS.includes(label as EvaluationValidationLabel),
+  );
+
+  return nextLabel ? [...filteredLabels, nextLabel] : filteredLabels;
+}
 
 export type PublicClientSummary = Pick<
   Tables<"clients">,

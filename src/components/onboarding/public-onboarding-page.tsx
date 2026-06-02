@@ -16,12 +16,14 @@ import {
   buildCatalogModalGroups,
   calculateMetrics,
   formatDateRange,
+  getEvaluationValidationLabel,
   getEstimatedStatus,
   getEffectivePlanPrice,
   getPlanCadenceLabel,
   resolveStageFromPublicAudience,
   type CatalogModalGroup,
   type ClientBillingStatus,
+  type EvaluationValidationLabel,
   type InitiativeRecord,
   type InitiativeStatus,
   type PublicOnboardingAudience,
@@ -39,6 +41,14 @@ type PublicOnboardingPageProps = {
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
 type PublicDraftTargetStatus = Extract<InitiativeStatus, "backlog" | "planned">;
+const EVALUATION_VALIDATION_META = {
+  "En revisión": {
+    className: "border-[#facc15] bg-[#fef9c3] text-[#854d0e]",
+  },
+  Validado: {
+    className: "border-[#99f6e4] bg-[#ecfffb] text-[#008f7f]",
+  },
+} satisfies Record<EvaluationValidationLabel, { className: string }>;
 
 function getStatusDot(status: InitiativeStatus) {
   if (status === "executing") return "bg-emerald-500";
@@ -1501,6 +1511,7 @@ export function PublicOnboardingPage({
                             )
                           : 0;
                       const progressPercent = Math.max(0, Math.min(100, initiative.progressPercent ?? 0));
+                      const validationLabel = getEvaluationValidationLabel(initiative.labels);
 
                       return (
                         <button
@@ -1540,6 +1551,15 @@ export function PublicOnboardingPage({
                                 <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
                                   {initiative.description || "Sin descripcion ejecutiva."}
                                 </p>
+                                {status === "backlog" && validationLabel ? (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    <span
+                                      className={`rounded-[3px] border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${EVALUATION_VALIDATION_META[validationLabel].className}`}
+                                    >
+                                      {validationLabel}
+                                    </span>
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
 

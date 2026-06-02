@@ -46,6 +46,14 @@ function normalizeSubitemStatus(
   return "pending";
 }
 
+function getSalesValidationLabel(
+  value: SalesProposalInitiativeDraft["validationStatus"],
+) {
+  if (value === "validated") return "Validado";
+  if (value === "reviewing") return "En revisión";
+  return null;
+}
+
 function createProspectConfig(proposal: SalesProposalRecord): OnboardingConfig {
   const nowIso = new Date().toISOString();
 
@@ -100,7 +108,9 @@ export function mapProposalInitiativeToPublicRecord(
     client_id: proposal.id ?? proposal.slug ?? "prospect",
     title: initiative.title,
     type: initiative.type,
-    labels: [],
+    labels: [getSalesValidationLabel(initiative.validationStatus)].filter(
+      (label): label is string => Boolean(label),
+    ),
     status,
     description: initiative.description,
     owner_client: null,
