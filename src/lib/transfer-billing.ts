@@ -152,18 +152,36 @@ async function upsertCreditGrant(input: {
   expiresAt: string;
 }) {
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
+  const { data: existingGrant, error: existingGrantError } = await admin
     .from("client_credit_grants")
-    .upsert(({
-      client_id: input.clientId,
-      billing_cycle_id: input.billingCycleId,
-      source: "monthly_cycle",
-      granted_credits: input.grantedCredits,
-      grant_date: input.grantDate,
-      expires_at: input.expiresAt,
-    }) as never, {
-      onConflict: "billing_cycle_id",
-    });
+    .select("id")
+    .eq("billing_cycle_id", input.billingCycleId)
+    .maybeSingle();
+  const typedExistingGrant = existingGrant as { id: string } | null;
+
+  if (existingGrantError) {
+    throw existingGrantError;
+  }
+
+  const grantPayload = {
+    client_id: input.clientId,
+    billing_cycle_id: input.billingCycleId,
+    source: "monthly_cycle",
+    granted_credits: input.grantedCredits,
+    grant_date: input.grantDate,
+    expires_at: input.expiresAt,
+  };
+
+  const grantMutation = typedExistingGrant
+    ? admin
+        .from("client_credit_grants")
+        .update(grantPayload as never)
+        .eq("id", typedExistingGrant.id)
+    : admin
+        .from("client_credit_grants")
+        .insert(grantPayload as never);
+
+  const { error } = await grantMutation;
 
   if (error) {
     throw error;
