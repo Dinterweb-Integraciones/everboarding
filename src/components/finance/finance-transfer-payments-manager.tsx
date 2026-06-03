@@ -237,6 +237,7 @@ export function FinanceTransferPaymentsManager({
                                 <option value="BanColombia">BanColombia</option>
                                 <option value="BBVA">BBVA</option>
                                 <option value="BAC">BAC</option>
+                                <option value="Stripe México">Stripe México</option>
                               </Select>
                               <Input
                                 value={draftReferences[item.id] ?? ""}
