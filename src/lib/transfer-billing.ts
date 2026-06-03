@@ -205,10 +205,13 @@ export async function recordManualTransferBillingCycles(
   }
 
   const config = await loadBillingConfig(input.clientId);
+  const isOneTimePackage = config.custom_plan_billing_mode === "one_time";
   const periodMonths =
-    config.custom_plan_period_months === 3 ||
-    config.custom_plan_period_months === 6 ||
-    config.custom_plan_period_months === 12
+    !isOneTimePackage && (
+      config.custom_plan_period_months === 3 ||
+      config.custom_plan_period_months === 6 ||
+      config.custom_plan_period_months === 12
+    )
       ? config.custom_plan_period_months
       : 1;
   const contractCredits = Math.max(
@@ -216,6 +219,42 @@ export async function recordManualTransferBillingCycles(
     safeParseNumber(config.custom_plan_credits ?? config.base_capacity * periodMonths),
   );
   const creditValidityDays = Math.max(1, safeParseNumber(config.credit_validity_days));
+
+  if (isOneTimePackage) {
+    const packageStartDate = normalizedValidatedAt.slice(0, 10);
+    const paidCycle = await upsertBillingCycle({
+      clientId: input.clientId,
+      proposalId: input.proposalId,
+      cycleStartDate: packageStartDate,
+      cycleEndDate: addDaysToIsoDate(packageStartDate, creditValidityDays - 1),
+      paidAt: normalizedValidatedAt,
+      transferBank: normalizedBank,
+      transferReference: normalizedReference,
+      validatedByUserId: input.validatedByUserId,
+      amountCents: Math.max(0, Math.round(input.amountCents)),
+      currency: input.currency,
+    });
+
+    await upsertCreditGrant({
+      clientId: input.clientId,
+      billingCycleId: paidCycle.id,
+      grantedCredits: contractCredits,
+      grantDate: packageStartDate,
+      expiresAt: addDaysToIsoDate(packageStartDate, creditValidityDays),
+    });
+
+    const admin = createSupabaseAdminClient();
+    const { error: expireError } = await admin.rpc("expire_unused_client_credits" as never, {
+      p_client_id: input.clientId,
+    } as never);
+
+    if (expireError) {
+      throw expireError;
+    }
+
+    return;
+  }
+
   const monthlyCredits = distributeCredits(contractCredits, periodMonths);
 
   for (let monthIndex = 0; monthIndex < periodMonths; monthIndex += 1) {

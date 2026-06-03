@@ -519,6 +519,9 @@ export function OnboardingClientPage({
   const negotiatedPlanPrice = getEffectivePlanPrice(config);
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
   const isRecurringPlan = negotiatedPlanBillingMode === "subscription";
+  const hasPaidPlanAccess = isRecurringPlan
+    ? billing.current_cycle_paid
+    : billing.active_credits > 0;
   const negotiatedPlanCadence =
     isRecurringPlan
       ? getPlanCadenceLabel(negotiatedPlanPeriodMonths)
@@ -803,12 +806,14 @@ export function OnboardingClientPage({
   }
 
   function canUseReservedStage(status: InitiativeStatus) {
-    return !requiresPaidCycle(status) || billing.current_cycle_paid;
+    return !requiresPaidCycle(status) || hasPaidPlanAccess;
   }
 
   function showPaymentRequiredMessage() {
     showError(
-      "Este ciclo mensual no esta pagado. Para crear o mover tareas a Planificado o En ejecucion, primero debe completarse el pago del ciclo.",
+      isRecurringPlan
+        ? "Este ciclo mensual no esta pagado. Para crear o mover tareas a Planificado o En ejecucion, primero debe completarse el pago del ciclo."
+        : "Este paquete no tiene creditos vigentes. Para crear o mover tareas a Planificado o En ejecucion, primero debe activarse un paquete con creditos disponibles.",
     );
   }
 
@@ -2372,12 +2377,18 @@ export function OnboardingClientPage({
                 ) : null}
                 <span
                   className={`rounded-[3px] px-2 py-1 text-[10px] font-bold ${
-                    billing.current_cycle_paid
+                    hasPaidPlanAccess
                       ? "bg-emerald-50 text-emerald-700"
                       : "bg-amber-50 text-amber-700"
                   }`}
                 >
-                  {billing.current_cycle_paid ? "Ciclo pagado" : "Pago pendiente"}
+                  {isRecurringPlan
+                    ? billing.current_cycle_paid
+                      ? "Ciclo pagado"
+                      : "Pago pendiente"
+                    : hasPaidPlanAccess
+                      ? "Creditos activos"
+                      : "Sin creditos vigentes"}
                 </span>
               </div>
 
@@ -4457,10 +4468,15 @@ export function OnboardingClientPage({
                 <Select
                   value={offerDraft.billingMode}
                   onChange={(event) =>
-                    setOfferDraft((current) => ({
-                      ...current,
-                      billingMode: event.target.value as CustomPlanBillingMode,
-                    }))
+                    setOfferDraft((current) => {
+                      const billingMode = event.target.value as CustomPlanBillingMode;
+
+                      return {
+                        ...current,
+                        billingMode,
+                        validityDays: billingMode === "one_time" ? 90 : current.validityDays,
+                      };
+                    })
                   }
                 >
                   <option value="subscription">Membresia recurrente</option>
