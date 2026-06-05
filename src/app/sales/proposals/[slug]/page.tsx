@@ -1,8 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
-import { requireUser } from "@/lib/auth";
-import { canAccessAdminCatalogs, canAccessHubspotSales } from "@/lib/platform-access";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCategory,
@@ -27,13 +25,6 @@ export const revalidate = 0;
 
 export default async function SalesProposalPage({ params }: SalesProposalPageProps) {
   const { slug } = await params;
-  const { platformProfile } = await requireUser(`/sales/proposals/${slug}`);
-  const platformRole = platformProfile?.platform_role ?? null;
-
-  if (!canAccessHubspotSales(platformRole) && !canAccessAdminCatalogs(platformRole)) {
-    notFound();
-  }
-
   const storedProposal = await getSalesProposalBySlug(slug);
 
   if (!storedProposal) {

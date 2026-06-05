@@ -2058,7 +2058,7 @@ function mergeRecommendedGroups(
     if (!hasValidClientEmail) {
       setFeedback({
         tone: "error",
-        message: "Ingresa un correo valido del cliente para generar primero la URL de la propuesta.",
+        message: "Ingresa un correo valido del cliente para generar primero la URL publica.",
       });
       return;
     }
