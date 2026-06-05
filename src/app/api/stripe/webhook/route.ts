@@ -72,6 +72,43 @@ async function recordPayment(input: PaymentRecordInput) {
   return supabase.rpc("record_stripe_checkout_payment" as never, paymentArgs as never);
 }
 
+async function resolveClientIdFromSubscription(subscriptionId: string) {
+  const supabase = createSupabaseAdminClient();
+
+  const { data: proposalRow, error: proposalError } = await supabase
+    .from("sales_proposals")
+    .select("activated_client_id")
+    .eq("stripe_subscription_id", subscriptionId)
+    .not("activated_client_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (proposalError) {
+    throw proposalError;
+  }
+
+  const proposalClientId =
+    (proposalRow as { activated_client_id?: string | null } | null)?.activated_client_id ?? null;
+  if (proposalClientId) {
+    return proposalClientId;
+  }
+
+  const { data: cycleRow, error: cycleError } = await supabase
+    .from("client_billing_cycles")
+    .select("client_id")
+    .eq("stripe_subscription_id", subscriptionId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (cycleError) {
+    throw cycleError;
+  }
+
+  return (cycleRow as { client_id?: string | null } | null)?.client_id ?? null;
+}
+
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const salesProposalId = session.metadata?.sales_proposal_id;
 
@@ -132,14 +169,24 @@ async function handleInvoicePaid(stripe: Stripe, invoice: Stripe.Invoice) {
   }
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-  const metadata = invoice.parent?.subscription_details?.metadata ?? subscription.metadata;
-  const clientId = metadata?.client_id;
+  const metadataClientId =
+    invoice.parent?.subscription_details?.metadata?.client_id ?? subscription.metadata?.client_id ?? null;
+  const clientId = metadataClientId ?? (await resolveClientIdFromSubscription(subscriptionId));
 
   if (!clientId) {
     return NextResponse.json(
       { message: "La membresia de Stripe no tiene cliente asociado." },
       { status: 400 },
     );
+  }
+
+  if (!metadataClientId) {
+    await stripe.subscriptions.update(subscriptionId, {
+      metadata: {
+        ...subscription.metadata,
+        client_id: clientId,
+      },
+    });
   }
 
   const { error } = await recordPayment({
