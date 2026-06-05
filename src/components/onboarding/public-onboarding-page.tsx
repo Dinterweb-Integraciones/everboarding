@@ -1,9 +1,10 @@
 "use client";
 
 import { CalendarDays, CreditCard, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
+import { NorthStarModal } from "@/components/onboarding/north-star-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -20,6 +21,7 @@ import {
   getEstimatedStatus,
   getEffectivePlanPrice,
   getPlanCadenceLabel,
+  shouldRequireNorthStar,
   resolveStageFromPublicAudience,
   type CatalogModalGroup,
   type ClientBillingStatus,
@@ -230,6 +232,9 @@ export function PublicOnboardingPage({
   initialData,
 }: PublicOnboardingPageProps) {
   const [config, setConfig] = useState(initialData.config);
+  const [isNorthStarModalDismissed, setIsNorthStarModalDismissed] = useState(false);
+  const [isNorthStarManualOpen, setIsNorthStarManualOpen] = useState(false);
+  const [isSavingNorthStar, setIsSavingNorthStar] = useState(false);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
   const [billing, setBilling] = useState(initialData.billing);
   const [prospectProposal, setProspectProposal] = useState(initialData.prospectProposal ?? null);
@@ -265,10 +270,30 @@ export function PublicOnboardingPage({
   );
   const [isSavingProspectExtraPackages, setIsSavingProspectExtraPackages] = useState(false);
   const [activeInitiativePreview, setActiveInitiativePreview] = useState<InitiativeRecord | null>(null);
+  const northStarStatusRef = useRef(config.north_star_status);
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
+  const requiresNorthStar =
+    audience === "client" && shouldRequireNorthStar(initialData.client, config, initiatives);
+  const shouldShowNorthStarModal =
+    audience === "client" && ((requiresNorthStar && !isNorthStarModalDismissed) || isNorthStarManualOpen);
+  const isNorthStarBlockingModal = requiresNorthStar && !isNorthStarManualOpen;
+  const northStarDismissalsRemaining = Math.max(0, 3 - config.north_star_dismissals_used);
+
+  const syncNorthStarConfig = useCallback((updatedConfig: PublicOnboardingSnapshot["config"]) => {
+    const statusChanged = northStarStatusRef.current !== updatedConfig.north_star_status;
+    northStarStatusRef.current = updatedConfig.north_star_status;
+
+    setConfig(updatedConfig);
+
+    if (updatedConfig.north_star_status === "completed") {
+      setIsNorthStarModalDismissed(true);
+    } else if (statusChanged && updatedConfig.north_star_status === "cs_preapproved") {
+      setIsNorthStarModalDismissed(false);
+    }
+  }, []);
   const metrics = useMemo(
     () => calculateMetrics(config, initiatives, billing),
     [billing, config, initiatives],
@@ -363,6 +388,46 @@ export function PublicOnboardingPage({
 
     node.scrollTo({ top: 0, behavior: "auto" });
   }, [activeCatalogTab, isCatalogModalOpen]);
+
+  useEffect(() => {
+    if (
+      audience !== "client" ||
+      config.north_star_status === "client_approved" ||
+      config.north_star_status === "completed"
+    ) {
+      return;
+    }
+
+    let isActive = true;
+
+    async function refreshNorthStarConfig() {
+      try {
+        const response = await fetch(`/api/public-onboarding/${audience}/${publicSlug}/north-star`, {
+          method: "GET",
+        });
+        const payload = (await response.json()) as {
+          config?: PublicOnboardingSnapshot["config"];
+        };
+
+        if (isActive && response.ok && payload.config) {
+          syncNorthStarConfig(payload.config);
+        }
+      } catch {
+        // Keep the public board usable if the background refresh misses a beat.
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshNorthStarConfig();
+    }, 5000);
+    window.addEventListener("focus", refreshNorthStarConfig);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshNorthStarConfig);
+    };
+  }, [audience, config.north_star_status, publicSlug, syncNorthStarConfig]);
   const selectedCatalogItems = useMemo(
     () =>
       requestDraft.selectedCatalogItemIds
@@ -488,6 +553,57 @@ export function PublicOnboardingPage({
 
   function closeInitiativePreview() {
     setActiveInitiativePreview(null);
+  }
+
+  async function updatePublicNorthStar(action: "client_approve" | "dismiss") {
+    setIsSavingNorthStar(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/public-onboarding/${audience}/${publicSlug}/north-star`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action }),
+      });
+      const payload = (await response.json()) as {
+        config?: PublicOnboardingSnapshot["config"];
+        message?: string;
+      };
+
+      if (!response.ok || !payload.config) {
+        throw new Error(payload.message || "No fue posible actualizar El Norte.");
+      }
+
+      setConfig(payload.config);
+      setIsNorthStarModalDismissed(
+        action === "dismiss" || payload.config.north_star_status === "completed",
+      );
+      setFeedback({
+        tone: "success",
+        message:
+          action === "client_approve"
+            ? "El Norte quedo aprobado de tu lado."
+            : "Puedes revisar el tablero temporalmente.",
+      });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No fue posible actualizar El Norte."),
+      });
+    } finally {
+      setIsSavingNorthStar(false);
+    }
+  }
+
+  function closePublicNorthStarModal() {
+    if (isNorthStarManualOpen) {
+      setIsNorthStarManualOpen(false);
+      return;
+    }
+
+    void updatePublicNorthStar("dismiss");
   }
 
   const timeline = useMemo(() => {
@@ -1459,6 +1575,38 @@ export function PublicOnboardingPage({
             </div>
           </div>
         </section>
+
+        {audience === "client" ? (
+          <section className="rounded-[10px] border border-[#dfe3eb] bg-white px-5 py-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
+                    El Norte
+                  </p>
+                  <span className="rounded-[3px] border border-[#dfe3eb] bg-[#f5f8fa] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
+                    {config.north_star_status === "completed"
+                      ? "Definido"
+                      : config.north_star_status === "cs_preapproved"
+                        ? "Pendiente de aprobacion"
+                        : "Recomendado"}
+                  </span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-[#33475b]">
+                  {config.north_star_text?.trim() ||
+                    "Cuando Customer Success comparta El Norte, aqui podras revisarlo y aprobarlo."}
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                className="shrink-0 rounded-[4px] border-[#cbd6e2] bg-white px-4 py-2 text-[11px] font-bold text-[#516f90]"
+                onClick={() => setIsNorthStarManualOpen(true)}
+              >
+                {config.north_star_text?.trim() ? "Ver El Norte" : "Revisar El Norte"}
+              </Button>
+            </div>
+          </section>
+        ) : null}
 
         <section className="rounded-[20px] border border-[#dfe3eb] bg-[#f0f4f8] p-3">
           <div className="grid gap-4 xl:grid-cols-4">
@@ -2740,6 +2888,19 @@ export function PublicOnboardingPage({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {shouldShowNorthStarModal ? (
+        <NorthStarModal
+          role="client"
+          status={config.north_star_status}
+          text={config.north_star_text ?? ""}
+          dismissalsRemaining={northStarDismissalsRemaining}
+          isSaving={isSavingNorthStar}
+          isBlocking={isNorthStarBlockingModal}
+          onDismiss={closePublicNorthStarModal}
+          onClientApprove={() => void updatePublicNorthStar("client_approve")}
+        />
       ) : null}
 
       <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />

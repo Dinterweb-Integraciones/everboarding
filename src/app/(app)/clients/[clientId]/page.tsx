@@ -59,14 +59,16 @@ export default async function ClientDetailPage({
       : await fetchClientMembership(supabase, clientRecord.id, user.id);
 
   const accessRole =
-    canBypassClientMembership
-      ? "viewer"
-      : clientRecord.owner_user_id === user.id
+    clientRecord.owner_user_id === user.id
       ? "owner"
+      : canBypassClientMembership
+      ? "editor"
       : ((membershipLookup?.data as { access_role?: "viewer" | "editor" | "owner" } | null)
           ?.access_role ?? null);
   const membershipProfileRole =
-    canBypassClientMembership || clientRecord.owner_user_id === user.id
+    canBypassClientMembership
+      ? "csm"
+      : clientRecord.owner_user_id === user.id
       ? null
       : ((membershipLookup?.data as {
           profile_role?: "sales" | "csm" | "client" | "stakeholder";

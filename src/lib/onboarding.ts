@@ -17,6 +17,7 @@ export type CustomPlanBillingMode = Database["public"]["Enums"]["custom_plan_bil
 export type ProjectStage = Database["public"]["Enums"]["project_stage"];
 export type PublicOnboardingAudience = "client" | "prospect";
 export type PlanPeriodMonths = 1 | 3 | 6 | 12;
+export type NorthStarStatus = OnboardingConfig["north_star_status"];
 export const EVALUATION_VALIDATION_LABELS = ["En revisión", "Validado"] as const;
 export type EvaluationValidationLabel = (typeof EVALUATION_VALIDATION_LABELS)[number];
 
@@ -226,10 +227,82 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
     credit_validity_days: 60,
     show_all_completed: false,
     sales_cleared: false,
+    north_star_required: true,
+    north_star_text: null,
+    north_star_status: "pending",
+    north_star_dismissals_used: 0,
+    north_star_cs_preapproved_at: null,
+    north_star_client_approved_at: null,
+    north_star_completed_at: null,
+    north_star_updated_by_user_id: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     updated_by_user_id: null,
   };
+}
+
+export function normalizeInitiativeTitle(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+export function isKickoffInitiative(initiative: Pick<InitiativeRecord, "title">) {
+  return normalizeInitiativeTitle(initiative.title).includes("kickoff");
+}
+
+export function isNorthStarCompleted(config: Pick<OnboardingConfig, "north_star_status">) {
+  return config.north_star_status === "completed";
+}
+
+export function shouldRequireNorthStar(
+  client: Pick<Tables<"clients">, "csm_user_id">,
+  config: Pick<OnboardingConfig, "north_star_required" | "north_star_status">,
+  initiatives: Pick<InitiativeRecord, "title" | "status">[],
+) {
+  return config.north_star_required &&
+    Boolean(client.csm_user_id) &&
+    !isNorthStarCompleted(config) &&
+    initiatives.some((initiative) => isKickoffInitiative(initiative) && initiative.status === "executing");
+}
+
+export function canMoveInitiativeWithNorthStarRules(input: {
+  initiative: Pick<InitiativeRecord, "title" | "status">;
+  targetStatus: InitiativeStatus;
+  config: Pick<OnboardingConfig, "north_star_required" | "north_star_status">;
+  initiatives: Pick<InitiativeRecord, "title" | "status">[];
+}) {
+  if (!input.config.north_star_required || isNorthStarCompleted(input.config)) {
+    return { allowed: true, message: null };
+  }
+
+  const isKickoff = isKickoffInitiative(input.initiative);
+  const kickoffIsCompleted = input.initiatives.some(
+    (initiative) => isKickoffInitiative(initiative) && initiative.status === "completed",
+  );
+
+  if (isKickoff && input.targetStatus === "completed") {
+    return {
+      allowed: false,
+      message: "Antes de completar Kickoff, El Norte debe quedar aprobado por cliente y Customer Success.",
+    };
+  }
+
+  if (
+    !isKickoff &&
+    !kickoffIsCompleted &&
+    input.initiative.status === "planned" &&
+    (input.targetStatus === "executing" || input.targetStatus === "completed")
+  ) {
+    return {
+      allowed: false,
+      message: "Primero completa Kickoff con El Norte aprobado antes de iniciar o completar otros casos planificados.",
+    };
+  }
+
+  return { allowed: true, message: null };
 }
 
 function parseSafeDate(value: string | null | undefined) {

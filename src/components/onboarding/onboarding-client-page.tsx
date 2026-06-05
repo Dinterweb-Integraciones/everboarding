@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -28,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
+import { NorthStarModal } from "@/components/onboarding/north-star-modal";
 import { RichTextDisplay } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,6 +48,7 @@ import {
   calculateInitiativeProgress,
   calculateMetrics,
   calculateReductionPenalty,
+  canMoveInitiativeWithNorthStarRules,
   canEdit,
   createEmptyDraft,
   getEvaluationValidationLabel,
@@ -57,6 +60,7 @@ import {
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
+  shouldRequireNorthStar,
   setEvaluationValidationLabel,
   suggestPlanPrice,
   type CatalogModalGroup,
@@ -422,6 +426,10 @@ export function OnboardingClientPage({
   const supabase = createSupabaseBrowserClient();
   const [client, setClient] = useState(initialData.client);
   const [config, setConfig] = useState(initialData.config);
+  const [northStarDraft, setNorthStarDraft] = useState(initialData.config.north_star_text ?? "");
+  const [isNorthStarModalDismissed, setIsNorthStarModalDismissed] = useState(false);
+  const [isNorthStarManualOpen, setIsNorthStarManualOpen] = useState(false);
+  const [isSavingNorthStar, setIsSavingNorthStar] = useState(false);
   const [billing] = useState(initialData.billing);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
   const [activeStage] = useState<ProjectStage>(initialStage);
@@ -490,12 +498,40 @@ export function OnboardingClientPage({
   const persistGanttDatesRef = useRef<
     ((initiative: InitiativeRecord, startDate: string, endDate: string) => Promise<void>) | null
   >(null);
+  const northStarStatusRef = useRef(config.north_star_status);
+  const isNorthStarEditorOpenRef = useRef(false);
   const draftSubitemDateInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   const writable = canEdit(initialData.accessRole);
   const ownerCanShare = initialData.accessRole === "owner";
   const stageMeta = STAGE_META[activeStage];
+  const requiresNorthStar = shouldRequireNorthStar(client, config, initiatives);
+  const shouldShowNorthStarModal =
+    activeStage === "cs" && ((requiresNorthStar && !isNorthStarModalDismissed) || isNorthStarManualOpen);
+  const isNorthStarBlockingModal = requiresNorthStar && !isNorthStarManualOpen;
+  const northStarDismissalsRemaining = Math.max(0, 3 - config.north_star_dismissals_used);
+
+  const syncNorthStarConfig = useCallback((updatedConfig: OnboardingSnapshot["config"]) => {
+    const statusChanged = northStarStatusRef.current !== updatedConfig.north_star_status;
+    northStarStatusRef.current = updatedConfig.north_star_status;
+
+    setConfig(updatedConfig);
+
+    if (!isNorthStarEditorOpenRef.current) {
+      setNorthStarDraft(updatedConfig.north_star_text ?? "");
+    }
+
+    if (updatedConfig.north_star_status === "completed") {
+      setIsNorthStarModalDismissed(true);
+    } else if (
+      statusChanged &&
+      (updatedConfig.north_star_status === "cs_preapproved" ||
+        updatedConfig.north_star_status === "client_approved")
+    ) {
+      setIsNorthStarModalDismissed(false);
+    }
+  }, []);
 
   const metrics = useMemo(
     () => calculateMetrics(config, initiatives, billing),
@@ -590,6 +626,43 @@ export function OnboardingClientPage({
 
     node.scrollTo({ top: 0, behavior: "auto" });
   }, [activeCatalogTab, isCatalogModalOpen]);
+
+  useEffect(() => {
+    isNorthStarEditorOpenRef.current = shouldShowNorthStarModal;
+  }, [shouldShowNorthStarModal]);
+
+  useEffect(() => {
+    if (config.north_star_status === "client_approved" || config.north_star_status === "completed") {
+      return;
+    }
+
+    let isActive = true;
+
+    async function refreshNorthStarConfig() {
+      const { data } = await supabase
+        .from("onboarding_configs")
+        .select("*")
+        .eq("client_id", client.id)
+        .single();
+
+      if (!isActive || !data) {
+        return;
+      }
+
+      syncNorthStarConfig(data);
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshNorthStarConfig();
+    }, 5000);
+    window.addEventListener("focus", refreshNorthStarConfig);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshNorthStarConfig);
+    };
+  }, [client.id, config.north_star_status, supabase, syncNorthStarConfig]);
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
@@ -815,6 +888,121 @@ export function OnboardingClientPage({
         ? "Este ciclo mensual no esta pagado. Para crear o mover tareas a Planificado o En ejecucion, primero debe completarse el pago del ciclo."
         : "Este paquete no tiene creditos vigentes. Para crear o mover tareas a Planificado o En ejecucion, primero debe activarse un paquete con creditos disponibles.",
     );
+  }
+
+  async function updateNorthStarConfig(
+    patch: Partial<Pick<
+      typeof config,
+      | "north_star_text"
+      | "north_star_status"
+      | "north_star_dismissals_used"
+      | "north_star_cs_preapproved_at"
+      | "north_star_completed_at"
+      | "north_star_updated_by_user_id"
+    >>,
+    successMessage: string,
+  ) {
+    setIsSavingNorthStar(true);
+    setFeedback(null);
+
+    try {
+      const { data: updatedConfig, error } = await supabase
+        .from("onboarding_configs")
+        .update({
+          ...patch,
+          north_star_updated_by_user_id: userId,
+          updated_by_user_id: userId,
+        })
+        .eq("client_id", client.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+
+      northStarStatusRef.current = updatedConfig.north_star_status;
+      setConfig(updatedConfig);
+      setNorthStarDraft(updatedConfig.north_star_text ?? "");
+      setIsNorthStarModalDismissed(updatedConfig.north_star_status === "completed");
+      showSuccess(successMessage);
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error ? caughtError.message : "No fue posible actualizar El Norte.",
+      );
+    } finally {
+      setIsSavingNorthStar(false);
+    }
+  }
+
+  async function preapproveNorthStar() {
+    const text = northStarDraft.trim();
+    if (text.length < 12) {
+      showError("Escribe una definicion mas clara de El Norte antes de enviarla al cliente.");
+      return;
+    }
+
+    await updateNorthStarConfig(
+      {
+        north_star_text: text,
+        north_star_status: "cs_preapproved",
+        north_star_cs_preapproved_at: config.north_star_cs_preapproved_at ?? new Date().toISOString(),
+      },
+      "El Norte fue enviado para aprobacion del cliente.",
+    );
+  }
+
+  async function completeNorthStar() {
+    if (config.north_star_status !== "client_approved") {
+      showError("El cliente debe aprobar El Norte antes de la aceptacion final de Customer Success.");
+      return;
+    }
+
+    await updateNorthStarConfig(
+      {
+        north_star_status: "completed",
+        north_star_completed_at: new Date().toISOString(),
+      },
+      "El Norte quedo definido y consensuado.",
+    );
+  }
+
+  async function saveNorthStarManualEdit() {
+    const text = northStarDraft.trim();
+    if (text.length < 12) {
+      showError("Escribe una definicion mas clara de El Norte antes de guardarla.");
+      return;
+    }
+
+    await updateNorthStarConfig(
+      {
+        north_star_text: text,
+      },
+      "El Norte fue actualizado.",
+    );
+    setIsNorthStarManualOpen(false);
+  }
+
+  async function dismissNorthStarModal() {
+    if (northStarDismissalsRemaining <= 0) {
+      showError("Ya se usaron los 3 cierres disponibles. Define El Norte para continuar.");
+      return;
+    }
+
+    await updateNorthStarConfig(
+      {
+        north_star_dismissals_used: config.north_star_dismissals_used + 1,
+      },
+      "Puedes revisar el tablero temporalmente. Recuerda definir El Norte.",
+    );
+    setIsNorthStarModalDismissed(true);
+  }
+
+  function closeNorthStarModal() {
+    if (isNorthStarManualOpen) {
+      setIsNorthStarManualOpen(false);
+      return;
+    }
+
+    void dismissNorthStarModal();
   }
 
   function openOfferModal() {
@@ -1643,6 +1831,23 @@ export function OnboardingClientPage({
       return;
     }
 
+    if (statusChanged) {
+      const northStarRule = canMoveInitiativeWithNorthStarRules({
+        initiative,
+        targetStatus,
+        config,
+        initiatives,
+      });
+
+      if (!northStarRule.allowed) {
+        showError(northStarRule.message);
+        setDraggedInitiativeId(null);
+        setDropTargetStatus(null);
+        setDropIndicator(null);
+        return;
+      }
+    }
+
     if (statusChanged && initiative.is_blocked) {
       showError("Esta iniciativa esta bloqueada. Debes desbloquearla antes de moverla de etapa.");
       setDraggedInitiativeId(null);
@@ -1862,6 +2067,20 @@ export function OnboardingClientPage({
     if (!canUseReservedStage(draft.status) && (!existing || existing.status !== draft.status)) {
       showPaymentRequiredMessage();
       return;
+    }
+
+    if (existing && existing.status !== draft.status) {
+      const northStarRule = canMoveInitiativeWithNorthStarRules({
+        initiative: existing,
+        targetStatus: draft.status,
+        config,
+        initiatives,
+      });
+
+      if (!northStarRule.allowed) {
+        showError(northStarRule.message);
+        return;
+      }
     }
 
     if (existing?.is_blocked && draft.status !== existing.status && draft.isBlocked) {
@@ -2648,6 +2867,41 @@ export function OnboardingClientPage({
                 <p className="mt-1 text-[11px] text-[#516f90]">Creditos no usados</p>
               </div>
             </div>
+          </div>
+        </section>
+      ) : null}
+
+      {activeStage === "cs" ? (
+        <section className="border-b border-[#dfe3eb] bg-white px-6 py-4">
+          <div className="flex flex-col gap-4 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
+                  El Norte
+                </p>
+                <span className="rounded-[3px] border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
+                  {config.north_star_status === "completed"
+                    ? "Definido"
+                    : config.north_star_required
+                      ? "Requerido"
+                      : "Recomendado"}
+                </span>
+              </div>
+              <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-[#33475b]">
+                {config.north_star_text?.trim() ||
+                  "Define el resultado estrategico que guiara el servicio."}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              className="shrink-0 rounded-[4px] border-[#cbd6e2] bg-white px-4 py-2 text-[11px] font-bold text-[#516f90]"
+              onClick={() => {
+                setNorthStarDraft(config.north_star_text ?? "");
+                setIsNorthStarManualOpen(true);
+              }}
+            >
+              {config.north_star_text?.trim() ? "Ver / editar El Norte" : "Definir El Norte"}
+            </Button>
           </div>
         </section>
       ) : null}
@@ -5007,6 +5261,22 @@ export function OnboardingClientPage({
             </div>
           </aside>
         </div>
+      ) : null}
+
+      {shouldShowNorthStarModal ? (
+        <NorthStarModal
+          role="cs"
+          status={config.north_star_status}
+          text={northStarDraft}
+          dismissalsRemaining={northStarDismissalsRemaining}
+          isSaving={isSavingNorthStar}
+          isBlocking={isNorthStarBlockingModal}
+          onTextChange={setNorthStarDraft}
+          onDismiss={closeNorthStarModal}
+          onCsPreapprove={() => void preapproveNorthStar()}
+          onCsSave={() => void saveNorthStarManualEdit()}
+          onCsComplete={() => void completeNorthStar()}
+        />
       ) : null}
 
       <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />

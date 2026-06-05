@@ -254,6 +254,16 @@ create table if not exists public.onboarding_configs (
   credit_validity_days integer not null default 60 check (credit_validity_days > 0),
   show_all_completed boolean not null default false,
   sales_cleared boolean not null default false,
+  north_star_required boolean not null default true,
+  north_star_text text,
+  north_star_status text not null default 'pending'
+    check (north_star_status in ('pending', 'cs_preapproved', 'client_approved', 'completed')),
+  north_star_dismissals_used integer not null default 0
+    check (north_star_dismissals_used >= 0 and north_star_dismissals_used <= 3),
+  north_star_cs_preapproved_at timestamptz,
+  north_star_client_approved_at timestamptz,
+  north_star_completed_at timestamptz,
+  north_star_updated_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   updated_by_user_id uuid references auth.users(id) on delete set null
@@ -264,6 +274,16 @@ add column if not exists custom_plan_period_months integer not null default 1;
 
 alter table public.onboarding_configs
 add column if not exists custom_plan_billing_mode public.custom_plan_billing_mode not null default 'subscription';
+
+alter table public.onboarding_configs
+add column if not exists north_star_required boolean not null default true,
+add column if not exists north_star_text text,
+add column if not exists north_star_status text not null default 'pending',
+add column if not exists north_star_dismissals_used integer not null default 0,
+add column if not exists north_star_cs_preapproved_at timestamptz,
+add column if not exists north_star_client_approved_at timestamptz,
+add column if not exists north_star_completed_at timestamptz,
+add column if not exists north_star_updated_by_user_id uuid references auth.users(id) on delete set null;
 
 update public.onboarding_configs
 set custom_plan_billing_mode = 'one_time'
@@ -657,6 +677,13 @@ as $$
       where c.id = target_client_id
         and c.owner_user_id = auth.uid()
     ) then 'owner'::public.client_access_role
+    when exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and p.is_platform_active = true
+        and p.platform_role in ('admin', 'superadmin')
+    ) then 'editor'::public.client_access_role
     else (
       select cm.access_role
       from public.client_members cm
@@ -1354,6 +1381,58 @@ create trigger enforce_paid_cycle_for_reserved_initiatives_on_write
 before insert or update of status on public.onboarding_initiatives
 for each row execute procedure public.enforce_paid_cycle_for_reserved_initiatives();
 
+create or replace function public.enforce_north_star_for_kickoff_flow()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_config public.onboarding_configs;
+  kickoff_completed boolean;
+begin
+  if tg_op = 'INSERT' or old.status is distinct from new.status then
+    select *
+    into target_config
+    from public.onboarding_configs
+    where client_id = new.client_id
+    limit 1;
+
+    if coalesce(target_config.north_star_required, false)
+       and lower(trim(new.title)) like '%kickoff%'
+       and new.status = 'completed'
+       and coalesce(target_config.north_star_status, 'pending') <> 'completed' then
+      raise exception 'Antes de completar Kickoff, El Norte debe estar aprobado por cliente y Customer Success';
+    end if;
+
+    select exists (
+      select 1
+      from public.onboarding_initiatives i
+      where i.client_id = new.client_id
+        and lower(trim(i.title)) = 'kickoff'
+        and i.status = 'completed'
+        and i.id <> new.id
+    )
+    into kickoff_completed;
+
+    if coalesce(target_config.north_star_required, false)
+       and lower(trim(new.title)) not like '%kickoff%'
+       and old.status = 'planned'
+       and new.status in ('executing', 'completed')
+       and not kickoff_completed then
+      raise exception 'Primero completa Kickoff con El Norte aprobado antes de iniciar o completar otros casos planificados';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_north_star_for_kickoff_flow_on_write on public.onboarding_initiatives;
+create trigger enforce_north_star_for_kickoff_flow_on_write
+before insert or update of status on public.onboarding_initiatives
+for each row execute procedure public.enforce_north_star_for_kickoff_flow();
+
 create or replace function public.resolve_public_client_id(p_slug text)
 returns uuid
 language sql
@@ -1429,6 +1508,14 @@ begin
         'credit_validity_days', 60,
         'show_all_completed', false,
         'sales_cleared', false,
+        'north_star_required', true,
+        'north_star_text', null,
+        'north_star_status', 'pending',
+        'north_star_dismissals_used', 0,
+        'north_star_cs_preapproved_at', null,
+        'north_star_client_approved_at', null,
+        'north_star_completed_at', null,
+        'north_star_updated_by_user_id', null,
         'created_at', timezone('utc', now()),
         'updated_at', timezone('utc', now()),
         'updated_by_user_id', null
