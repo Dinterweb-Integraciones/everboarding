@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
-import { RichTextDisplay } from "@/components/ui/rich-text";
+import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { Textarea } from "@/components/ui/textarea";
 import { PUBLIC_EXTRA_CREDIT_PACKAGE, STATUS_META, STAGE_META } from "@/lib/constants";
 import {
@@ -96,10 +96,14 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
     group.modalCategory,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
-    .map((value) => normalizeCatalogText(value))
+    .map((value) => normalizeCatalogText(richTextToPlainText(value)))
     .join(" ");
 
   return searchableText.includes(normalizedQuery);
+}
+
+function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
+  return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
 function parseCalendarDate(value: string) {
@@ -2350,7 +2354,7 @@ export function PublicOnboardingPage({
                                   overflow: "hidden",
                                 }}
                               >
-                                {group.preview || group.description || "Grupo sugerido desde el catalogo para sumarlo al board del cliente."}
+                                {getCatalogGroupPreview(group, "Grupo sugerido desde el catalogo para sumarlo al board del cliente.")}
                               </p>
                             </div>
                             <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">

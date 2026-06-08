@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
-import { RichTextDisplay } from "@/components/ui/rich-text";
+import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   SALES_PROPOSAL_BASE_CREDITS,
@@ -76,10 +76,14 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
     group.modalCategory,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
-    .map((value) => normalizeCatalogText(value))
+    .map((value) => normalizeCatalogText(richTextToPlainText(value)))
     .join(" ");
 
   return searchableText.includes(normalizedQuery);
+}
+
+function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
+  return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
@@ -3978,7 +3982,7 @@ function mergeRecommendedGroups(
                                 overflow: "hidden",
                               }}
                             >
-                              {group.preview || group.description || "Grupo sugerido desde el catalogo para incluirlo dentro de la propuesta comercial."}
+                              {getCatalogGroupPreview(group, "Grupo sugerido desde el catalogo para incluirlo dentro de la propuesta comercial.")}
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">

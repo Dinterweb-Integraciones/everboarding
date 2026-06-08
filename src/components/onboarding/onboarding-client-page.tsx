@@ -30,7 +30,7 @@ import { Card } from "@/components/ui/card";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
-import { RichTextDisplay } from "@/components/ui/rich-text";
+import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
@@ -96,10 +96,14 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
     group.modalCategory,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
-    .map((value) => normalizeCatalogText(value))
+    .map((value) => normalizeCatalogText(richTextToPlainText(value)))
     .join(" ");
 
   return searchableText.includes(normalizedQuery);
+}
+
+function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
+  return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
@@ -4440,7 +4444,7 @@ export function OnboardingClientPage({
                                 overflow: "hidden",
                               }}
                             >
-                              {group.preview || group.description || "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo."}
+                              {getCatalogGroupPreview(group, "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo.")}
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">

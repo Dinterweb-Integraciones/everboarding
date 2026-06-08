@@ -116,6 +116,26 @@ function normalizeStoredValue(value: string | null | undefined) {
   return markdownToHtml(raw);
 }
 
+export function richTextToPlainText(value: string | null | undefined) {
+  const raw = value ?? "";
+  if (!raw.trim()) {
+    return "";
+  }
+
+  return raw
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/(p|div|li|h[1-6])>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;|&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function RichTextDisplay({
   value,
   fallback = "Sin contenido.",
