@@ -1,10 +1,15 @@
 "use client";
 
-import { CalendarDays, CreditCard, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { CalendarDays, CreditCard, Download, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
+import {
+  PlanReportExportPages,
+  exportPlanReportPdf,
+  type PlanReportInitiative,
+} from "@/components/onboarding/plan-report-export";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
@@ -283,6 +288,7 @@ export function PublicOnboardingPage({
     initialData.prospectProposal?.extraPackageQuantity ?? 0,
   );
   const [isSavingProspectExtraPackages, setIsSavingProspectExtraPackages] = useState(false);
+  const [isExportingReport, setIsExportingReport] = useState(false);
   const [activeInitiativePreview, setActiveInitiativePreview] = useState<InitiativeRecord | null>(null);
   const northStarStatusRef = useRef(config.north_star_status);
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
@@ -324,6 +330,31 @@ export function PublicOnboardingPage({
       {} as Record<InitiativeStatus, InitiativeRecord[]>,
     );
   }, [initiatives]);
+  const reportGroupedInitiatives = useMemo(
+    () =>
+      summaryStatuses.reduce(
+        (accumulator, status) => {
+          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
+            id: initiative.id,
+            title: initiative.title,
+            description: initiative.description ?? "",
+            credits: initiative.credits,
+            status: initiative.status,
+            dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
+            isBlocked: initiative.is_blocked,
+            subitems: initiative.subitems.map((subitem) => ({
+              id: subitem.id,
+              name: subitem.name,
+              quantity: subitem.quantity,
+              unitCredits: subitem.unit_credits,
+            })),
+          }));
+          return accumulator;
+        },
+        {} as Record<InitiativeStatus, PlanReportInitiative[]>,
+      ),
+    [groupedInitiatives],
+  );
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, typeof initialData.catalog>();
 
@@ -559,6 +590,26 @@ export function PublicOnboardingPage({
         : usesStripeMembership
           ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
           : `Pagar ${formatCurrency(paymentAmount)}`;
+
+  async function exportPublicPlanPdf() {
+    setFeedback(null);
+    setIsExportingReport(true);
+
+    try {
+      await exportPlanReportPdf(
+        "public-plan-report-export-root",
+        `Plan_${audience === "prospect" ? "Prospecto" : "Cliente"}_${initialData.client.name || publicSlug}_${Date.now()}.pdf`,
+      );
+      setFeedback({ tone: "success", message: "PDF del plan generado correctamente." });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No fue posible generar el PDF del plan."),
+      });
+    } finally {
+      setIsExportingReport(false);
+    }
+  }
 
   useEffect(() => {
     setProspectExtraPackageQuantity(prospectProposal?.extraPackageQuantity ?? 0);
@@ -1334,6 +1385,17 @@ export function PublicOnboardingPage({
             ) : null}
           </div>
 
+          {audience === "prospect" ? (
+            <button
+              type="button"
+              onClick={() => void exportPublicPlanPdf()}
+              disabled={isExportingReport}
+              className="inline-flex items-center justify-center gap-2 rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90] transition hover:border-[#9cb1c6] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {isExportingReport ? "Generando..." : "Descargar PDF"}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -2055,6 +2117,29 @@ export function PublicOnboardingPage({
           </div>
         </section>
       </main>
+
+      {audience === "prospect" ? (
+        <PlanReportExportPages
+          rootId="public-plan-report-export-root"
+          pageIdPrefix="public-plan-report"
+          reportLabel="Propuesta publica"
+          clientName={initialData.client.name || "Prospecto"}
+          description={initialData.client.description || stageMeta.description}
+          startDateLabel={formatLongDate(config.start_date)}
+          stageLabel="Vista prospecto"
+          metrics={{
+            available: metrics.available,
+            committed: metrics.reserved,
+            completed: metrics.consumed,
+            lost: metrics.lost,
+            total: metrics.total,
+            priceLabel: formatCurrency(prospectDisplayedPaymentAmount),
+            creditsLabel: `${prospectDisplayedPlanCredits} CR`,
+            cadenceLabel: getPlanCadenceLabel(config.custom_plan_period_months),
+          }}
+          groupedInitiatives={reportGroupedInitiatives}
+        />
+      ) : null}
 
       {activeInitiativePreview ? (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">

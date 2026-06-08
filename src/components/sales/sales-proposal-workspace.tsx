@@ -1,10 +1,15 @@
 "use client";
 
-import { CalendarDays, Link2, Loader2, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
+import { CalendarDays, Download, Link2, Loader2, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
+import {
+  PlanReportExportPages,
+  exportPlanReportPdf,
+  type PlanReportInitiative,
+} from "@/components/onboarding/plan-report-export";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
@@ -37,6 +42,7 @@ import {
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
   formatDateRange,
+  getPlanCadenceLabel,
   type CatalogModalGroup,
   type CreditCatalogGroup,
   type CreditCatalogGroupCategory,
@@ -756,6 +762,7 @@ export function SalesProposalWorkspace({
     mode: "move" | "resize-start" | "resize-end";
   } | null>(null);
   const [isSavingTimelineDates, setIsSavingTimelineDates] = useState(false);
+  const [isExportingReport, setIsExportingReport] = useState(false);
   const proposalSaveChainRef = useRef<Promise<SalesProposalDraft | null>>(Promise.resolve(null));
   const lastPersistedSignatureRef = useRef(getSalesProposalAutosaveSignature(initialDraft));
   const pendingProposalSlugRef = useRef<string | null>(initialDraft.slug ?? null);
@@ -870,6 +877,32 @@ export function SalesProposalWorkspace({
   );
 
   const metrics = useMemo(() => calculateSalesProposalMetrics(proposal), [proposal]);
+  const reportGroupedInitiatives = useMemo(
+    () =>
+      summaryStatuses.reduce(
+        (accumulator, status) => {
+          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
+            id: initiative.id,
+            title: initiative.title,
+            description: initiative.description,
+            credits: calculateSalesInitiativeCredits(initiative),
+            status: initiative.status,
+            dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
+            isBlocked: initiative.isBlocked,
+            subitems: initiative.subitems.map((subitem) => ({
+              id: subitem.id,
+              name: subitem.name,
+              quantity: subitem.quantity,
+              unitCredits: subitem.unitCredits,
+              statusLabel: TASK_STATUS_META[subitem.status]?.label,
+            })),
+          }));
+          return accumulator;
+        },
+        {} as Record<InitiativeStatus, PlanReportInitiative[]>,
+      ),
+    [groupedInitiatives],
+  );
 
   const timelineRows = useMemo(() => {
     const today = new Date();
@@ -2332,6 +2365,26 @@ function mergeRecommendedGroups(
   const wizardLoadingMessage =
     WIZARD_LOADING_MESSAGES[wizardLoadingMessageIndex] ?? WIZARD_LOADING_MESSAGES[0];
 
+  async function exportSalesPlanPdf() {
+    setFeedback(null);
+    setIsExportingReport(true);
+
+    try {
+      await exportPlanReportPdf(
+        "sales-plan-report-export-root",
+        `Plan_${proposal.workspaceVariant === "dinterweb" ? "Dinterweb" : "HubSpot"}_${proposal.clientName || proposal.clientCompany || "Prospecto"}_${Date.now()}.pdf`,
+      );
+      setFeedback({ tone: "success", message: "PDF del plan generado correctamente." });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No fue posible generar el PDF del plan."),
+      });
+    } finally {
+      setIsExportingReport(false);
+    }
+  }
+
   useEffect(() => {
     if (!ganttDrag) return;
     const activeDrag = ganttDrag;
@@ -2439,6 +2492,16 @@ function mergeRecommendedGroups(
             >
               <Trash2 className="h-3.5 w-3.5" />
               Limpiar
+            </button>
+            <span className="h-4 w-px bg-[#dfe3eb]" />
+            <button
+              type="button"
+              onClick={() => void exportSalesPlanPdf()}
+              disabled={isExportingReport}
+              className="inline-flex items-center gap-1.5 font-semibold text-[#516f90] transition hover:text-[#33475b] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {isExportingReport ? "Generando..." : "PDF Plan"}
             </button>
             <span className="h-4 w-px bg-[#dfe3eb]" />
             {isDinterwebVariant ? (
@@ -3615,6 +3678,26 @@ function mergeRecommendedGroups(
           </div>
         </section>
       </main>
+
+      <PlanReportExportPages
+        rootId="sales-plan-report-export-root"
+        pageIdPrefix="sales-plan-report"
+        reportLabel={proposal.workspaceVariant === "dinterweb" ? "Dinterweb Propuesta" : "HubSpot Propuesta"}
+        clientName={proposal.clientName || proposal.clientCompany || proposal.title || "Prospecto"}
+        description={proposal.clientDescription || "Plan comercial detallado para el prospecto."}
+        startDateLabel={formatDateRange(proposal.startDate || null, proposal.startDate || null)}
+        stageLabel="Vista vendedor"
+        metrics={{
+          available: metrics.available,
+          committed: metrics.committed,
+          completed: metrics.completed,
+          total: metrics.total,
+          priceLabel: formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase()),
+          creditsLabel: `${proposal.contractedCredits} CR`,
+          cadenceLabel: getPlanCadenceLabel(proposal.periodMonths),
+        }}
+        groupedInitiatives={reportGroupedInitiatives}
+      />
 
       {isGeneratingWizardPlan ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#33475b]/72 p-6 backdrop-blur-sm">
