@@ -62,6 +62,7 @@ export type SalesProposalDraft = {
   clientName: string;
   clientEmail: string;
   clientCompany: string;
+  clientDomain: string;
   clientPhone: string;
   clientDescription: string;
   assignedCsmUserId: string;
@@ -188,6 +189,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     clientName: "Cliente",
     clientEmail: "",
     clientCompany: "",
+    clientDomain: "",
     clientPhone: "",
     clientDescription: "",
     assignedCsmUserId: "",
@@ -241,6 +243,7 @@ export function createDuplicatedSalesProposalDraft(
     clientName: "Cliente",
     clientEmail: "",
     clientCompany: "",
+    clientDomain: "",
     clientPhone: "",
     clientDescription: "",
     status: "draft",
@@ -495,6 +498,7 @@ export function normalizeSalesProposalDraft(
         ? null
         : Math.max(0, safeParseNumber(couponBaseQuotedPrice)),
     couponAppliedAt: input.couponAppliedAt || null,
+    clientDomain: String(input.clientDomain ?? base.clientDomain ?? "").trim(),
     transferBank: String(input.transferBank ?? base.transferBank ?? ""),
     transferReference: String(input.transferReference ?? base.transferReference ?? ""),
     transferValidatedAt:
@@ -539,6 +543,7 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     clientName: resolvedClientName,
     clientEmail: String(row.client_email ?? snapshot.clientEmail ?? ""),
     clientCompany: resolvedClientCompany,
+    clientDomain: String(row.client_domain ?? snapshot.clientDomain ?? ""),
     clientPhone: String(row.client_phone ?? snapshot.clientPhone ?? ""),
     clientDescription: String(row.client_description ?? snapshot.clientDescription ?? ""),
     assignedCsmUserId: String(row.assigned_csm_user_id ?? snapshot.assignedCsmUserId ?? ""),
@@ -601,6 +606,7 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     client_name: clientName || "Cliente",
     client_email: normalized.clientEmail.trim() || null,
     client_company: clientCompany || null,
+    client_domain: normalized.clientDomain.trim() || null,
     client_phone: normalized.clientPhone.trim() || null,
     client_description: normalized.clientDescription.trim() || null,
     assigned_csm_user_id: normalized.assignedCsmUserId || null,
@@ -768,17 +774,23 @@ function createSalesProposalSlugSuffix() {
 }
 
 export function generateSalesProposalSlug(
-  input: Pick<SalesProposalDraft, "clientCompany" | "clientName" | "clientEmail" | "title">,
+  input: Pick<SalesProposalDraft, "clientCompany" | "clientName" | "clientDomain" | "title">,
 ) {
   const normalizedCompany = input.clientCompany.trim().toLowerCase();
   const normalizedClientName = input.clientName.trim().toLowerCase();
-  const emailLocalPart = input.clientEmail.trim().split("@")[0] ?? "";
+  const normalizedDomain = input.clientDomain
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    ?.split(":")[0] ?? "";
   const companySlug =
     !normalizedCompany || normalizedCompany === "cliente" ? "" : slugify(input.clientCompany);
   const clientSlug =
     !normalizedClientName || normalizedClientName === "cliente" ? "" : slugify(input.clientName);
-  const emailSlug = slugify(emailLocalPart);
-  const base = companySlug || clientSlug || emailSlug || slugify(input.title) || "propuesta";
+  const domainSlug = slugify(normalizedDomain.replace(/\.[a-z0-9-]+$/i, ""));
+  const base = companySlug || clientSlug || domainSlug || slugify(input.title) || "propuesta";
 
   return `${base}-${createSalesProposalSlugSuffix()}`;
 }

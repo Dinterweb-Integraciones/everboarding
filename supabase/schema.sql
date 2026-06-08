@@ -69,6 +69,7 @@ create table if not exists public.sales_proposals (
   client_name text not null,
   client_email text,
   client_company text,
+  client_domain text,
   client_phone text,
   client_description text,
   assigned_csm_user_id uuid references auth.users(id) on delete set null,
@@ -123,7 +124,8 @@ create table if not exists public.sales_coupons (
 alter table public.sales_proposals
 add column if not exists applied_coupon_id uuid references public.sales_coupons(id) on delete set null,
 add column if not exists applied_coupon_code text,
-add column if not exists coupon_applied_at timestamptz;
+add column if not exists coupon_applied_at timestamptz,
+add column if not exists client_domain text;
 
 alter table public.clients
 add column if not exists seller_user_id uuid references auth.users(id) on delete set null;

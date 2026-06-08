@@ -248,12 +248,12 @@ function normalizeBoardSortOrders(initiatives: SalesProposalInitiativeDraft[]) {
   );
 }
 
-function hasSalesProposalIdentity(value: Pick<SalesProposalDraft, "clientName" | "clientEmail">) {
+function hasSalesProposalIdentity(value: Pick<SalesProposalDraft, "clientName" | "clientDomain">) {
   const normalizedName = value.clientName.trim().toLowerCase();
-  return normalizedName !== "" && normalizedName !== "cliente" || isValidSalesProposalClientEmail(value.clientEmail);
+  return (normalizedName !== "" && normalizedName !== "cliente") || value.clientDomain.trim() !== "";
 }
 
-function canPersistSalesProposal(value: Pick<SalesProposalDraft, "slug" | "clientName" | "clientEmail">) {
+function canPersistSalesProposal(value: Pick<SalesProposalDraft, "slug" | "clientName" | "clientEmail" | "clientDomain">) {
   return isValidSalesProposalClientEmail(value.clientEmail) && (Boolean(value.slug) || hasSalesProposalIdentity(value));
 }
 
@@ -269,6 +269,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     clientName: normalized.clientName,
     clientEmail: normalized.clientEmail,
     clientCompany: normalized.clientCompany,
+    clientDomain: normalized.clientDomain,
     clientPhone: normalized.clientPhone,
     clientDescription: normalized.clientDescription,
     assignedCsmUserId: normalized.assignedCsmUserId,
@@ -2500,6 +2501,15 @@ function mergeRecommendedGroups(
                         : "border-transparent text-[#516f90] focus:border-[#00bda5]"
                     }`}
                     placeholder="cliente@empresa.com"
+                  />
+                </div>
+                <div className="min-w-[180px] flex-1 max-w-[280px]">
+                  <input
+                    type="text"
+                    value={proposal.clientDomain}
+                    onChange={(event) => setProposal({ ...proposal, clientDomain: event.target.value })}
+                    className="w-full border-0 border-b border-transparent bg-transparent p-0 text-[13px] font-medium leading-none text-[#516f90] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#00bda5]"
+                    placeholder="dominio.com"
                   />
                 </div>
                 <span className="hidden h-4 w-px bg-[#dfe3eb] md:block" />

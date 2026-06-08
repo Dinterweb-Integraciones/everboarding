@@ -39,7 +39,7 @@ type CatalogGroupsManagerProps = {
   initialMemberships: CreditCatalogGroupItem[];
 };
 
-const AVAILABLE_TAGS = ["Inmobiliaria", "Salud", "Ecommerce"] as const;
+const AVAILABLE_TAGS = ["General", "Inmobiliaria", "Salud", "Ecommerce"] as const;
 type AvailableTag = (typeof AVAILABLE_TAGS)[number];
 const FORM_STEPS = [
   {
