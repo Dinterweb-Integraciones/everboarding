@@ -383,6 +383,9 @@ export function PublicOnboardingPage({
   useEffect(() => {
     if (!isCatalogModalOpen) return;
 
+    setCatalogSearchQuery("");
+    setCatalogTagFilter(null);
+
     const node = catalogContentRef.current;
     if (!node) return;
 
