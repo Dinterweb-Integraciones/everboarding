@@ -106,6 +106,12 @@ type WizardRecommendationResponse = {
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
+const mobileBoardStatusOrderClasses: Record<InitiativeStatus, string> = {
+  executing: "order-1",
+  planned: "order-2",
+  backlog: "order-3",
+  completed: "order-4",
+};
 const DINTERWEB_BASE_PACKAGE = {
   credits: 60,
   price: SALES_PROPOSAL_BASE_PRICE,
@@ -182,6 +188,10 @@ function getStatusHeadingClass(status: InitiativeStatus) {
   if (status === "planned") return "text-[#6a78d1]";
   if (status === "completed") return "text-[#33475b]";
   return "text-[#516f90]";
+}
+
+function getMobileBoardStatusOrderClass(status: InitiativeStatus) {
+  return `${mobileBoardStatusOrderClasses[status]} xl:order-none`;
 }
 
 function getSalesTimelineBarClass(status: InitiativeStatus) {
@@ -2710,7 +2720,7 @@ function mergeRecommendedGroups(
                           {boardStatuses.map((emptyStatus) => (
                             <div
                               key={`empty-${emptyStatus}`}
-                              className="flex w-[320px] min-w-[320px] max-w-[340px] flex-col"
+                              className={`flex w-[320px] min-w-[320px] max-w-[340px] flex-col ${getMobileBoardStatusOrderClass(emptyStatus)}`}
                             >
                               <div className="mb-2 flex items-center justify-between px-1">
                                 <div className="flex items-center gap-2">
@@ -2822,7 +2832,7 @@ function mergeRecommendedGroups(
                         return (
                           <div
                             key={`empty-hubspot-${emptyStatus}`}
-                            className="flex w-[320px] min-w-[320px] max-w-[340px] flex-col"
+                            className={`flex w-[320px] min-w-[320px] max-w-[340px] flex-col ${getMobileBoardStatusOrderClass(emptyStatus)}`}
                           >
                             <div className="mb-2 flex items-center justify-between px-1">
                               <div className="flex items-center gap-2">
@@ -3042,7 +3052,10 @@ function mergeRecommendedGroups(
                 }
 
                 return (
-                  <div key={status} className="flex w-[320px] min-w-[320px] max-w-[340px] flex-col">
+                  <div
+                    key={status}
+                    className={`flex w-[320px] min-w-[320px] max-w-[340px] flex-col ${getMobileBoardStatusOrderClass(status)}`}
+                  >
                     <div className="mb-2 flex items-center justify-between px-1">
                       <div className="flex items-center gap-2">
                         <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(status)}`} />

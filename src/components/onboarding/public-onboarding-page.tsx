@@ -42,6 +42,12 @@ type PublicOnboardingPageProps = {
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
+const mobileBoardStatusOrderClasses: Record<InitiativeStatus, string> = {
+  executing: "order-1",
+  planned: "order-2",
+  backlog: "order-3",
+  completed: "order-4",
+};
 type PublicDraftTargetStatus = Extract<InitiativeStatus, "backlog" | "planned">;
 const EVALUATION_VALIDATION_META = {
   "En revisión": {
@@ -57,6 +63,10 @@ function getStatusDot(status: InitiativeStatus) {
   if (status === "planned") return "bg-indigo-500";
   if (status === "completed") return "bg-slate-700";
   return "bg-slate-300";
+}
+
+function getMobileBoardStatusOrderClass(status: InitiativeStatus) {
+  return `${mobileBoardStatusOrderClasses[status]} xl:order-none`;
 }
 
 function getSafeStatusMeta(status: InitiativeStatus | string | null | undefined) {
@@ -1626,7 +1636,10 @@ export function PublicOnboardingPage({
                 status === "backlog";
 
               return (
-                <div key={status} className="flex min-h-[270px] flex-col">
+                <div
+                  key={status}
+                  className={`flex min-h-[270px] flex-col ${getMobileBoardStatusOrderClass(status)}`}
+                >
                   <div className="mb-2 flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
                       <span className={`h-2.5 w-2.5 rounded-full ${getStatusDot(status)}`} />

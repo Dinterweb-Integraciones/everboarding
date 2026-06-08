@@ -126,6 +126,12 @@ type WizardRecommendationResponse = {
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
+const mobileBoardStatusOrderClasses: Record<InitiativeStatus, string> = {
+  executing: "order-1",
+  planned: "order-2",
+  backlog: "order-3",
+  completed: "order-4",
+};
 const taskStatusSequence: InitiativeTaskStatus[] = ["pending", "in_progress", "blocked", "completed"];
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
@@ -168,6 +174,10 @@ function getStatusDot(status: InitiativeStatus) {
   if (status === "planned") return "bg-indigo-500";
   if (status === "completed") return "bg-slate-700";
   return "bg-slate-300";
+}
+
+function getMobileBoardStatusOrderClass(status: InitiativeStatus) {
+  return `${mobileBoardStatusOrderClasses[status]} xl:order-none`;
 }
 
 function normalizeCatalogText(value: string | null | undefined) {
@@ -2926,7 +2936,10 @@ export function OnboardingClientPage({
                 writable && activeStage !== "cs" && (status === "backlog" || status === "planned");
 
               return (
-                <div key={status} className="flex w-[340px] flex-col">
+                <div
+                  key={status}
+                  className={`flex w-[340px] flex-col ${getMobileBoardStatusOrderClass(status)}`}
+                >
                   <div className="mb-2 flex items-center justify-between px-1">
                     <div>
                       <div className="flex items-center gap-2">
