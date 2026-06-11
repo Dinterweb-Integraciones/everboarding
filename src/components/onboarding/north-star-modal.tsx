@@ -5,12 +5,13 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { NorthStarStatus } from "@/lib/onboarding";
+import type { NorthStarHistoryRecord, NorthStarStatus } from "@/lib/onboarding";
 
 type NorthStarModalProps = {
   role: "cs" | "client";
   status: NorthStarStatus;
   text: string;
+  history?: NorthStarHistoryRecord[];
   dismissalsRemaining: number;
   isSaving: boolean;
   isBlocking?: boolean;
@@ -27,6 +28,13 @@ function getStatusLabel(status: NorthStarStatus) {
   if (status === "client_approved") return "Aprobado por cliente";
   if (status === "cs_preapproved") return "Enviado al cliente";
   return "Pendiente";
+}
+
+function formatHistoryDate(value: string) {
+  return new Intl.DateTimeFormat("es-NI", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function getGuidance(role: NorthStarModalProps["role"], status: NorthStarStatus) {
@@ -55,6 +63,7 @@ export function NorthStarModal({
   role,
   status,
   text,
+  history = [],
   dismissalsRemaining,
   isSaving,
   isBlocking = true,
@@ -171,6 +180,51 @@ export function NorthStarModal({
           <p className="mt-4 rounded-[4px] border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-700">
             Ya se usaron los 3 cierres disponibles. Para continuar, primero debe definirse y aprobarse El Norte.
           </p>
+        ) : null}
+
+        {role === "cs" && trimmedText ? (
+          <section className="mt-5 border-t border-[#dfe3eb] pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-[12px] font-extrabold uppercase tracking-[0.14em] text-[#33475b]">
+                Historial de Nortes
+              </h3>
+              <span className="text-[11px] font-semibold text-[#516f90]">
+                {history.length ? `${history.length} versiones` : "Sin versiones previas"}
+              </span>
+            </div>
+
+            {history.length ? (
+              <div className="max-h-[260px] space-y-3 overflow-y-auto pr-1">
+                {history.map((entry, index) => (
+                  <article
+                    key={entry.id}
+                    className="rounded-[4px] border border-[#dfe3eb] bg-[#f8fbff] px-4 py-3"
+                  >
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-extrabold text-[#33475b]">
+                          {index === 0 ? "Version actual" : `Version ${history.length - index}`}
+                        </span>
+                        <span className="rounded-[3px] border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] text-[#516f90]">
+                          {getStatusLabel(entry.north_star_status)}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-semibold text-[#7c98b6]">
+                        {formatHistoryDate(entry.created_at)}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-wrap text-[13px] leading-6 text-[#33475b]">
+                      {entry.north_star_text}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-[4px] border border-dashed border-[#cbd6e2] bg-[#f8fbff] px-4 py-3 text-[12px] font-semibold text-[#516f90]">
+                Las proximas ediciones de El Norte quedaran guardadas aqui.
+              </p>
+            )}
+          </section>
         ) : null}
       </div>
     </div>

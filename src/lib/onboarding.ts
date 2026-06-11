@@ -88,6 +88,10 @@ export type InitiativeLog = Tables<"onboarding_activity_logs"> & {
   author_email?: string | null;
   author_name?: string | null;
 };
+export type NorthStarHistoryRecord = Tables<"onboarding_north_star_history"> & {
+  author_email?: string | null;
+  author_name?: string | null;
+};
 
 export type InitiativeRecord = Tables<"onboarding_initiatives"> & {
   subitems: InitiativeSubItem[];
@@ -126,6 +130,7 @@ export type OnboardingSnapshot = {
   catalogGroupMemberships: CreditCatalogGroupItem[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
+  northStarHistory: NorthStarHistoryRecord[];
 };
 
 export type PublicOnboardingSnapshot = {

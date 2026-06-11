@@ -96,6 +96,7 @@ export default async function ClientDetailPage({
   const [
     { data: subitemRows, error: subitemsError },
     { data: logRows, error: logsError },
+    { data: northStarHistoryRows, error: northStarHistoryError },
     { data: catalogRows, error: catalogError },
   ] = await Promise.all([
     initiativeIds.length
@@ -110,6 +111,11 @@ export default async function ClientDetailPage({
           .select("*")
           .in("initiative_id", initiativeIds)
       : Promise.resolve({ data: [], error: null }),
+    clientReader
+      .from("onboarding_north_star_history")
+      .select("*")
+      .eq("client_id", clientRecord.id)
+      .order("created_at", { ascending: false }),
     admin
       .from("credit_catalog_items")
       .select("*")
@@ -136,6 +142,10 @@ export default async function ClientDetailPage({
 
   if (logsError) {
     throw new Error("No pudimos cargar el historial del onboarding.");
+  }
+
+  if (northStarHistoryError) {
+    throw new Error("No pudimos cargar el historial de El Norte.");
   }
 
   if (catalogError) {
@@ -244,6 +254,7 @@ export default async function ClientDetailPage({
         catalogGroupMemberships: catalogGroupMembershipRows ?? [],
         shareLinks,
         members,
+        northStarHistory: northStarHistoryRows ?? [],
       }}
       initialStage={initialStage}
       userId={user.id}

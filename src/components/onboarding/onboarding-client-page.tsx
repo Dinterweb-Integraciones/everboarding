@@ -442,6 +442,7 @@ export function OnboardingClientPage({
   const [client, setClient] = useState(initialData.client);
   const [config, setConfig] = useState(initialData.config);
   const [northStarDraft, setNorthStarDraft] = useState(initialData.config.north_star_text ?? "");
+  const [northStarHistory, setNorthStarHistory] = useState(initialData.northStarHistory);
   const [isNorthStarModalDismissed, setIsNorthStarModalDismissed] = useState(false);
   const [isNorthStarManualOpen, setIsNorthStarManualOpen] = useState(false);
   const [isSavingNorthStar, setIsSavingNorthStar] = useState(false);
@@ -908,6 +909,18 @@ export function OnboardingClientPage({
     );
   }
 
+  async function refreshNorthStarHistory() {
+    const { data, error } = await supabase
+      .from("onboarding_north_star_history")
+      .select("*")
+      .eq("client_id", client.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    setNorthStarHistory(data ?? []);
+  }
+
   async function updateNorthStarConfig(
     patch: Partial<Pick<
       typeof config,
@@ -936,6 +949,14 @@ export function OnboardingClientPage({
         .single();
 
       if (error) throw error;
+
+      const shouldRefreshHistory =
+        typeof patch.north_star_text === "string" &&
+        patch.north_star_text.trim() !== (config.north_star_text ?? "").trim();
+
+      if (shouldRefreshHistory) {
+        await refreshNorthStarHistory();
+      }
 
       northStarStatusRef.current = updatedConfig.north_star_status;
       setConfig(updatedConfig);
@@ -5289,6 +5310,7 @@ export function OnboardingClientPage({
           role="cs"
           status={config.north_star_status}
           text={northStarDraft}
+          history={northStarHistory}
           dismissalsRemaining={northStarDismissalsRemaining}
           isSaving={isSavingNorthStar}
           isBlocking={isNorthStarBlockingModal}

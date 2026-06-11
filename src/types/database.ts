@@ -474,6 +474,32 @@ export type Database = {
           updated_by_user_id?: string | null;
         };
       };
+      onboarding_north_star_history: {
+        Row: {
+          id: string;
+          client_id: string;
+          north_star_text: string;
+          north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          created_by_user_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          north_star_text: string;
+          north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          created_by_user_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          north_star_text?: string;
+          north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          created_by_user_id?: string | null;
+          created_at?: string;
+        };
+      };
       client_billing_cycles: {
         Row: {
           id: string;
