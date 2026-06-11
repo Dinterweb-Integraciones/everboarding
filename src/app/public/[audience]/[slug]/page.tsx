@@ -232,7 +232,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
         initiative.status === "completed"
           ? initiative.status
           : "backlog",
-      labels: initiative.labels ?? [],
+      labels: Array.isArray(initiative.labels) ? initiative.labels : [],
       subitems: (initiative.subitems ?? []).map((subitem) => ({
         ...subitem,
         status: normalizeTaskStatus(subitem.status),

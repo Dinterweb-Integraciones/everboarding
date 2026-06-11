@@ -21,6 +21,7 @@ import {
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
   calculateMetrics,
+  compareInitiativesForBoard,
   formatDateRange,
   getEvaluationValidationLabel,
   getEstimatedStatus,
@@ -324,7 +325,7 @@ export function PublicOnboardingPage({
       (accumulator, status) => {
         accumulator[status] = initiatives
           .filter((initiative) => initiative.status === status)
-          .sort((left, right) => left.sort_order - right.sort_order);
+          .sort((left, right) => compareInitiativesForBoard(status, left, right));
         return accumulator;
       },
       {} as Record<InitiativeStatus, InitiativeRecord[]>,

@@ -44,6 +44,27 @@ export function setEvaluationValidationLabel(
   return nextLabel ? [...filteredLabels, nextLabel] : filteredLabels;
 }
 
+export function compareInitiativesForBoard(
+  status: InitiativeStatus,
+  left: Pick<Tables<"onboarding_initiatives">, "labels" | "sort_order">,
+  right: Pick<Tables<"onboarding_initiatives">, "labels" | "sort_order">,
+) {
+  if (status !== "backlog") {
+    return left.sort_order - right.sort_order;
+  }
+
+  const validationOrder: Record<EvaluationValidationLabel, number> = {
+    "En revisión": 0,
+    Validado: 1,
+  };
+  const leftLabel = getEvaluationValidationLabel(left.labels);
+  const rightLabel = getEvaluationValidationLabel(right.labels);
+  const leftRank = leftLabel ? validationOrder[leftLabel] : 2;
+  const rightRank = rightLabel ? validationOrder[rightLabel] : 2;
+
+  return leftRank - rightRank || left.sort_order - right.sort_order;
+}
+
 export type PublicClientSummary = Pick<
   Tables<"clients">,
   "id" | "slug" | "name" | "description" | "seller_user_id" | "csm_user_id"

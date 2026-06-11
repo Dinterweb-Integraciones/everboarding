@@ -50,6 +50,7 @@ import {
   calculateReductionPenalty,
   canMoveInitiativeWithNorthStarRules,
   canEdit,
+  compareInitiativesForBoard,
   createEmptyDraft,
   getEvaluationValidationLabel,
   formatDateRange,
@@ -557,7 +558,7 @@ export function OnboardingClientPage({
       (accumulator, status) => {
         accumulator[status] = initiatives
           .filter((initiative) => initiative.status === status)
-          .sort((left, right) => left.sort_order - right.sort_order);
+          .sort((left, right) => compareInitiativesForBoard(status, left, right));
         return accumulator;
       },
       {} as Record<InitiativeStatus, InitiativeRecord[]>,
