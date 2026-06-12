@@ -26,9 +26,11 @@ import {
   createEmptySalesInitiative,
   createEmptySalesProposalDraft,
   createLocalId,
+  getDefaultSalesCreditValidityDays,
   getSalesProposalActivationValidation,
   generateSalesProposalSlug,
   isValidSalesProposalClientEmail,
+  normalizeSalesCreditValidityDays,
   normalizeSalesProposalDraft,
   type SalesCouponType,
   type SalesProposalDraft,
@@ -154,6 +156,7 @@ const WIZARD_LOADING_MESSAGES = [
   "Organizando Plan de Trabajo...",
   "Afinando ultimos detalles...",
 ];
+const SALES_CREDIT_VALIDITY_OPTIONS = [60, 90, 120] as const;
 
 async function parseJsonResponse<T>(response: Response) {
   const rawText = await response.text();
@@ -300,6 +303,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     currency: normalized.currency,
     billingMode: normalized.billingMode,
     periodMonths: normalized.periodMonths,
+    creditValidityDays: normalized.creditValidityDays,
     status: normalized.status,
     appliedCouponId: normalized.appliedCouponId,
     appliedCouponCode: normalized.appliedCouponCode,
@@ -791,16 +795,22 @@ export function SalesProposalWorkspace({
     const normalizedMonthlyPrice = Math.max(DINTERWEB_BASE_PACKAGE.price, safeParseNumber(monthlyPrice));
     const multiplier = getDinterwebChargeMultiplier(billingMode, periodMonths);
 
-    setProposal((current) =>
-      applyActiveCouponPricing({
+    setProposal((current) => {
+      const nextCreditValidityDays =
+        current.billingMode === billingMode
+          ? current.creditValidityDays
+          : getDefaultSalesCreditValidityDays(billingMode);
+
+      return applyActiveCouponPricing({
         ...clearProspectExtraPackages(current),
         workspaceVariant: "dinterweb",
         billingMode,
         periodMonths,
+        creditValidityDays: nextCreditValidityDays,
         contractedCredits: normalizedMonthlyCredits * multiplier,
         quotedPrice: normalizedMonthlyPrice * multiplier,
-      }),
-    );
+      });
+    });
   }
 
   const catalogOptions = useMemo(() => {
@@ -828,6 +838,14 @@ export function SalesProposalWorkspace({
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialGroupCategories);
   }, [catalogGroups, initialGroupCategories]);
+
+  const salesCreditValidityOptions = useMemo(
+    () =>
+      Array.from(new Set([...SALES_CREDIT_VALIDITY_OPTIONS, proposal.creditValidityDays]))
+        .filter((days) => days > 0)
+        .sort((left, right) => left - right),
+    [proposal.creditValidityDays],
+  );
 
   const catalogTabs = useMemo(
     () => [
@@ -2720,6 +2738,36 @@ function mergeRecommendedGroups(
                     </div>
 
                   </div>
+                </div>
+              ) : null}
+
+              {proposal.billingMode === "one_time" ? (
+                <div className="border-t border-[#dfe3eb] px-3 py-3">
+                  <label className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                      Vigencia del paquete
+                    </span>
+                    <select
+                      value={String(proposal.creditValidityDays)}
+                      onChange={(event) =>
+                        setProposal((current) => ({
+                          ...current,
+                          creditValidityDays: normalizeSalesCreditValidityDays(
+                            event.target.value,
+                            current.billingMode,
+                          ),
+                        }))
+                      }
+                      disabled={isProposalCheckoutLocked}
+                      className="h-9 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {salesCreditValidityOptions.map((days) => (
+                        <option key={days} value={days}>
+                          {days} dias
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               ) : null}
 

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { canAccessAdminCatalogs } from "@/lib/platform-access";
 import { getSalesProposalBySlug } from "@/lib/sales-proposal-access";
-import { normalizeSalesPaymentMethod } from "@/lib/sales-proposals";
+import { normalizeSalesCreditValidityDays, normalizeSalesPaymentMethod } from "@/lib/sales-proposals";
 import { activatePaidSalesProposalAfterAssignment, saveSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
@@ -31,6 +31,7 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
       sellerProfileId?: string | null;
       assignedCsmUserId?: string | null;
       paymentMethod?: string | null;
+      creditValidityDays?: number | string | null;
     };
     const sellerProfileId = body.sellerProfileId?.trim() || null;
     const assignedCsmUserId = body.assignedCsmUserId?.trim() || null;
@@ -127,6 +128,10 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
       (resolvedSellerProfile.platform_role === "sales" || resolvedSellerProfile.platform_role === "superadmin")
         ? "dinterweb"
         : storedProposal.proposal.workspaceVariant;
+    const nextCreditValidityDays = normalizeSalesCreditValidityDays(
+      body.creditValidityDays ?? storedProposal.proposal.creditValidityDays,
+      storedProposal.proposal.billingMode,
+    );
 
     const shouldActivateAfterAssignment =
       Boolean(nextAssignedCsmUserId) &&
@@ -141,6 +146,7 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
         sellerCompany: nextSellerCompany,
         assignedCsmUserId: nextAssignedCsmUserId || "",
         paymentMethod,
+        creditValidityDays: nextCreditValidityDays,
         status: nextStatus,
         workspaceVariant: nextWorkspaceVariant,
       },
@@ -188,6 +194,7 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
       const { error: configError } = await admin
         .from("onboarding_configs")
         .update(({
+          credit_validity_days: nextCreditValidityDays,
           updated_by_user_id: nextAssignedCsmUserId,
         }) as never)
         .eq("client_id", currentProposal.activated_client_id);
@@ -205,6 +212,17 @@ export async function PUT(request: Request, { params }: SalesProposalAssignmentR
 
       if (sellerClientError) {
         throw sellerClientError;
+      }
+
+      const { error: configError } = await admin
+        .from("onboarding_configs")
+        .update(({
+          credit_validity_days: nextCreditValidityDays,
+        }) as never)
+        .eq("client_id", currentProposal.activated_client_id);
+
+      if (configError) {
+        throw configError;
       }
     }
 

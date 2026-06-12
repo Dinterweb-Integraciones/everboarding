@@ -72,6 +72,7 @@ export type SalesProposalDraft = {
   currency: string;
   billingMode: "subscription" | "one_time";
   periodMonths: 1 | 3 | 6 | 12;
+  creditValidityDays: number;
   status: SalesProposalStatus;
   paymentMethod: SalesProposalPaymentMethod;
   hubspotDealId: string | null;
@@ -127,6 +128,7 @@ type CompactSalesProposalSnapshot = {
   cp?: number | null;
   cb?: number | null;
   pe?: number | null;
+  cv?: number | null;
   i?: CompactSalesProposalInitiativeSnapshot[];
 };
 
@@ -138,6 +140,7 @@ function createCompactSalesProposalSnapshot(
     | "appliedCouponPercentageOff"
     | "couponBaseQuotedPrice"
     | "prospectExtraPackageQuantity"
+    | "creditValidityDays"
     | "initiatives"
   >,
 ): CompactSalesProposalSnapshot {
@@ -147,6 +150,7 @@ function createCompactSalesProposalSnapshot(
     cp: draft.appliedCouponPercentageOff,
     cb: draft.couponBaseQuotedPrice,
     pe: draft.prospectExtraPackageQuantity,
+    cv: draft.creditValidityDays,
     i: draft.initiatives.map((initiative) => [
       initiative.id,
       initiative.title,
@@ -199,6 +203,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     currency: "usd",
     billingMode: "one_time",
     periodMonths: 1,
+    creditValidityDays: 90,
     status: "draft",
     paymentMethod: "stripe",
     hubspotDealId: null,
@@ -220,6 +225,22 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
 
 export function normalizeSalesPaymentMethod(value: unknown): SalesProposalPaymentMethod {
   return value === "bank_transfer" ? "bank_transfer" : "stripe";
+}
+
+export function getDefaultSalesCreditValidityDays(billingMode: SalesProposalDraft["billingMode"]) {
+  return billingMode === "one_time" ? 90 : 60;
+}
+
+export function normalizeSalesCreditValidityDays(
+  value: unknown,
+  billingMode: SalesProposalDraft["billingMode"],
+) {
+  const parsed = Math.floor(
+    safeParseNumber(
+      typeof value === "number" || typeof value === "string" ? value : undefined,
+    ),
+  );
+  return parsed > 0 ? parsed : getDefaultSalesCreditValidityDays(billingMode);
 }
 
 function buildDuplicatedSalesProposalTitle(value: string) {
@@ -469,6 +490,7 @@ export function normalizeSalesProposalDraft(
   input: Partial<SalesProposalDraft> & CompactSalesProposalSnapshot,
 ): SalesProposalDraft {
   const base = createEmptySalesProposalDraft();
+  const billingMode = normalizeSalesBillingMode(input.billingMode ?? base.billingMode);
   const couponType = input.appliedCouponType ?? input.ct ?? null;
   const couponPercentageOff = input.appliedCouponPercentageOff ?? input.cp;
   const couponBaseQuotedPrice = input.couponBaseQuotedPrice ?? input.cb;
@@ -485,7 +507,7 @@ export function normalizeSalesProposalDraft(
     paymentMethod: normalizeSalesPaymentMethod(input.paymentMethod ?? base.paymentMethod),
     workspaceVariant:
       input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot",
-    billingMode: normalizeSalesBillingMode(input.billingMode ?? base.billingMode),
+    billingMode,
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
     appliedCouponType: couponType ? normalizeSalesCouponType(couponType) : null,
@@ -514,6 +536,10 @@ export function normalizeSalesProposalDraft(
       Math.floor(safeParseNumber(input.prospectExtraPackageQuantity ?? input.pe ?? base.prospectExtraPackageQuantity)),
     ),
     periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
+    creditValidityDays: normalizeSalesCreditValidityDays(
+      input.creditValidityDays ?? input.cv ?? base.creditValidityDays,
+      billingMode,
+    ),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
     initiatives: rawInitiatives.map((initiative, initiativeIndex) =>
@@ -560,6 +586,10 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     ),
     periodMonths: normalizeSalesPeriodMonths(
       (row.plan_period_months as number | null | undefined) ?? snapshot.periodMonths,
+    ),
+    creditValidityDays: normalizeSalesCreditValidityDays(
+      (row.credit_validity_days as number | null | undefined) ?? snapshot.creditValidityDays,
+      normalizeSalesBillingMode((row.billing_mode as string | null | undefined) ?? snapshot.billingMode),
     ),
     status: normalizeSalesStatus(row.status),
     paymentMethod: normalizeSalesPaymentMethod(row.payment_method),
@@ -616,6 +646,7 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     currency: normalized.currency.toLowerCase(),
     billing_mode: normalized.billingMode,
     plan_period_months: normalized.periodMonths,
+    credit_validity_days: normalized.creditValidityDays,
     status: normalized.status,
     payment_method: normalized.paymentMethod,
     applied_coupon_id: normalized.appliedCouponId,

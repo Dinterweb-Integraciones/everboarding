@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import type { AssignableUser } from "@/lib/onboarding";
 import {
   getAssigneeName,
+  normalizeSalesCreditValidityDays,
   normalizeSalesPaymentMethod,
   type SalesProposalPaymentMethod,
   type SalesProposalRecord,
@@ -22,6 +23,8 @@ type SalesProposalAssignmentsManagerProps = {
   assignableUsers: AssignableUser[];
   sellerUsers: AssignableUser[];
 };
+
+const CREDIT_VALIDITY_OPTIONS = [60, 90, 120] as const;
 
 function resolveSellerSelection(proposal: SalesProposalRecord, sellerUsers: AssignableUser[]) {
   const normalizedSellerEmail = proposal.sellerEmail.trim().toLowerCase();
@@ -70,6 +73,12 @@ function shouldRouteProposalToFinance(
   return paymentMethod === "bank_transfer" && proposalStatus === "draft";
 }
 
+function getCreditValidityOptions(value: number) {
+  return Array.from(new Set([...CREDIT_VALIDITY_OPTIONS, value]))
+    .filter((days) => days > 0)
+    .sort((left, right) => left - right);
+}
+
 export function SalesProposalAssignmentsManager({
   initialProposals,
   assignableUsers,
@@ -91,6 +100,14 @@ export function SalesProposalAssignmentsManager({
       initialProposals.map((proposal) => [
         proposal.id ?? proposal.slug ?? "",
         resolveSellerSelection(proposal, sellerUsers),
+      ]),
+    ),
+  );
+  const [draftCreditValidityDays, setDraftCreditValidityDays] = useState<Record<string, number>>(
+    Object.fromEntries(
+      initialProposals.map((proposal) => [
+        proposal.id ?? proposal.slug ?? "",
+        proposal.creditValidityDays,
       ]),
     ),
   );
@@ -146,6 +163,7 @@ export function SalesProposalAssignmentsManager({
           sellerProfileId: draftSellerAssignments[proposalId] ?? "",
           assignedCsmUserId: shouldRouteToFinance ? "" : draftAssignments[proposalId] ?? "",
           paymentMethod: selectedPaymentMethod,
+          creditValidityDays: draftCreditValidityDays[proposalId] ?? selectedProposal.creditValidityDays,
         }),
       });
 
@@ -172,6 +190,10 @@ export function SalesProposalAssignmentsManager({
       setDraftSellerAssignments((current) => ({
         ...current,
         [proposalId]: resolveSellerSelection(payload, sellerUsers),
+      }));
+      setDraftCreditValidityDays((current) => ({
+        ...current,
+        [proposalId]: payload.creditValidityDays,
       }));
       setFeedback({
         tone: "success",
@@ -263,6 +285,9 @@ export function SalesProposalAssignmentsManager({
                           Creditos
                         </th>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                          Vigencia
+                        </th>
+                        <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                           Inversion
                         </th>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -290,11 +315,14 @@ export function SalesProposalAssignmentsManager({
                           draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
                         const selectedAssignment = draftAssignments[proposalId] ?? proposal.assignedCsmUserId ?? "";
                         const selectedSeller = draftSellerAssignments[proposalId] ?? resolveSellerSelection(proposal, sellerUsers);
+                        const selectedCreditValidityDays =
+                          draftCreditValidityDays[proposalId] ?? proposal.creditValidityDays;
                         const initialSellerSelection = resolveSellerSelection(proposal, sellerUsers);
                         const hasChanges =
                           selectedAssignment !== (proposal.assignedCsmUserId || "")
                           || selectedPaymentMethod !== proposal.paymentMethod
-                          || selectedSeller !== initialSellerSelection;
+                          || selectedSeller !== initialSellerSelection
+                          || selectedCreditValidityDays !== proposal.creditValidityDays;
                         const assigneeName = getAssigneeName(assignableUsers, proposal.assignedCsmUserId);
                         const shouldRouteToFinance = shouldRouteProposalToFinance(
                           proposal.status,
@@ -373,6 +401,35 @@ export function SalesProposalAssignmentsManager({
                             </td>
                             <td className="px-4 py-4 text-sm font-semibold text-slate-800">
                               {proposal.contractedCredits} CR
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="min-w-[130px]">
+                                {proposal.billingMode === "one_time" ? (
+                                  <Select
+                                    value={String(selectedCreditValidityDays)}
+                                    onChange={(event) =>
+                                      setDraftCreditValidityDays((current) => ({
+                                        ...current,
+                                        [proposalId]: normalizeSalesCreditValidityDays(
+                                          event.target.value,
+                                          proposal.billingMode,
+                                        ),
+                                      }))
+                                    }
+                                    disabled={!proposalId}
+                                  >
+                                    {getCreditValidityOptions(selectedCreditValidityDays).map((days) => (
+                                      <option key={days} value={days}>
+                                        {days} dias
+                                      </option>
+                                    ))}
+                                  </Select>
+                                ) : (
+                                  <span className="text-sm font-semibold text-slate-800">
+                                    {proposal.creditValidityDays} dias
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-4 py-4 text-sm font-semibold text-slate-800">
                               {formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}
@@ -478,11 +535,14 @@ export function SalesProposalAssignmentsManager({
                     draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
                   const selectedAssignment = draftAssignments[proposalId] ?? proposal.assignedCsmUserId ?? "";
                   const selectedSeller = draftSellerAssignments[proposalId] ?? resolveSellerSelection(proposal, sellerUsers);
+                  const selectedCreditValidityDays =
+                    draftCreditValidityDays[proposalId] ?? proposal.creditValidityDays;
                   const initialSellerSelection = resolveSellerSelection(proposal, sellerUsers);
                   const hasChanges =
                     selectedAssignment !== (proposal.assignedCsmUserId || "")
                     || selectedPaymentMethod !== proposal.paymentMethod
-                    || selectedSeller !== initialSellerSelection;
+                    || selectedSeller !== initialSellerSelection
+                    || selectedCreditValidityDays !== proposal.creditValidityDays;
                   const assigneeName = getAssigneeName(assignableUsers, proposal.assignedCsmUserId);
                   const shouldRouteToFinance = shouldRouteProposalToFinance(
                     proposal.status,
@@ -573,6 +633,36 @@ export function SalesProposalAssignmentsManager({
                         <div>
                           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Creditos</p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">{proposal.contractedCredits} CR</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Vigencia</p>
+                          {proposal.billingMode === "one_time" ? (
+                            <div className="mt-1">
+                              <Select
+                                value={String(selectedCreditValidityDays)}
+                                onChange={(event) =>
+                                  setDraftCreditValidityDays((current) => ({
+                                    ...current,
+                                    [proposalId]: normalizeSalesCreditValidityDays(
+                                      event.target.value,
+                                      proposal.billingMode,
+                                    ),
+                                  }))
+                                }
+                                disabled={!proposalId}
+                              >
+                                {getCreditValidityOptions(selectedCreditValidityDays).map((days) => (
+                                  <option key={days} value={days}>
+                                    {days} dias
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {proposal.creditValidityDays} dias
+                            </p>
+                          )}
                         </div>
                         <div>
                           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Inversion</p>

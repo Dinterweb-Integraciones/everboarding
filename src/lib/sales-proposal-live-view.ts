@@ -145,6 +145,10 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
       quotedPrice: Math.max(0, safeParseNumber(config?.custom_plan_price ?? proposal.quotedPrice)),
       billingMode: config?.custom_plan_billing_mode ?? proposal.billingMode,
       periodMonths: normalizePeriodMonths(config?.custom_plan_period_months, proposal.periodMonths),
+      creditValidityDays: Math.max(
+        1,
+        safeParseNumber(config?.credit_validity_days ?? proposal.creditValidityDays),
+      ),
       initiatives: liveInitiatives,
       updatedAt: buildUpdatedAt(proposal, [
         config?.updated_at,

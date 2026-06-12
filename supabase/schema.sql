@@ -79,6 +79,7 @@ create table if not exists public.sales_proposals (
   currency text not null default 'usd',
   billing_mode public.custom_plan_billing_mode not null default 'subscription',
   plan_period_months integer not null default 1 check (plan_period_months in (1, 3, 6, 12)),
+  credit_validity_days integer not null default 60 check (credit_validity_days > 0),
   status public.sales_proposal_status not null default 'draft',
   payment_method public.sales_payment_method not null default 'stripe',
   snapshot jsonb not null default '{"initiatives":[]}'::jsonb,

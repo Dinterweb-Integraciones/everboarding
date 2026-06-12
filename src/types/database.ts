@@ -141,6 +141,7 @@ export type Database = {
           currency: string;
           billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months: number;
+          credit_validity_days: number;
           status: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method: Database["public"]["Enums"]["sales_payment_method"];
           snapshot: Json;
@@ -184,6 +185,7 @@ export type Database = {
           currency?: string;
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
+          credit_validity_days?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method?: Database["public"]["Enums"]["sales_payment_method"];
           snapshot?: Json;
@@ -227,6 +229,7 @@ export type Database = {
           currency?: string;
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
+          credit_validity_days?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method?: Database["public"]["Enums"]["sales_payment_method"];
           snapshot?: Json;

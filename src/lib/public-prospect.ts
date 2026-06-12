@@ -69,7 +69,7 @@ function createProspectConfig(proposal: SalesProposalRecord): OnboardingConfig {
     custom_plan_billing_mode: proposal.billingMode,
     custom_plan_period_months: proposal.periodMonths,
     current_stage: "sales",
-    credit_validity_days: proposal.billingMode === "one_time" ? 90 : 60,
+    credit_validity_days: proposal.creditValidityDays,
     show_all_completed: false,
     sales_cleared: false,
     north_star_required: false,

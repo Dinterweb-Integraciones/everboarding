@@ -937,7 +937,7 @@ async function activateSalesProposalWithPaymentContext(
       custom_plan_billing_mode: proposal.billingMode,
       custom_plan_period_months: proposal.periodMonths,
       current_stage: "cs",
-      credit_validity_days: proposal.billingMode === "one_time" ? 90 : 60,
+      credit_validity_days: proposal.creditValidityDays,
       sales_cleared: true,
       updated_by_user_id: proposal.assignedCsmUserId,
     }) as never, {
