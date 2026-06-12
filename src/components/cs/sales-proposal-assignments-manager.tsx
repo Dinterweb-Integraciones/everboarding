@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { BriefcaseBusiness, ExternalLink, Save } from "lucide-react";
-import { useMemo, useState } from "react";
+import { BriefcaseBusiness, ExternalLink, Save, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { AssignableUser } from "@/lib/onboarding";
 import {
@@ -79,6 +80,51 @@ function getCreditValidityOptions(value: number) {
     .sort((left, right) => left - right);
 }
 
+function normalizeSearchText(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function matchesProposalSearch(proposal: SalesProposalRecord, sellerUsers: AssignableUser[], query: string) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+
+  const sellerSelection = resolveSellerSelection(proposal, sellerUsers);
+  const sellerUser = sellerUsers.find((user) => user.id === sellerSelection);
+  const searchableText = [
+    proposal.title,
+    proposal.clientName,
+    proposal.clientCompany,
+    proposal.clientEmail,
+    proposal.clientDomain,
+    proposal.clientPhone,
+    proposal.clientDescription,
+    proposal.sellerName,
+    proposal.sellerEmail,
+    sellerUser?.full_name,
+    sellerUser?.email,
+    salesStatusMeta[proposal.status].label,
+    proposal.paymentMethod === "bank_transfer" ? "transferencia" : "stripe",
+    proposal.billingMode === "one_time" ? "paquete de creditos" : "recurrencia",
+    `${proposal.contractedCredits} creditos`,
+    `${proposal.creditValidityDays} dias`,
+    formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase()),
+  ]
+    .map(normalizeSearchText)
+    .join(" ");
+
+  return searchableText.includes(normalizedQuery);
+}
+
+function getProposalSortPriority(proposal: SalesProposalRecord) {
+  if (!proposal.assignedCsmUserId && proposal.status === "paid") return 0;
+  if (!proposal.assignedCsmUserId) return 1;
+  return 2;
+}
+
 export function SalesProposalAssignmentsManager({
   initialProposals,
   assignableUsers,
@@ -112,6 +158,10 @@ export function SalesProposalAssignmentsManager({
     ),
   );
   const [savingProposalId, setSavingProposalId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const floatingScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -127,10 +177,15 @@ export function SalesProposalAssignmentsManager({
     };
   }, [proposals]);
 
+  const filteredProposals = useMemo(
+    () => proposals.filter((proposal) => matchesProposalSearch(proposal, sellerUsers, searchQuery)),
+    [proposals, searchQuery, sellerUsers],
+  );
+
   const sortedProposals = useMemo(() => {
-    return [...proposals].sort((left, right) => {
-      const leftPriority = left.assignedCsmUserId ? 1 : 0;
-      const rightPriority = right.assignedCsmUserId ? 1 : 0;
+    return [...filteredProposals].sort((left, right) => {
+      const leftPriority = getProposalSortPriority(left);
+      const rightPriority = getProposalSortPriority(right);
 
       if (leftPriority !== rightPriority) {
         return leftPriority - rightPriority;
@@ -138,7 +193,31 @@ export function SalesProposalAssignmentsManager({
 
       return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
     });
-  }, [proposals]);
+  }, [filteredProposals]);
+
+  useEffect(() => {
+    function syncTableWidth() {
+      setTableScrollWidth(tableScrollRef.current?.scrollWidth ?? 0);
+    }
+
+    syncTableWidth();
+    window.addEventListener("resize", syncTableWidth);
+    return () => window.removeEventListener("resize", syncTableWidth);
+  }, [sortedProposals.length]);
+
+  function syncHorizontalScroll(source: "table" | "floating") {
+    const table = tableScrollRef.current;
+    const floating = floatingScrollRef.current;
+    if (!table || !floating) return;
+
+    if (source === "table" && floating.scrollLeft !== table.scrollLeft) {
+      floating.scrollLeft = table.scrollLeft;
+    }
+
+    if (source === "floating" && table.scrollLeft !== floating.scrollLeft) {
+      table.scrollLeft = floating.scrollLeft;
+    }
+  }
 
   async function saveAssignment(proposalId: string) {
     setSavingProposalId(proposalId);
@@ -244,7 +323,7 @@ export function SalesProposalAssignmentsManager({
 
           <p className="mt-4 max-w-3xl text-sm text-slate-600">
             Aqui recibes todas las propuestas comerciales generadas por ventas y decides que CS se
-            hara cargo. La lista prioriza las ventas sin asignar y luego las mas recientes.
+            hara cargo. La lista prioriza ventas pagadas sin CS, luego pendientes y despues las mas recientes.
           </p>
 
           {!assignableUsers.length ? (
@@ -255,15 +334,31 @@ export function SalesProposalAssignmentsManager({
         </section>
 
         <section className="mt-6">
-          {sortedProposals.length ? (
+          {proposals.length ? (
             <>
-              <div className="mb-3 px-1 text-sm font-semibold text-slate-700">
-                Orden actual: pendientes de CS primero, luego actualizadas mas recientemente.
+              <div className="mb-3 flex flex-col gap-3 px-1 lg:flex-row lg:items-center lg:justify-between">
+                <p className="text-sm font-semibold text-slate-700">
+                  Orden actual: pagadas pendientes de CS primero, luego pendientes y actualizadas mas recientemente.
+                </p>
+                <label className="relative block w-full max-w-[420px]">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Buscar empresa, cliente, vendedor, email..."
+                    className="pl-9"
+                  />
+                </label>
               </div>
 
               <div className="hidden overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.05)] lg:block">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200">
+                <div
+                  ref={tableScrollRef}
+                  className="overflow-x-auto"
+                  onScroll={() => syncHorizontalScroll("table")}
+                >
+                  <table className="min-w-[1840px] divide-y divide-slate-200">
                     <thead className="bg-slate-50">
                       <tr>
                         <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -309,7 +404,7 @@ export function SalesProposalAssignmentsManager({
                     </thead>
 
                     <tbody className="divide-y divide-slate-200">
-                      {sortedProposals.map((proposal) => {
+                      {sortedProposals.length ? sortedProposals.map((proposal) => {
                         const proposalId = proposal.id ?? proposal.slug ?? "";
                         const selectedPaymentMethod =
                           draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
@@ -522,14 +617,31 @@ export function SalesProposalAssignmentsManager({
                             </td>
                           </tr>
                         );
-                      })}
+                      }) : (
+                        <tr>
+                          <td colSpan={13} className="px-4 py-10 text-center text-sm font-semibold text-slate-500">
+                            No encontramos ventas que coincidan con tu busqueda.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
+              {sortedProposals.length ? (
+                <div className="sticky bottom-0 z-20 hidden border-x border-b border-slate-200 bg-white/95 px-3 py-2 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:block">
+                  <div
+                    ref={floatingScrollRef}
+                    className="overflow-x-auto"
+                    onScroll={() => syncHorizontalScroll("floating")}
+                  >
+                    <div style={{ width: tableScrollWidth || 1840, height: 1 }} />
+                  </div>
+                </div>
+              ) : null}
 
               <div className="space-y-4 lg:hidden">
-                {sortedProposals.map((proposal) => {
+                {sortedProposals.length ? sortedProposals.map((proposal) => {
                   const proposalId = proposal.id ?? proposal.slug ?? "";
                   const selectedPaymentMethod =
                     draftPaymentMethods[proposalId] ?? proposal.paymentMethod ?? "stripe";
@@ -751,7 +863,11 @@ export function SalesProposalAssignmentsManager({
                       </div>
                     </article>
                   );
-                })}
+                }) : (
+                  <section className="rounded-[18px] border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                    No encontramos ventas que coincidan con tu busqueda.
+                  </section>
+                )}
               </div>
             </>
           ) : (
