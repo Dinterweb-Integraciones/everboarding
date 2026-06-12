@@ -92,6 +92,17 @@ function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
   return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
+function getPlainInitiativeDescription(value: string | null | undefined, fallback = "Sin descripcion ejecutiva.") {
+  return richTextToPlainText(value) || fallback;
+}
+
+function getCatalogGroupInitiativeDescription(group: CatalogModalGroup) {
+  return getPlainInitiativeDescription(
+    group.description,
+    `Grupo de casos de uso recomendado para ${group.modalCategory}.`,
+  );
+}
+
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
 
 type WizardRecommendation = {
@@ -423,6 +434,7 @@ function getSnappedDayDelta(deltaX: number, dayWidth: number) {
 function createEditorDraft(initiative: SalesProposalInitiativeDraft) {
   return {
     ...initiative,
+    description: getPlainInitiativeDescription(initiative.description, ""),
     subitems: initiative.subitems.map((subitem) => ({ ...subitem })),
   };
 }
@@ -884,7 +896,7 @@ export function SalesProposalWorkspace({
           accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
             id: initiative.id,
             title: initiative.title,
-            description: initiative.description,
+            description: getPlainInitiativeDescription(initiative.description, ""),
             credits: calculateSalesInitiativeCredits(initiative),
             status: initiative.status,
             dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
@@ -1430,8 +1442,7 @@ function createInitiativeFromGroup(
   next.id = createLocalId("sales-initiative");
   next.title = group.name;
   next.type = group.modalCategory || group.name;
-  next.description =
-    group.description || `Grupo de casos de uso recomendado para ${group.modalCategory}.`;
+  next.description = getCatalogGroupInitiativeDescription(group);
     next.subitems = group.items.length
       ? group.items.map((item) => createProposalSubitemFromCatalog(item))
       : [
@@ -3057,7 +3068,7 @@ function mergeRecommendedGroups(
                                             {initiative.title}
                                           </h4>
                                           <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
-                                            {initiative.description || "Sin descripcion ejecutiva."}
+                                            {getPlainInitiativeDescription(initiative.description)}
                                           </p>
                                           {initiative.status === "backlog" ? (
                                             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -3283,7 +3294,7 @@ function mergeRecommendedGroups(
                               <div className="min-w-0">
                                 <h4 className="pr-3 text-[12px] font-bold leading-[1.35] text-[#33475b]">{initiative.title}</h4>
                                 <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.45] text-[#516f90]">
-                                  {initiative.description || "Sin descripción ejecutiva."}
+                                  {getPlainInitiativeDescription(initiative.description, "Sin descripción ejecutiva.")}
                                 </p>
                                 {initiative.status === "backlog" ? (
                                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -3650,7 +3661,7 @@ function mergeRecommendedGroups(
                             <div className="min-w-0">
                               <h4 className="text-[14px] font-bold text-[#33475b]">{initiative.title}</h4>
                               <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
-                                {initiative.description || "Sin descripción ejecutiva."}
+                                {getPlainInitiativeDescription(initiative.description, "Sin descripción ejecutiva.")}
                               </p>
                               <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                 {formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null)}

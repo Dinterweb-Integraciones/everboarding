@@ -112,6 +112,10 @@ function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
   return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
+function getPlainInitiativeDescription(value: string | null | undefined, fallback = "Sin descripcion ejecutiva.") {
+  return richTextToPlainText(value) || fallback;
+}
+
 function parseCalendarDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, (month || 1) - 1, day || 1);
@@ -338,7 +342,7 @@ export function PublicOnboardingPage({
           accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
             id: initiative.id,
             title: initiative.title,
-            description: initiative.description ?? "",
+            description: getPlainInitiativeDescription(initiative.description, ""),
             credits: initiative.credits,
             status: initiative.status,
             dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
@@ -907,7 +911,7 @@ export function PublicOnboardingPage({
         },
         body: JSON.stringify({
           title: draft.title.trim(),
-          description: draft.description.trim(),
+          description: getPlainInitiativeDescription(draft.description, ""),
           catalogItemIds: draft.selectedCatalogItemIds,
           groupId: draft.selectedGroupId?.trim() || undefined,
           targetStatus: resolvedTargetStatus,
@@ -1296,7 +1300,7 @@ export function PublicOnboardingPage({
     setFeedback(null);
     setRequestDraft({
       title: group.name,
-      description: group.description,
+      description: getPlainInitiativeDescription(group.description, ""),
       selectedCatalogItemIds: group.items.map((item) => item.id),
     });
     setCatalogSelection("");
@@ -1308,7 +1312,7 @@ export function PublicOnboardingPage({
   async function quickAddCatalogGroup(group: CatalogModalGroup) {
     await createPublicRequest({
       title: group.name,
-      description: group.description,
+      description: getPlainInitiativeDescription(group.description, ""),
       selectedCatalogItemIds: group.items.map((item) => item.id),
       selectedGroupId: group.id,
     }, requestTargetStatus);
@@ -1780,7 +1784,7 @@ export function PublicOnboardingPage({
                                   </span>
                                 </div>
                                 <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
-                                  {initiative.description || "Sin descripcion ejecutiva."}
+                                  {getPlainInitiativeDescription(initiative.description)}
                                 </p>
                                 {status === "backlog" && validationLabel ? (
                                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -2075,7 +2079,7 @@ export function PublicOnboardingPage({
                               <div className="min-w-0">
                                 <h4 className="text-[14px] font-bold text-[#33475b]">{initiative.title}</h4>
                                 <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
-                                  {initiative.description || "Sin descripcion ejecutiva."}
+                                  {getPlainInitiativeDescription(initiative.description)}
                                 </p>
                                 <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                   {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
@@ -2222,7 +2226,7 @@ export function PublicOnboardingPage({
                 <div className="mt-3 rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
                   <div className="min-h-[220px] rounded-[2px] border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b]">
                     <p className="whitespace-pre-wrap">
-                      {activeInitiativePreview.description || "Sin descripcion ejecutiva."}
+                      {getPlainInitiativeDescription(activeInitiativePreview.description)}
                     </p>
                   </div>
                 </div>

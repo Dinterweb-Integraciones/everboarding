@@ -107,6 +107,10 @@ function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
   return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
 }
 
+function getPlainInitiativeDescription(value: string | null | undefined, fallback = "Sin descripcion ejecutiva.") {
+  return richTextToPlainText(value) || fallback;
+}
+
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
 
 type WizardRecommendation = {
@@ -1327,7 +1331,7 @@ export function OnboardingClientPage({
       type: initiative.type ?? "",
       labels: initiative.labels ?? [],
       status: initiative.status,
-      description: initiative.description ?? "",
+      description: getPlainInitiativeDescription(initiative.description, ""),
       ownerClient: initiative.owner_client ?? "",
       ownerCSM: initiative.owner_csm ?? "",
       estStartDate: initiative.est_start_date ?? "",
@@ -1436,7 +1440,7 @@ export function OnboardingClientPage({
         title: group.name,
         type: group.modalCategory || group.name,
         status,
-        description: group.description || null,
+        description: getPlainInitiativeDescription(group.description, "") || null,
         owner_client: null,
         owner_csm: null,
         est_start_date: options?.estStartDate ?? null,
@@ -2210,7 +2214,7 @@ export function OnboardingClientPage({
           type: draft.type.trim() || null,
           labels: draft.labels,
           status: draft.status,
-          description: draft.description.trim() || null,
+          description: getPlainInitiativeDescription(draft.description, "") || null,
           owner_client: draft.ownerClient.trim() || null,
           owner_csm: draft.ownerCSM.trim() || null,
           est_start_date: draft.estStartDate || null,
@@ -2284,7 +2288,7 @@ export function OnboardingClientPage({
         type: draft.type.trim() || null,
         labels: draft.labels,
         status: draft.status,
-        description: draft.description.trim() || null,
+        description: getPlainInitiativeDescription(draft.description, "") || null,
         owner_client: draft.ownerClient.trim() || null,
         owner_csm: draft.ownerCSM.trim() || null,
         est_start_date: draft.estStartDate || null,
@@ -2576,7 +2580,7 @@ export function OnboardingClientPage({
           type: currentEditingInitiative?.type ?? "",
           labels: currentEditingInitiative?.labels ?? [],
           status: currentEditingInitiative?.status ?? "backlog",
-          description: currentEditingInitiative?.description ?? "",
+          description: getPlainInitiativeDescription(currentEditingInitiative?.description, ""),
           ownerClient: currentEditingInitiative?.owner_client ?? "",
           ownerCSM: currentEditingInitiative?.owner_csm ?? "",
           estStartDate: currentEditingInitiative?.est_start_date ?? "",
@@ -3147,7 +3151,7 @@ export function OnboardingClientPage({
                                     </span>
                                   </div>
                                   <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#516f90]">
-                                    {initiative.description || "Sin descripcion ejecutiva."}
+                                    {getPlainInitiativeDescription(initiative.description)}
                                   </p>
                                   {status === "backlog" ? (
                                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -3659,7 +3663,7 @@ export function OnboardingClientPage({
                               ) : null}
                             </div>
                             <p className="mt-1 text-[10px] text-[#516f90]">
-                              {initiative.description || "Sin descripcion ejecutiva."}
+                              {getPlainInitiativeDescription(initiative.description)}
                             </p>
                             <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                               {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
@@ -3795,7 +3799,7 @@ export function OnboardingClientPage({
                             <div className="min-w-0">
                               <p className="text-[11px] font-bold text-[#33475b]">{topItem.title}</p>
                               <p className="mt-1 text-[10px] text-[#516f90]">
-                                {topItem.description || "Sin descripcion ejecutiva."}
+                                {getPlainInitiativeDescription(topItem.description)}
                               </p>
                             </div>
                             <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
@@ -3864,7 +3868,7 @@ export function OnboardingClientPage({
                                 ) : null}
                               </div>
                               <p className="mt-1 text-[10px] text-[#516f90]">
-                                {initiative.description || "Sin descripcion ejecutiva."}
+                                {getPlainInitiativeDescription(initiative.description)}
                               </p>
                               <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                 {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
@@ -4993,7 +4997,7 @@ export function OnboardingClientPage({
                       />
                     ) : (
                       <div className="mt-3 min-h-[220px] whitespace-pre-wrap rounded-none border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b]">
-                        {draft.description?.trim() || "Sin descripcion ejecutiva."}
+                        {getPlainInitiativeDescription(draft.description)}
                       </div>
                     )}
                   </section>
