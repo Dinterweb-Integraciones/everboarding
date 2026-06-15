@@ -306,6 +306,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     appliedCouponCode: normalized.appliedCouponCode,
     appliedCouponType: normalized.appliedCouponType,
     appliedCouponPercentageOff: normalized.appliedCouponPercentageOff,
+    couponBaseContractedCredits: normalized.couponBaseContractedCredits,
     couponBaseQuotedPrice: normalized.couponBaseQuotedPrice,
     couponAppliedAt: normalized.couponAppliedAt,
     initiatives: normalized.initiatives,
@@ -329,6 +330,7 @@ function mergePersistedProposalIntoCurrent(
     appliedCouponCode: persisted.appliedCouponCode,
     appliedCouponType: persisted.appliedCouponType,
     appliedCouponPercentageOff: persisted.appliedCouponPercentageOff,
+    couponBaseContractedCredits: persisted.couponBaseContractedCredits,
     couponBaseQuotedPrice: persisted.couponBaseQuotedPrice,
     couponAppliedAt: persisted.couponAppliedAt,
   });
@@ -341,13 +343,15 @@ function applyActiveCouponPricing(
   if (proposal.appliedCouponType !== "percentage" || !proposal.appliedCouponPercentageOff) {
     return {
       ...proposal,
-      couponBaseQuotedPrice: proposal.appliedCouponType === "percentage" ? baseQuotedPrice : null,
+      couponBaseContractedCredits: proposal.appliedCouponType ? proposal.couponBaseContractedCredits : null,
+      couponBaseQuotedPrice: proposal.appliedCouponType ? proposal.couponBaseQuotedPrice : null,
     };
   }
 
   return {
     ...proposal,
     quotedPrice: applyPercentageDiscount(baseQuotedPrice, proposal.appliedCouponPercentageOff),
+    couponBaseContractedCredits: proposal.couponBaseContractedCredits ?? proposal.contractedCredits,
     couponBaseQuotedPrice: baseQuotedPrice,
   };
 }
@@ -742,6 +746,7 @@ export function SalesProposalWorkspace({
   );
   const [couponCode, setCouponCode] = useState(initialProposal?.appliedCouponCode ?? "");
   const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
+  const [isRemovingCoupon, setIsRemovingCoupon] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
@@ -2223,6 +2228,60 @@ function mergeRecommendedGroups(
     }
   }
 
+  async function handleRemoveCoupon() {
+    if (!proposal.appliedCouponCode.trim()) {
+      setFeedback({
+        tone: "error",
+        message: "La propuesta no tiene un cupon aplicado.",
+      });
+      return;
+    }
+
+    setIsRemovingCoupon(true);
+    setFeedback(null);
+
+    try {
+      const persistedProposal = await persistProposal();
+      const response = await fetch(`/api/sales-proposals/${persistedProposal.slug}/remove-coupon`, {
+        method: "POST",
+      });
+      const payload = (await response.json()) as {
+        proposal?: SalesProposalRecord;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.proposal) {
+        throw new Error(payload.message || "No pudimos remover el cupon.");
+      }
+
+      const normalizedProposal = normalizeSalesProposalDraft(payload.proposal);
+      setProposal(normalizedProposal);
+      setCouponCode("");
+      setIsCouponPanelOpen(false);
+
+      if (normalizedProposal.workspaceVariant === "dinterweb") {
+        setDinterwebPlanCreditsDraft(
+          String(Math.max(DINTERWEB_BASE_PACKAGE.credits, getDinterwebMonthlyCredits(normalizedProposal))),
+        );
+        setDinterwebPlanPriceDraft(
+          String(Math.max(DINTERWEB_BASE_PACKAGE.price, getDinterwebMonthlyPrice(normalizedProposal))),
+        );
+      }
+
+      setFeedback({
+        tone: "success",
+        message: payload.message || "Cupon removido correctamente.",
+      });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos remover el cupon de la propuesta."),
+      });
+    } finally {
+      setIsRemovingCoupon(false);
+    }
+  }
+
   function handleRedeemCoupon() {
     setIsCouponPanelOpen((current) => !current);
   }
@@ -2740,6 +2799,17 @@ function mergeRecommendedGroups(
                   >
                     {hasAppliedCoupon ? percentageCouponLabel : appliedCouponLabel}
                   </button>
+
+                  {hasAppliedCoupon ? (
+                    <button
+                      type="button"
+                      onClick={handleRemoveCoupon}
+                      disabled={isRemovingCoupon}
+                      className="inline-flex h-9 w-full items-center justify-center rounded-[4px] border border-[#ffbcac] bg-white px-4 text-[12px] font-bold text-[#ff7a59] transition hover:border-[#ff7a59] hover:bg-[#fff3ef] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isRemovingCoupon ? "Quitando..." : "Quitar cupon"}
+                    </button>
+                  ) : null}
 
                   {!hasAppliedCoupon && isCouponPanelOpen ? (
                     <div className="w-full rounded-[4px] border border-[#d7efe8] bg-[#f7fffc] p-2.5">

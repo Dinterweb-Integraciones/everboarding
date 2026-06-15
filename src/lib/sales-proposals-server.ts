@@ -1,6 +1,10 @@
 import Stripe from "stripe";
 
-import { PUBLIC_EXTRA_CREDIT_PACKAGE } from "@/lib/constants";
+import {
+  PUBLIC_EXTRA_CREDIT_PACKAGE,
+  SALES_PROPOSAL_BASE_CREDITS,
+  SALES_PROPOSAL_BASE_PRICE,
+} from "@/lib/constants";
 import {
   applyPercentageDiscount,
   getSalesProposalActivationValidation,
@@ -226,10 +230,12 @@ function isCouponCurrentlyActive(coupon: SalesCouponRow, now = new Date()) {
 function applyCouponTermsToProposal(proposal: SalesProposalRecord, coupon: SalesCouponRow): SalesProposalDraft {
   const couponType = getSalesCouponType(coupon);
   const percentageOff = couponType === "percentage" ? getSalesCouponPercentageOff(coupon) : null;
+  const baseContractedCredits =
+    proposal.appliedCouponId === coupon.id && proposal.couponBaseContractedCredits !== null
+      ? proposal.couponBaseContractedCredits
+      : proposal.contractedCredits;
   const baseQuotedPrice =
-    couponType === "percentage" &&
-    proposal.appliedCouponId === coupon.id &&
-    proposal.couponBaseQuotedPrice !== null
+    proposal.appliedCouponId === coupon.id && proposal.couponBaseQuotedPrice !== null
       ? proposal.couponBaseQuotedPrice
       : proposal.quotedPrice;
 
@@ -246,6 +252,7 @@ function applyCouponTermsToProposal(proposal: SalesProposalRecord, coupon: Sales
     appliedCouponCode: normalizeSalesCouponCode(coupon.code),
     appliedCouponType: couponType,
     appliedCouponPercentageOff: percentageOff,
+    couponBaseContractedCredits: baseContractedCredits,
     couponBaseQuotedPrice: baseQuotedPrice,
     couponAppliedAt: proposal.couponAppliedAt || new Date().toISOString(),
   };
@@ -506,6 +513,62 @@ export async function applySalesCouponToProposal(proposalSlug: string, couponCod
   const nextProposal = applyCouponTermsToProposal(proposal, coupon);
 
   return saveSalesProposal(nextProposal, proposalSlug);
+}
+
+export async function removeSalesCouponFromProposal(proposalSlug: string) {
+  const admin = createSupabaseAdminClient();
+  const { data: proposalRow, error } = await admin
+    .from("sales_proposals")
+    .select("*")
+    .eq("slug", proposalSlug)
+    .maybeSingle();
+  const typedProposalRow = proposalRow as SalesProposalRow | null;
+
+  if (error || !typedProposalRow) {
+    throw error ?? new Error("No encontramos la propuesta comercial.");
+  }
+
+  if (
+    typedProposalRow.status === "checkout_pending" ||
+    typedProposalRow.status === "transfer_pending" ||
+    typedProposalRow.status === "paid" ||
+    typedProposalRow.status === "board_activated"
+  ) {
+    throw new Error("El cupon solo se puede quitar antes de iniciar el checkout.");
+  }
+
+  const proposal = await mapSalesProposalRecord(typedProposalRow);
+
+  if (!proposal.appliedCouponCode.trim()) {
+    throw new Error("La propuesta no tiene un cupon aplicado.");
+  }
+
+  const restoredCredits =
+    proposal.appliedCouponType === "package_override"
+      ? proposal.couponBaseContractedCredits ?? SALES_PROPOSAL_BASE_CREDITS
+      : proposal.contractedCredits;
+  const restoredQuotedPrice =
+    proposal.appliedCouponType === "package_override"
+      ? proposal.couponBaseQuotedPrice ?? SALES_PROPOSAL_BASE_PRICE
+      : proposal.appliedCouponType === "percentage" && proposal.couponBaseQuotedPrice !== null
+        ? proposal.couponBaseQuotedPrice
+        : proposal.quotedPrice;
+
+  return saveSalesProposal(
+    {
+      ...proposal,
+      contractedCredits: restoredCredits,
+      quotedPrice: restoredQuotedPrice,
+      appliedCouponId: null,
+      appliedCouponCode: "",
+      appliedCouponType: null,
+      appliedCouponPercentageOff: null,
+      couponBaseContractedCredits: null,
+      couponBaseQuotedPrice: null,
+      couponAppliedAt: null,
+    },
+    proposalSlug,
+  );
 }
 
 export async function updateSalesProposalProspectExtraPackages(

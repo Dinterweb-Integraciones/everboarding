@@ -81,6 +81,7 @@ export type SalesProposalDraft = {
   appliedCouponCode: string;
   appliedCouponType: SalesCouponType | null;
   appliedCouponPercentageOff: number | null;
+  couponBaseContractedCredits: number | null;
   couponBaseQuotedPrice: number | null;
   couponAppliedAt: string | null;
   transferBank: string;
@@ -126,6 +127,7 @@ type CompactSalesProposalSnapshot = {
   w?: "hubspot" | "dinterweb";
   ct?: SalesCouponType | null;
   cp?: number | null;
+  cc?: number | null;
   cb?: number | null;
   pe?: number | null;
   cv?: number | null;
@@ -138,6 +140,7 @@ function createCompactSalesProposalSnapshot(
     | "workspaceVariant"
     | "appliedCouponType"
     | "appliedCouponPercentageOff"
+    | "couponBaseContractedCredits"
     | "couponBaseQuotedPrice"
     | "prospectExtraPackageQuantity"
     | "creditValidityDays"
@@ -148,6 +151,7 @@ function createCompactSalesProposalSnapshot(
     w: draft.workspaceVariant,
     ct: draft.appliedCouponType,
     cp: draft.appliedCouponPercentageOff,
+    cc: draft.couponBaseContractedCredits,
     cb: draft.couponBaseQuotedPrice,
     pe: draft.prospectExtraPackageQuantity,
     cv: draft.creditValidityDays,
@@ -212,6 +216,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     appliedCouponCode: "",
     appliedCouponType: null,
     appliedCouponPercentageOff: null,
+    couponBaseContractedCredits: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
     transferBank: "",
@@ -275,6 +280,7 @@ export function createDuplicatedSalesProposalDraft(
     appliedCouponCode: "",
     appliedCouponType: null,
     appliedCouponPercentageOff: null,
+    couponBaseContractedCredits: null,
     couponBaseQuotedPrice: null,
     couponAppliedAt: null,
     transferBank: "",
@@ -493,6 +499,7 @@ export function normalizeSalesProposalDraft(
   const billingMode = normalizeSalesBillingMode(input.billingMode ?? base.billingMode);
   const couponType = input.appliedCouponType ?? input.ct ?? null;
   const couponPercentageOff = input.appliedCouponPercentageOff ?? input.cp;
+  const couponBaseContractedCredits = input.couponBaseContractedCredits ?? input.cc;
   const couponBaseQuotedPrice = input.couponBaseQuotedPrice ?? input.cb;
   const rawInitiatives = Array.isArray(input.initiatives)
     ? input.initiatives
@@ -515,6 +522,10 @@ export function normalizeSalesProposalDraft(
       couponPercentageOff === null || couponPercentageOff === undefined
         ? null
         : normalizeCouponPercentageOff(couponPercentageOff),
+    couponBaseContractedCredits:
+      couponBaseContractedCredits === null || couponBaseContractedCredits === undefined
+        ? null
+        : Math.max(0, safeParseNumber(couponBaseContractedCredits)),
     couponBaseQuotedPrice:
       couponBaseQuotedPrice === null || couponBaseQuotedPrice === undefined
         ? null
@@ -602,6 +613,10 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
       snapshot.appliedCouponPercentageOff === null || snapshot.appliedCouponPercentageOff === undefined
         ? null
         : normalizeCouponPercentageOff(snapshot.appliedCouponPercentageOff),
+    couponBaseContractedCredits:
+      snapshot.couponBaseContractedCredits === null || snapshot.couponBaseContractedCredits === undefined
+        ? null
+        : Math.max(0, safeParseNumber(snapshot.couponBaseContractedCredits)),
     couponBaseQuotedPrice:
       snapshot.couponBaseQuotedPrice === null || snapshot.couponBaseQuotedPrice === undefined
         ? null
