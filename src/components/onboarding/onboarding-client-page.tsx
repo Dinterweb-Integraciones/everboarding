@@ -481,6 +481,7 @@ export function OnboardingClientPage({
   const [wizardPortalState, setWizardPortalState] = useState<"new" | "optimize">("new");
   const [wizardContext, setWizardContext] = useState("");
   const [isExportingReport, setIsExportingReport] = useState(false);
+  const [showAllCompleted, setShowAllCompleted] = useState(initialData.config.show_all_completed);
   const [offerDraft, setOfferDraft] = useState<{
     credits: number;
     price: number;
@@ -2950,11 +2951,11 @@ export function OnboardingClientPage({
       ) : null}
 
       <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
-        <div className="overflow-x-auto overflow-y-hidden">
+        <div className="overflow-x-auto">
           <div className="flex min-h-[270px] min-w-max gap-4">
             {boardStatuses.map((status) => {
               const visibleItems =
-                status === "completed" && !config.show_all_completed
+                status === "completed" && !showAllCompleted
                   ? groupedInitiatives[status].slice(0, 6)
                   : groupedInitiatives[status];
               const totalCredits = groupedInitiatives[status].reduce(
@@ -3335,13 +3336,10 @@ export function OnboardingClientPage({
                         variant="ghost"
                         className="rounded-[3px] px-2 py-2 text-[10px] font-bold text-[#516f90]"
                         onClick={() =>
-                          setConfig((current) => ({
-                            ...current,
-                            show_all_completed: !current.show_all_completed,
-                          }))
+                          setShowAllCompleted((current) => !current)
                         }
                       >
-                        {config.show_all_completed ? "Ocultar" : "Ver todos"}
+                        {showAllCompleted ? "Ocultar" : "Ver todos"}
                       </Button>
                     ) : null}
                   </div>
