@@ -11,6 +11,7 @@ type ReportKey = "client_health" | "customer_success_clients";
 type SortKey =
   | "client_name"
   | "health_color"
+  | "start_date"
   | "days_without_progress"
   | "approved_work_remaining"
   | "credits_remaining"
@@ -67,6 +68,20 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
 }
 
+function formatDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "Sin fecha";
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
 function compareHealth(a: HealthColor, b: HealthColor) {
   const weight: Record<HealthColor, number> = { red: 0, yellow: 1, green: 2 };
   return weight[a] - weight[b];
@@ -114,6 +129,10 @@ function sortRows(rows: ClientHealthReportRow[], sortKey: SortKey) {
 
     if (sortKey === "health_color") {
       return compareHealth(a.health_color, b.health_color);
+    }
+
+    if (sortKey === "start_date") {
+      return new Date(`${b.start_date}T00:00:00`).getTime() - new Date(`${a.start_date}T00:00:00`).getTime();
     }
 
     return Number(b[sortKey]) - Number(a[sortKey]);
@@ -270,6 +289,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                 onChange={(value) => setSortKey(value as SortKey)}
                 icon={<ArrowDownWideNarrow className="h-4 w-4" />}
                 options={[
+                  ["start_date", "Fecha de inicio"],
                   ["days_without_progress", "Dias sin avanzar"],
                   ["approved_work_remaining", "Casos validados"],
                   ["credits_remaining", "Creditos restantes"],
@@ -294,11 +314,12 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] border-collapse text-left">
+            <table className="w-full min-w-[1240px] border-collapse text-left">
               <thead className="bg-[#f8fbfd]">
                 <tr className="border-b border-[#dfe3eb]">
                   {[
                     "Cliente",
+                    "Fecha de inicio",
                     "Customer Success",
                     "Etapa",
                     "Primer caso a tiempo",
@@ -330,6 +351,9 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                       >
                         {row.client_name}
                       </a>
+                    </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {formatDate(row.start_date)}
                     </td>
                     <td className="px-4 py-4">
                       <div className="text-sm font-bold text-[#33475b]">
