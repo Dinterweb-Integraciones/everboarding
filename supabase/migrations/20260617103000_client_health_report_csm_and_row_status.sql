@@ -1,0 +1,143 @@
+create or replace view public.client_health_report
+with (security_invoker = true)
+as
+with initiative_credits as (
+  select
+    i.id,
+    i.client_id,
+    i.status,
+    i.created_at,
+    i.updated_at,
+    coalesce(sum(s.unit_credits * s.quantity), 0)::integer as credits
+  from public.onboarding_initiatives i
+  left join public.onboarding_initiative_subitems s
+    on s.initiative_id = i.id
+  group by i.id
+),
+north_rollup as (
+  select
+    client_id,
+    count(*) filter (where north_star_status = 'completed')::integer as north_stars_completed
+  from public.onboarding_north_star_history
+  group by client_id
+),
+client_rollup as (
+  select
+    c.id as client_id,
+    c.name as client_name,
+    c.slug as client_slug,
+    c.csm_user_id as customer_success_id,
+    csm.full_name as customer_success_name,
+    csm.email as customer_success_email,
+    coalesce(config.start_date, c.created_at::date) as start_date,
+    coalesce(config.custom_plan_billing_mode::text, 'subscription') as billing_mode,
+    count(i.id)::integer as total_cases,
+    count(i.id) filter (where i.status = 'completed')::integer as completed_cases,
+    count(i.id) filter (where i.status in ('planned', 'executing'))::integer as approved_work_remaining,
+    min(i.updated_at) filter (where i.status = 'completed') as first_completed_at,
+    max(i.updated_at) filter (where i.status = 'completed') as last_completed_at,
+    coalesce(sum(i.credits) filter (where i.status in ('planned', 'executing')), 0)::integer as reserved_credits,
+    coalesce(sum(i.credits) filter (where i.status = 'completed'), 0)::integer as consumed_credits,
+    coalesce(config.lost_credits, 0)::integer as lost_credits,
+    coalesce(config.extra_capacity, 0)::integer as extra_capacity,
+    coalesce(north.north_stars_completed, 0)::integer as north_stars_completed
+  from public.clients c
+  left join public.profiles csm
+    on csm.id = c.csm_user_id
+  left join public.onboarding_configs config
+    on config.client_id = c.id
+  left join initiative_credits i
+    on i.client_id = c.id
+  left join north_rollup north
+    on north.client_id = c.id
+  group by c.id, c.name, c.slug, c.csm_user_id, c.created_at, csm.full_name, csm.email, config.start_date, config.custom_plan_billing_mode, config.lost_credits, config.extra_capacity, north.north_stars_completed
+),
+credit_rollup as (
+  select
+    g.client_id,
+    coalesce(sum(greatest(g.granted_credits - g.used_credits - g.expired_credits, 0)) filter (where g.expires_at >= current_date), 0)::integer as active_credits
+  from public.client_credit_grants g
+  group by g.client_id
+),
+signals as (
+  select
+    r.*,
+    greatest(
+      0,
+      current_date - coalesce(r.last_completed_at::date, r.start_date)
+    )::integer as days_without_progress,
+    greatest(
+      coalesce(cr.active_credits, 0) + r.extra_capacity - r.reserved_credits - r.consumed_credits - r.lost_credits,
+      0
+    )::integer as credits_remaining,
+    case
+      when r.approved_work_remaining = 0 then 'neutral'
+      when current_date - coalesce(r.last_completed_at::date, r.start_date) <= 7 then 'green'
+      when current_date - coalesce(r.last_completed_at::date, r.start_date) <= 14 then 'yellow'
+      else 'red'
+    end as movement_signal,
+    case
+      when r.approved_work_remaining >= 3 then 'green'
+      when r.approved_work_remaining >= 1 then 'yellow'
+      else 'red'
+    end as plan_signal,
+    case
+      when greatest(coalesce(cr.active_credits, 0) + r.extra_capacity - r.reserved_credits - r.consumed_credits - r.lost_credits, 0) >= 3 then 'green'
+      when greatest(coalesce(cr.active_credits, 0) + r.extra_capacity - r.reserved_credits - r.consumed_credits - r.lost_credits, 0) >= 1 then 'yellow'
+      else 'red'
+    end as credits_signal,
+    case
+      when r.first_completed_at is not null then null
+      when current_date - r.start_date <= 10 then 'green'
+      when current_date - r.start_date <= 14 then 'yellow'
+      else 'red'
+    end as first_case_signal,
+    case
+      when r.first_completed_at is not null and r.first_completed_at::date <= r.start_date + 14 then 'si'
+      when r.first_completed_at is not null then 'no'
+      when current_date - r.start_date <= 10 then 'si'
+      when current_date - r.start_date <= 14 then 'en riesgo'
+      else 'no'
+    end as first_case_on_time,
+    case
+      when r.total_cases = 0 then 'entrada'
+      when r.completed_cases = 0 then 'primer caso'
+      when r.billing_mode = 'subscription' and r.north_stars_completed >= 1 then 'recurrencia'
+      else 'construyendo'
+    end as stage
+  from client_rollup r
+  left join credit_rollup cr
+    on cr.client_id = r.client_id
+)
+select
+  client_id,
+  client_name,
+  client_slug,
+  case
+    when 'red' in (movement_signal, plan_signal, credits_signal, coalesce(first_case_signal, 'green')) then 'red'
+    when 'yellow' in (movement_signal, plan_signal, credits_signal, coalesce(first_case_signal, 'green')) then 'yellow'
+    else 'green'
+  end as health_color,
+  stage,
+  first_case_on_time,
+  days_without_progress,
+  approved_work_remaining,
+  credits_remaining,
+  north_stars_completed,
+  case
+    when billing_mode = 'one_time' then 'paquetes'
+    else 'recurrencia'
+  end as billing,
+  movement_signal,
+  plan_signal,
+  credits_signal,
+  first_case_signal,
+  start_date,
+  first_completed_at,
+  last_completed_at,
+  customer_success_id,
+  customer_success_name,
+  customer_success_email
+from signals;
+
+grant select on public.client_health_report to authenticated, service_role;

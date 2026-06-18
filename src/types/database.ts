@@ -960,6 +960,33 @@ export type Database = {
         };
       };
     };
+    Views: {
+      client_health_report: {
+        Row: {
+          client_id: string;
+          client_name: string;
+          client_slug: string;
+          customer_success_id: string | null;
+          customer_success_name: string | null;
+          customer_success_email: string | null;
+          health_color: "green" | "yellow" | "red";
+          stage: "entrada" | "primer caso" | "construyendo" | "recurrencia";
+          first_case_on_time: "si" | "en riesgo" | "no";
+          days_without_progress: number;
+          approved_work_remaining: number;
+          credits_remaining: number;
+          north_stars_completed: number;
+          billing: "paquetes" | "recurrencia";
+          movement_signal: "green" | "yellow" | "red" | "neutral";
+          plan_signal: "green" | "yellow" | "red";
+          credits_signal: "green" | "yellow" | "red";
+          first_case_signal: "green" | "yellow" | "red" | null;
+          start_date: string;
+          first_completed_at: string | null;
+          last_completed_at: string | null;
+        };
+      };
+    };
     Enums: {
       client_access_role: "viewer" | "editor" | "owner";
       client_profile_role: "sales" | "csm" | "client" | "stakeholder";
@@ -1046,5 +1073,6 @@ export type Database = {
 type PublicSchema = Database["public"];
 
 export type Tables<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Row"];
+export type Views<T extends keyof PublicSchema["Views"]> = PublicSchema["Views"][T]["Row"];
 export type Inserts<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Insert"];
 export type Updates<T extends keyof PublicSchema["Tables"]> = PublicSchema["Tables"][T]["Update"];

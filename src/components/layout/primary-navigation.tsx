@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
+import { BarChart3, ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { PlatformRole } from "@/lib/platform-access";
@@ -42,6 +42,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
   const canManageUsers = platformRole === "superadmin";
   const canSeeSales = platformRole === "superadmin";
   const canSeeFinance = platformRole === "finance" || platformRole === "superadmin";
+  const canSeeReports = platformRole === "admin" || platformRole === "superadmin";
   const catalogLinksToRender = canSeeCatalogs
     ? canManageUsers
       ? [...catalogLinks, { href: "/cs/usuarios", label: "Usuarios" }]
@@ -49,6 +50,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
     : [];
   const mobileLinks = [
     { href: "/dashboard", label: "Inicio", icon: House },
+    ...(canSeeReports ? [{ href: "/informes", label: "Informes", icon: BarChart3 }] : []),
     ...(platformRole === "admin" || platformRole === "superadmin"
       ? [
           { href: "/cs/prompts", label: "Prompts", icon: MessageSquareText },
@@ -83,6 +85,13 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           <House className="h-4 w-4 shrink-0" />
           <span className={navLabelClass}>Inicio</span>
         </Link>
+
+        {canSeeReports ? (
+          <Link href="/informes" className={getNavItemClass(isActive(pathname, "/informes"))}>
+            <BarChart3 className="h-4 w-4 shrink-0" />
+            <span className={navLabelClass}>Informes</span>
+          </Link>
+        ) : null}
 
         {canSeeCatalogs ? (
           <Link href="/cs/prompts" className={getNavItemClass(isActive(pathname, "/cs/prompts"))}>
