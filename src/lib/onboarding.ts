@@ -715,10 +715,10 @@ export function calculateMetrics(
   const planCredits = getMonthlyContractCredits(config);
   const activeCycles = Math.max(cycles, 1);
   const extraCapacityCredits = getExtraCapacityCredits(config);
-  const total = billing
-    ? billing.active_credits + extraCapacityCredits
-    : planCredits * activeCycles + extraCapacityCredits;
   const lost = config.lost_credits + (billing?.expired_unused_credits ?? 0);
+  const total = billing
+    ? billing.active_credits + reserved + consumed + (billing.expired_unused_credits ?? 0) + extraCapacityCredits
+    : planCredits * activeCycles + extraCapacityCredits;
 
   return {
     total,
