@@ -119,6 +119,9 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
       type: initiative.type ?? "",
       status: initiative.status,
       validationStatus: getSalesValidationStatusFromLabels(initiative.labels),
+      commerciallyWaived: (initiative.labels ?? []).some(
+        (label) => label === "Bonificado comercialmente" || label === "Obsequiado comercialmente",
+      ),
       description: initiative.description ?? "",
       estStartDate: initiative.est_start_date ?? "",
       estEndDate: initiative.est_end_date ?? "",

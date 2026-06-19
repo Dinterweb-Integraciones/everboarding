@@ -43,6 +43,7 @@ export type SalesProposalInitiativeDraft = {
   type: string;
   status: InitiativeStatus;
   validationStatus: "reviewing" | "validated" | null;
+  commerciallyWaived: boolean;
   description: string;
   estStartDate: string;
   estEndDate: string;
@@ -121,6 +122,7 @@ type CompactSalesProposalInitiativeSnapshot = [
   isBlocked?: number | boolean,
   subitems?: CompactSalesProposalSubitemSnapshot[],
   validationStatus?: "reviewing" | "validated" | null,
+  commerciallyWaived?: number | boolean,
 ];
 
 type CompactSalesProposalSnapshot = {
@@ -175,6 +177,7 @@ function createCompactSalesProposalSnapshot(
         subitem.quantity,
       ]),
       initiative.validationStatus,
+      initiative.commerciallyWaived ? 1 : 0,
     ]),
   };
 }
@@ -399,6 +402,21 @@ function normalizeSalesPeriodMonths(value: unknown): 1 | 3 | 6 | 12 {
   return value === 3 || value === 6 || value === 12 ? value : 1;
 }
 
+function normalizeSalesCatalogText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function canApplyCommercialWaiver(
+  workspaceVariant: SalesProposalDraft["workspaceVariant"],
+  initiative: Pick<SalesProposalInitiativeDraft, "type">,
+) {
+  return workspaceVariant === "dinterweb" && normalizeSalesCatalogText(initiative.type) === "fundamentales";
+}
+
 export function createEmptySalesInitiative(status: InitiativeStatus): SalesProposalInitiativeDraft {
   return {
     id: createLocalId("sales-initiative"),
@@ -411,6 +429,7 @@ export function createEmptySalesInitiative(status: InitiativeStatus): SalesPropo
     estEndDate: "",
     sortOrder: 0,
     isBlocked: false,
+    commerciallyWaived: false,
     subitems: [],
   };
 }
@@ -465,6 +484,7 @@ function normalizeSalesProposalInitiativeDraft(
       status: initiative[3] || "backlog",
       validationStatus:
         initiative[10] === "reviewing" || initiative[10] === "validated" ? initiative[10] : null,
+      commerciallyWaived: Boolean(initiative[11]),
       description: initiative[4] || "",
       estStartDate: initiative[5] || "",
       estEndDate: initiative[6] || "",
@@ -483,6 +503,7 @@ function normalizeSalesProposalInitiativeDraft(
       initiative.validationStatus === "reviewing" || initiative.validationStatus === "validated"
         ? initiative.validationStatus
         : null,
+    commerciallyWaived: Boolean(initiative.commerciallyWaived),
     description: initiative.description || "",
     estStartDate: initiative.estStartDate || "",
     estEndDate: initiative.estEndDate || "",
@@ -507,13 +528,25 @@ export function normalizeSalesProposalDraft(
       ? input.i
       : [];
 
+  const workspaceVariant =
+    input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot";
+  const initiatives = rawInitiatives.map((initiative, initiativeIndex) => {
+    const normalizedInitiative = normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex);
+
+    return {
+      ...normalizedInitiative,
+      commerciallyWaived:
+        normalizedInitiative.commerciallyWaived &&
+        canApplyCommercialWaiver(workspaceVariant, normalizedInitiative),
+    };
+  });
+
   return {
     ...base,
     ...input,
     currency: (input.currency || base.currency).toLowerCase(),
     paymentMethod: normalizeSalesPaymentMethod(input.paymentMethod ?? base.paymentMethod),
-    workspaceVariant:
-      input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot",
+    workspaceVariant,
     billingMode,
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
@@ -553,9 +586,7 @@ export function normalizeSalesProposalDraft(
     ),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
-    initiatives: rawInitiatives.map((initiative, initiativeIndex) =>
-      normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex),
-    ),
+    initiatives,
   };
 }
 
@@ -774,6 +805,10 @@ export function calculateSalesProposalMetrics(draft: SalesProposalDraft) {
 }
 
 export function calculateSalesInitiativeCredits(initiative: SalesProposalInitiativeDraft) {
+  if (initiative.commerciallyWaived) {
+    return 0;
+  }
+
   return calculateCredits(
     initiative.subitems.map((subitem) => ({
       unit_credits: subitem.unitCredits,

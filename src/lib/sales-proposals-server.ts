@@ -1078,6 +1078,7 @@ async function activateSalesProposalWithPaymentContext(
               : initiative.validationStatus === "reviewing"
                 ? "En revisión"
                 : null,
+            initiative.commerciallyWaived ? "Bonificado comercialmente" : null,
           ].filter(Boolean),
           last_activity: toIsoDate(),
           is_blocked: initiative.isBlocked,
@@ -1101,7 +1102,7 @@ async function activateSalesProposalWithPaymentContext(
           name: subitem.name,
           status: subitem.status,
           target_date: subitem.targetDate || null,
-          unit_credits: subitem.unitCredits,
+          unit_credits: initiative.commerciallyWaived ? 0 : subitem.unitCredits,
           quantity: subitem.quantity,
           sort_order: subitemIndex,
         }));
@@ -1117,7 +1118,9 @@ async function activateSalesProposalWithPaymentContext(
 
       await admin.from("onboarding_activity_logs").insert(({
         initiative_id: typedInsertedInitiative.id,
-        entry: "Iniciativa activada desde la plataforma comercial.",
+        entry: initiative.commerciallyWaived
+          ? "Iniciativa activada desde la plataforma comercial como bonificacion sin consumo de creditos."
+          : "Iniciativa activada desde la plataforma comercial.",
         created_by_user_id: proposal.assignedCsmUserId,
       }) as never);
     }

@@ -456,6 +456,22 @@ function isKickoffInitiative(initiative: Pick<SalesProposalInitiativeDraft, "tit
   return normalizeCatalogText(initiative.title).includes("kickoff");
 }
 
+function isFundamentalInitiative(initiative: Pick<SalesProposalInitiativeDraft, "type">) {
+  return normalizeCatalogText(initiative.type) === normalizeCatalogText("Fundamentales");
+}
+
+function canToggleCommercialWaiver(initiative: Pick<SalesProposalInitiativeDraft, "status" | "type">) {
+  return initiative.status === "planned" && isFundamentalInitiative(initiative);
+}
+
+function calculateSalesInitiativeOriginalCredits(initiative: SalesProposalInitiativeDraft) {
+  return initiative.subitems.reduce(
+    (total, subitem) =>
+      total + safeParseNumber(subitem.unitCredits) * safeParseNumber(subitem.quantity),
+    0,
+  );
+}
+
 function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): SalesProposalInitiativeDraft {
   const kickoffStartDate = startDate || toIsoDate();
   const kickoffEndDate = toIsoDate(addCalendarDays(parseCalendarDate(kickoffStartDate), 5));
@@ -917,7 +933,7 @@ export function SalesProposalWorkspace({
               id: subitem.id,
               name: subitem.name,
               quantity: subitem.quantity,
-              unitCredits: subitem.unitCredits,
+              unitCredits: initiative.commerciallyWaived ? 0 : subitem.unitCredits,
               statusLabel: TASK_STATUS_META[subitem.status]?.label,
             })),
           }));
@@ -1228,6 +1244,17 @@ export function SalesProposalWorkspace({
           : initiative,
       ),
     }));
+  }
+
+  function toggleInitiativeDraftCommercialWaiver() {
+    if (!initiativeDraft || !canToggleCommercialWaiver(initiativeDraft)) {
+      return;
+    }
+
+    setInitiativeDraft({
+      ...initiativeDraft,
+      commerciallyWaived: !initiativeDraft.commerciallyWaived,
+    });
   }
 
   function saveInitiativeDraft() {
@@ -3061,6 +3088,7 @@ function mergeRecommendedGroups(
                               {stageItems.length ? (
                                 stageItems.map((initiative) => {
                                   const credits = calculateSalesInitiativeCredits(initiative);
+                                  const originalCredits = calculateSalesInitiativeOriginalCredits(initiative);
                                   const progress = calculateSalesInitiativeProgress(initiative);
                                   const isDraggable = true;
 
@@ -3125,7 +3153,11 @@ function mergeRecommendedGroups(
                                         setDropTargetStatus(null);
                                         setDropIndicator(null);
                                       }}
-                                      className={`relative w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] cursor-grab active:cursor-grabbing ${
+                                      className={`relative w-full rounded-[7px] border px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] cursor-grab active:cursor-grabbing ${
+                                        initiative.commerciallyWaived
+                                          ? "border-[#9ee7db] bg-[#f0fffc]"
+                                          : "border-[#d8e2ec] bg-white"
+                                      } ${
                                         dropIndicator?.status === emptyStatus &&
                                         dropIndicator.initiativeId === initiative.id &&
                                         dropIndicator.position === "before"
@@ -3196,9 +3228,31 @@ function mergeRecommendedGroups(
                                         <span className="text-[10px] font-semibold text-[#9cb1c6]">
                                           {progress === 0 ? "0d inactivo" : `${progress}% avance`}
                                         </span>
-                                        <span className="rounded-[3px] bg-[#eef3f8] px-2 py-0.5 text-[10px] font-bold text-[#33475b]">
-                                          {credits} CR
-                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                          {initiative.commerciallyWaived ? (
+                                            <span className="rounded-[3px] bg-[#dffaf5] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#007f70]">
+                                              Bonificado
+                                            </span>
+                                          ) : null}
+                                          <span
+                                            className={`rounded-[3px] px-2 py-0.5 text-[10px] font-bold ${
+                                              initiative.commerciallyWaived
+                                                ? "bg-[#dffaf5] text-[#007f70]"
+                                                : "bg-[#eef3f8] text-[#33475b]"
+                                            }`}
+                                          >
+                                            {initiative.commerciallyWaived ? (
+                                              <>
+                                                <span className="mr-1 text-[#7faea7] line-through">
+                                                  {originalCredits} CR
+                                                </span>
+                                                {credits} CR
+                                              </>
+                                            ) : (
+                                              `${credits} CR`
+                                            )}
+                                          </span>
+                                        </div>
                                       </div>
                                     </button>
                                   );
@@ -3282,6 +3336,7 @@ function mergeRecommendedGroups(
                     >
                       {items.map((initiative) => {
                         const credits = calculateSalesInitiativeCredits(initiative);
+                        const originalCredits = calculateSalesInitiativeOriginalCredits(initiative);
                         const progress = calculateSalesInitiativeProgress(initiative);
                         const isDraggable = true;
 
@@ -3351,7 +3406,11 @@ function mergeRecommendedGroups(
                               setDropTargetStatus(null);
                               setDropIndicator(null);
                             }}
-                            className={`relative w-full rounded-[7px] border border-[#d8e2ec] bg-white px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] ${
+                            className={`relative w-full rounded-[7px] border px-3.5 py-3.5 text-left shadow-[0_1px_3px_rgba(51,71,91,0.07)] transition hover:-translate-y-[1px] hover:border-[#cbd6e2] hover:shadow-[0_8px_24px_rgba(51,71,91,0.08)] ${
+                              initiative.commerciallyWaived
+                                ? "border-[#9ee7db] bg-[#f0fffc]"
+                                : "border-[#d8e2ec] bg-white"
+                            } ${
                               isDraggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
                             } ${
                               dropIndicator?.status === status &&
@@ -3422,9 +3481,31 @@ function mergeRecommendedGroups(
                               <span className="text-[10px] font-semibold text-[#9cb1c6]">
                                 {progress === 0 ? "0d inactivo" : `${progress}% avance`}
                               </span>
-                              <span className="rounded-[3px] bg-[#eef3f8] px-2 py-0.5 text-[10px] font-bold text-[#33475b]">
-                                {credits} CR
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {initiative.commerciallyWaived ? (
+                                  <span className="rounded-[3px] bg-[#dffaf5] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#007f70]">
+                                    Bonificado
+                                  </span>
+                                ) : null}
+                                <span
+                                  className={`rounded-[3px] px-2 py-0.5 text-[10px] font-bold ${
+                                    initiative.commerciallyWaived
+                                      ? "bg-[#dffaf5] text-[#007f70]"
+                                      : "bg-[#eef3f8] text-[#33475b]"
+                                  }`}
+                                >
+                                  {initiative.commerciallyWaived ? (
+                                    <>
+                                      <span className="mr-1 text-[#7faea7] line-through">
+                                        {originalCredits} CR
+                                      </span>
+                                      {credits} CR
+                                    </>
+                                  ) : (
+                                    `${credits} CR`
+                                  )}
+                                </span>
+                              </div>
                             </div>
                           </button>
                         );
@@ -4598,6 +4679,13 @@ function mergeRecommendedGroups(
       ) : null}
 
       {initiativeDraft ? (
+        (() => {
+          const draftCredits = calculateSalesInitiativeCredits(initiativeDraft);
+          const draftOriginalCredits = calculateSalesInitiativeOriginalCredits(initiativeDraft);
+          const canUseCommercialAgreement =
+            isDinterwebVariant && canToggleCommercialWaiver(initiativeDraft);
+
+          return (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">
           <button type="button" className="absolute inset-0" onClick={closeInitiativeEditor} aria-label="Cerrar" />
           <aside className="relative h-full w-full max-w-[760px] overflow-y-auto border-l border-[#dfe3eb] bg-white shadow-[-16px_0_40px_rgba(51,71,91,0.12)]">
@@ -4677,7 +4765,16 @@ function mergeRecommendedGroups(
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Actividades incluidas</p>
                   <span className="text-[13px] font-bold text-[#ff7a59]">
-                    {calculateSalesInitiativeCredits(initiativeDraft)} CR
+                    {initiativeDraft.commerciallyWaived ? (
+                      <>
+                        <span className="mr-1 text-[#9cb1c6] line-through">
+                          {draftOriginalCredits} CR
+                        </span>
+                        {draftCredits} CR
+                      </>
+                    ) : (
+                      `${draftCredits} CR`
+                    )}
                   </span>
                 </div>
 
@@ -4768,7 +4865,33 @@ function mergeRecommendedGroups(
 
                 <div className="mt-4 flex items-center justify-between border-t border-[#dfe3eb] pt-3">
                   <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#33475b]">Costo total:</p>
-                  <p className="text-[14px] font-bold text-[#ff7a59]">{calculateSalesInitiativeCredits(initiativeDraft)} CR</p>
+                  <div className="flex items-center gap-2">
+                    {canUseCommercialAgreement ? (
+                      <button
+                        type="button"
+                        onClick={toggleInitiativeDraftCommercialWaiver}
+                        className={`h-6 rounded-[4px] border px-2 text-[10px] font-bold uppercase tracking-[0.08em] transition ${
+                          initiativeDraft.commerciallyWaived
+                            ? "border-[#bfe8df] bg-[#f0fffc] text-[#007f70]"
+                            : "border-[#cbd6e2] bg-white text-[#516f90] opacity-85 hover:border-[#8fb3d9] hover:opacity-100"
+                        }`}
+                      >
+                        {initiativeDraft.commerciallyWaived ? "Bonificado" : "Acuerdo"}
+                      </button>
+                    ) : null}
+                    <p className="text-[14px] font-bold text-[#ff7a59]">
+                      {initiativeDraft.commerciallyWaived ? (
+                        <>
+                          <span className="mr-1 text-[#9cb1c6] line-through">
+                            {draftOriginalCredits} CR
+                          </span>
+                          {draftCredits} CR
+                        </>
+                      ) : (
+                        `${draftCredits} CR`
+                      )}
+                    </p>
+                  </div>
                 </div>
               </section>
 
@@ -4819,6 +4942,8 @@ function mergeRecommendedGroups(
             </div>
           </aside>
         </div>
+          );
+        })()
       ) : null}
 
       <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />

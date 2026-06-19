@@ -118,7 +118,7 @@ export function mapProposalInitiativeToPublicRecord(
     type: initiative.type,
     labels: [getSalesValidationLabel(initiative.validationStatus)].filter(
       (label): label is string => Boolean(label),
-    ),
+    ).concat(initiative.commerciallyWaived ? ["Bonificado comercialmente"] : []),
     status,
     description: initiative.description,
     owner_client: null,
@@ -133,7 +133,10 @@ export function mapProposalInitiativeToPublicRecord(
     updated_at: nowIso,
     created_by_user_id: null,
     updated_by_user_id: null,
-    subitems,
+    subitems: subitems.map((subitem) => ({
+      ...subitem,
+      unit_credits: initiative.commerciallyWaived ? 0 : subitem.unit_credits,
+    })),
     logs: [],
     credits: calculateSalesInitiativeCredits(initiative),
     progressPercent: calculateSalesInitiativeProgress(initiative),

@@ -259,6 +259,7 @@ export async function POST(request: Request, context: RouteContext) {
         estEndDate: "",
         sortOrder: nextSortOrder,
         isBlocked: false,
+        commerciallyWaived: false,
         subitems: input.items.length
           ? input.items.map((item) => ({
               id: createLocalId("sales-subitem"),

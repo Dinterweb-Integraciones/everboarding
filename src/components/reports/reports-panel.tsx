@@ -1,13 +1,22 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, Search, Table2 } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, CalendarClock, Search, Table2, UsersRound } from "lucide-react";
 
 import type { Views } from "@/types/database";
 
-type ClientHealthReportRow = Views<"client_health_report">;
+type ClientHealthReportRow = Views<"client_health_report"> & {
+  north_stars_count: number;
+  kickoff_completed_at: string | null;
+  days_since_kickoff_completed: number | null;
+  first_use_case_completed_at: string | null;
+  days_to_first_use_case: number | null;
+  stagnant_stage_days: number | null;
+  evaluation_cases_count: number;
+  validated_evaluation_cases_count: number;
+};
 type HealthColor = ClientHealthReportRow["health_color"];
-type ReportKey = "client_health" | "customer_success_clients";
+type PanelKey = "clients" | "customer_success";
 type SortKey =
   | "client_name"
   | "health_color"
@@ -15,6 +24,7 @@ type SortKey =
   | "days_without_progress"
   | "approved_work_remaining"
   | "credits_remaining"
+  | "north_stars_count"
   | "north_stars_completed";
 
 type FilterState = {
@@ -47,20 +57,23 @@ const initialFilters: FilterState = {
   customerSuccess: "all",
 };
 
-const reports: Array<{
-  key: ReportKey;
+const panels: Array<{
+  key: PanelKey;
   label: string;
   title: string;
+  description: string;
 }> = [
   {
-    key: "client_health",
-    label: "Estado clientes",
-    title: "Estado clientes",
+    key: "clients",
+    label: "Clientes",
+    title: "Clientes",
+    description: "Seguimiento operativo de clientes, avance, creditos y nortes.",
   },
   {
-    key: "customer_success_clients",
-    label: "Clientes por Customer Success",
-    title: "Clientes por Customer Success",
+    key: "customer_success",
+    label: "Customer Success",
+    title: "Customer Success",
+    description: "Reportes del equipo de Customer Success.",
   },
 ];
 
@@ -140,11 +153,11 @@ function sortRows(rows: ClientHealthReportRow[], sortKey: SortKey) {
 }
 
 export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
-  const [selectedReportKey, setSelectedReportKey] = useState<ReportKey>("client_health");
+  const [selectedPanelKey, setSelectedPanelKey] = useState<PanelKey>("clients");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("days_without_progress");
   const [filters, setFilters] = useState<FilterState>(initialFilters);
-  const selectedReport = reports.find((report) => report.key === selectedReportKey) ?? reports[0];
+  const selectedPanel = panels.find((panel) => panel.key === selectedPanelKey) ?? panels[0];
 
   const filteredRows = useMemo(
     () => sortRows(rows.filter((row) => applyFilters(row, filters, searchTerm)), sortKey),
@@ -174,28 +187,75 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
 
   return (
     <div className="min-h-[calc(100vh-116px)] bg-[#f5f8fb] px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
+      <div className="flex w-full flex-col gap-5">
         <div className="flex flex-col gap-4 border-b border-[#dfe3eb] pb-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#00a4bd]">
               Informes
             </p>
-            <h1 className="mt-2 text-2xl font-black text-[#213343]">{selectedReport.title}</h1>
+            <h1 className="mt-2 text-2xl font-black text-[#213343]">Paneles</h1>
           </div>
 
-          <SelectFilter
-            compact
-            label="Informe"
-            value={selectedReportKey}
-            onChange={(value) => setSelectedReportKey(value as ReportKey)}
-            options={reports.map((report) => [report.key, report.label])}
-          />
+          <div className="inline-flex rounded-[4px] border border-[#cbd6e2] bg-white p-1" aria-label="Paneles de informes">
+            {panels.map((panel) => (
+              <button
+                key={panel.key}
+                type="button"
+                onClick={() => setSelectedPanelKey(panel.key)}
+                className={`h-9 rounded-[3px] px-4 text-sm font-black transition ${
+                  selectedPanelKey === panel.key
+                    ? "bg-[#e5f5f8] text-[#006b7a]"
+                    : "text-[#516f90] hover:bg-[#f8fbfd]"
+                }`}
+              >
+                {panel.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {selectedReportKey === "client_health" ? (
-        <section className="rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
-          <div className="border-b border-[#dfe3eb] p-4">
-            <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_repeat(4,minmax(150px,180px))]">
+        <section className="border border-[#dfe3eb] bg-[#eef3f7]">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#dfe3eb] bg-white px-4 py-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#00a4bd]">
+                Panel
+              </p>
+              <h2 className="mt-1 text-xl font-black text-[#213343]">{selectedPanel.title}</h2>
+              <p className="mt-1 text-sm font-semibold text-[#516f90]">{selectedPanel.description}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-3">
+              <div>
+                <p className="text-lg font-black text-[#213343]">{formatNumber(rows.length)}</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Clientes</p>
+              </div>
+              <div>
+                <p className="text-lg font-black text-[#213343]">{formatNumber(filteredRows.length)}</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Filtrados</p>
+              </div>
+              <div>
+                <p className="text-lg font-black text-[#213343]">{formatNumber(rows.reduce((sum, row) => sum + row.north_stars_count, 0))}</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Nortes</p>
+              </div>
+            </div>
+          </div>
+
+          {selectedPanelKey === "clients" ? (
+            <div className="grid gap-4 p-4 xl:grid-cols-2">
+              <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm xl:col-span-2">
+              <div className="border-b border-[#dfe3eb] p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-black text-[#213343]">Clientes</h3>
+                    <p className="mt-1 text-xs font-semibold text-[#516f90]">
+                      Estado operativo, avance, creditos y nortes por cliente.
+                    </p>
+                  </div>
+                  <span className="rounded-[999px] bg-[#f5f8fa] px-3 py-1 text-xs font-black text-[#516f90]">
+                    {formatNumber(filteredRows.length)} clientes
+                  </span>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-[320px_repeat(7,minmax(128px,1fr))_112px] xl:items-end">
               <label className="space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
                   Buscar cliente
@@ -212,6 +272,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
               </label>
 
               <SelectFilter
+                compact
                 label="Semaforo"
                 value={filters.health}
                 onChange={(value) => setFilter("health", value as FilterState["health"])}
@@ -224,6 +285,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
               />
 
               <SelectFilter
+                compact
                 label="Primer caso a tiempo"
                 value={filters.firstCase}
                 onChange={(value) => setFilter("firstCase", value as FilterState["firstCase"])}
@@ -236,6 +298,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
               />
 
               <SelectFilter
+                compact
                 label="Casos validados"
                 value={filters.work}
                 onChange={(value) => setFilter("work", value as FilterState["work"])}
@@ -247,6 +310,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
               />
 
               <SelectFilter
+                compact
                 label="Creditos"
                 value={filters.credits}
                 onChange={(value) => setFilter("credits", value as FilterState["credits"])}
@@ -256,9 +320,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                   ["zero", "Cero"],
                 ]}
               />
-            </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
               <SelectFilter
                 compact
                 label="Customer Success"
@@ -293,6 +355,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                   ["days_without_progress", "Dias sin avanzar"],
                   ["approved_work_remaining", "Casos validados"],
                   ["credits_remaining", "Creditos restantes"],
+                  ["north_stars_count", "Cantidad de nortes"],
                   ["north_stars_completed", "Norte definido"],
                   ["health_color", "Semaforo"],
                   ["client_name", "Cliente A-Z"],
@@ -305,16 +368,16 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                   setFilters(initialFilters);
                   setSearchTerm("");
                 }}
-                className="mt-[22px] inline-flex h-10 items-center gap-2 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#516f90] transition hover:bg-[#f8fbfd]"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-[4px] border border-[#ffb49f] bg-[#fff3ee] px-3 text-sm font-bold text-[#c2410c] transition hover:bg-[#ffe4dc]"
               >
                 <ArrowDownAZ className="h-4 w-4" />
                 Limpiar
               </button>
+                </div>
             </div>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1240px] border-collapse text-left">
+              <div className="overflow-x-auto">
+            <table className="w-full min-w-[1360px] border-collapse text-left">
               <thead className="bg-[#f8fbfd]">
                 <tr className="border-b border-[#dfe3eb]">
                   {[
@@ -326,6 +389,7 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                     "Dias sin avanzar",
                     "Casos validados",
                     "Creditos restantes",
+                    "Cantidad de nortes",
                     "Norte definido",
                     "Facturacion",
                   ].map((header) => (
@@ -380,6 +444,9 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                     <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
                       {formatNumber(row.credits_remaining)}
                     </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {formatNumber(row.north_stars_count)}
+                    </td>
                     <td className="px-4 py-4">
                       <StatusPill value={row.north_stars_completed > 0 ? "si" : "no"} />
                     </td>
@@ -390,9 +457,9 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                 ))}
               </tbody>
             </table>
-          </div>
+              </div>
 
-          {filteredRows.length === 0 ? (
+              {filteredRows.length === 0 ? (
             <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
               <div className="flex h-11 w-11 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white text-[#516f90]">
                 <Table2 className="h-5 w-5" />
@@ -404,114 +471,457 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                 </p>
               </div>
             </div>
-          ) : null}
+              ) : null}
+              </article>
+
+              <KickoffWindowReport
+                rows={rows}
+                title="Dentro de 14 dias"
+                description="Clientes con Kickoff completado hace menos de 14 dias y primer caso de uso pendiente."
+                emptyTitle="Sin clientes dentro de esta ventana"
+                emptyDescription="No hay clientes con Kickoff completado hace menos de 14 dias y primer caso pendiente."
+                rowFilter={(row) =>
+                  row.days_since_kickoff_completed !== null &&
+                  row.days_since_kickoff_completed < 14
+                }
+                barTone="bg-[#00a4bd]"
+                getSecondaryLabel={(days) => `${formatNumber(Math.max(14 - days, 0))} restantes`}
+              />
+
+              <KickoffWindowReport
+                rows={rows}
+                title="Fuera de 14 dias"
+                description="Clientes con Kickoff completado hace mas de 14 dias y primer caso de uso pendiente."
+                emptyTitle="Sin clientes fuera de esta ventana"
+                emptyDescription="No hay clientes con Kickoff completado hace mas de 14 dias y primer caso pendiente."
+                rowFilter={(row) =>
+                  row.days_since_kickoff_completed !== null &&
+                  row.days_since_kickoff_completed > 14
+                }
+                barTone="bg-[#f97316]"
+                getSecondaryLabel={(days) => `${formatNumber(Math.max(days - 14, 0))} dias fuera`}
+              />
+
+              <FirstCaseCompletionReport
+                rows={rows}
+                title="Logrados en 14 dias"
+                description="Clientes que cumplieron su primer caso de uso en menos de 14 dias desde Kickoff completado."
+                emptyTitle="Sin clientes logrados en esta ventana"
+                emptyDescription="No hay clientes con primer caso completado en menos de 14 dias desde Kickoff."
+                rowFilter={(row) => row.days_to_first_use_case !== null && row.days_to_first_use_case < 14}
+                barTone="bg-[#22c55e]"
+              />
+
+              <FirstCaseCompletionReport
+                rows={rows}
+                title="Incumplidos en 14 dias"
+                description="Clientes que cumplieron su primer caso de uso en mas de 14 dias desde Kickoff completado."
+                emptyTitle="Sin clientes incumplidos en esta ventana"
+                emptyDescription="No hay clientes con primer caso completado en mas de 14 dias desde Kickoff."
+                rowFilter={(row) => row.days_to_first_use_case !== null && row.days_to_first_use_case > 14}
+                barTone="bg-[#ef4444]"
+              />
+
+              <ClientMetricBarsReport
+                rows={rows}
+                title="Clientes estancados"
+                description="Clientes activos con casos de uso que llevan mas de 7 dias en la misma etapa."
+                emptyTitle="Sin clientes estancados"
+                emptyDescription="No hay clientes activos con casos de uso por encima de 7 dias en la misma etapa."
+                rowFilter={(row) => row.stagnant_stage_days !== null && row.stagnant_stage_days > 7}
+                getValue={(row) => row.stagnant_stage_days ?? 0}
+                getMeta={(row) => `${formatNumber(row.stagnant_stage_days ?? 0)} dias en etapa actual`}
+                valueLabel="Dias"
+                barTone="bg-[#8b5cf6]"
+                sortDirection="desc"
+              />
+
+              <ClientMetricBarsReport
+                rows={rows}
+                title="Casos en Evaluacion"
+                description="Clientes activos con menos de 3 casos de uso en la etapa En Evaluacion."
+                emptyTitle="Sin clientes bajo el minimo"
+                emptyDescription="No hay clientes activos con menos de 3 casos de uso en evaluacion."
+                rowFilter={(row) => row.evaluation_cases_count < 3}
+                getValue={(row) => row.evaluation_cases_count}
+                getMeta={(row) => `${formatNumber(row.evaluation_cases_count)} casos en evaluacion`}
+                valueLabel="Casos"
+                barTone="bg-[#00a4bd]"
+                maxValue={3}
+                sortDirection="asc"
+              />
+
+              <ClientMetricBarsReport
+                rows={rows}
+                title="Casos validados en Evaluacion"
+                description="Clientes activos con menos de 3 casos de uso validados en la etapa En Evaluacion."
+                emptyTitle="Sin clientes bajo el minimo"
+                emptyDescription="No hay clientes activos con menos de 3 casos validados en evaluacion."
+                rowFilter={(row) => row.validated_evaluation_cases_count < 3}
+                getValue={(row) => row.validated_evaluation_cases_count}
+                getMeta={(row) => `${formatNumber(row.validated_evaluation_cases_count)} validados en evaluacion`}
+                valueLabel="Casos"
+                barTone="bg-[#14b8a6]"
+                maxValue={3}
+                sortDirection="asc"
+              />
+            </div>
+          ) : (
+            <div className="p-4">
+              <article className="flex min-h-72 flex-col items-center justify-center rounded-[6px] border border-dashed border-[#cbd6e2] bg-white px-6 py-12 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] text-[#516f90]">
+                  <UsersRound className="h-5 w-5" />
+                </div>
+                <h3 className="mt-4 text-base font-black text-[#213343]">Panel sin reportes</h3>
+                <p className="mt-2 max-w-md text-sm font-semibold text-[#516f90]">
+                  Este panel queda reservado para los proximos reportes de Customer Success.
+                </p>
+              </article>
+            </div>
+          )}
         </section>
-        ) : (
-          <CustomerSuccessClientsChart rows={rows} />
-        )}
       </div>
     </div>
   );
 }
 
-function CustomerSuccessClientsChart({ rows }: { rows: ClientHealthReportRow[] }) {
-  const chartRows = useMemo(() => {
-    const buckets = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        email: string | null;
-        total: number;
-        green: number;
-        yellow: number;
-        red: number;
-      }
-    >();
+function KickoffWindowReport({
+  rows,
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
+  rowFilter,
+  barTone,
+  getSecondaryLabel,
+}: {
+  rows: ClientHealthReportRow[];
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  rowFilter: (row: ClientHealthReportRow) => boolean;
+  barTone: string;
+  getSecondaryLabel: (days: number) => string;
+}) {
+  const chartRows = useMemo(
+    () =>
+      rows
+        .filter(
+          (row) =>
+            row.first_use_case_completed_at === null &&
+            rowFilter(row),
+        )
+        .sort(
+          (first, second) =>
+            Number(second.days_since_kickoff_completed ?? 0) -
+            Number(first.days_since_kickoff_completed ?? 0),
+        ),
+    [rowFilter, rows],
+  );
 
-    rows.forEach((row) => {
-      const id = row.customer_success_id ?? "unassigned";
-      const current =
-        buckets.get(id) ??
-        {
-          id,
-          name: row.customer_success_name || row.customer_success_email || "Sin asignar",
-          email: row.customer_success_email,
-          total: 0,
-          green: 0,
-          yellow: 0,
-          red: 0,
-        };
-
-      current.total += 1;
-      current[row.health_color] += 1;
-      buckets.set(id, current);
-    });
-
-    return [...buckets.values()].sort((first, second) => {
-      if (second.total !== first.total) return second.total - first.total;
-      return first.name.localeCompare(second.name, "es");
-    });
-  }, [rows]);
-
-  const maxTotal = Math.max(...chartRows.map((row) => row.total), 1);
+  const maxDays = Math.max(...chartRows.map((row) => row.days_since_kickoff_completed ?? 0), 14);
 
   return (
-    <section className="rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+    <article className="rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
       <div className="border-b border-[#dfe3eb] p-4">
-        <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-[#516f90]">
-          <Legend color="bg-emerald-400" label="Verde" />
-          <Legend color="bg-amber-400" label="Amarillo" />
-          <Legend color="bg-rose-400" label="Rojo" />
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-black text-[#213343]">{title}</h3>
+            <p className="mt-1 text-xs font-semibold text-[#516f90]">
+              {description}
+            </p>
+          </div>
+          <span className="rounded-[999px] bg-[#f5f8fa] px-3 py-1 text-xs font-black text-[#516f90]">
+            {formatNumber(chartRows.length)} clientes
+          </span>
         </div>
       </div>
 
-      <div className="divide-y divide-[#edf1f5]">
-        {chartRows.map((row) => {
-          const barWidth = `${Math.max((row.total / maxTotal) * 100, 6)}%`;
-          const greenWidth = `${(row.green / row.total) * 100}%`;
-          const yellowWidth = `${(row.yellow / row.total) * 100}%`;
-          const redWidth = `${(row.red / row.total) * 100}%`;
+      {chartRows.length ? (
+        <div className="divide-y divide-[#edf1f5]">
+          {chartRows.map((row) => {
+            const days = row.days_since_kickoff_completed ?? 0;
+            const progress = Math.min(Math.max((days / maxDays) * 100, 4), 100);
 
-          return (
-            <div key={row.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[260px_1fr_72px] lg:items-center">
-              <div>
-                <p className="text-sm font-black text-[#213343]">{row.name}</p>
-                {row.email ? (
-                  <p className="mt-0.5 text-xs font-semibold text-[#516f90]">{row.email}</p>
-                ) : null}
-              </div>
+            return (
+              <div key={row.client_id} className="grid gap-3 px-4 py-4 lg:grid-cols-[260px_1fr_96px] lg:items-center">
+                <div>
+                  <a
+                    href={`/clients/${row.client_id}`}
+                    className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
+                  >
+                    {row.client_name}
+                  </a>
+                  <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
+                    Kickoff: {row.kickoff_completed_at ? formatDate(row.kickoff_completed_at.slice(0, 10)) : "Sin fecha"}
+                  </p>
+                </div>
 
-              <div className="h-9 rounded-[4px] bg-[#f1f5f9]">
-                <div className="flex h-full overflow-hidden rounded-[4px]" style={{ width: barWidth }}>
-                  <div className="bg-emerald-400" style={{ width: greenWidth }} />
-                  <div className="bg-amber-400" style={{ width: yellowWidth }} />
-                  <div className="bg-rose-400" style={{ width: redWidth }} />
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.12em] text-[#99acc2]">
+                    <span>{formatNumber(days)} dias</span>
+                    <span>{getSecondaryLabel(days)}</span>
+                  </div>
+                  <div className="h-9 overflow-hidden rounded-[4px] bg-[#f1f5f9]">
+                    <div
+                      className={`flex h-full items-center justify-end rounded-[4px] px-2 text-xs font-black text-white ${barTone}`}
+                      style={{ width: `${progress}%` }}
+                    >
+                      {formatNumber(days)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-left lg:text-right">
+                  <p className="text-xl font-black text-[#213343]">{formatNumber(days)}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
+                    Dias
+                  </p>
                 </div>
               </div>
-
-              <div className="text-left lg:text-right">
-                <p className="text-xl font-black text-[#213343]">{formatNumber(row.total)}</p>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
-                  Clientes
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] text-[#516f90]">
+            <CalendarClock className="h-5 w-5" />
+          </div>
+          <p className="mt-3 text-sm font-black text-[#213343]">{emptyTitle}</p>
+          <p className="mt-1 max-w-sm text-sm font-semibold text-[#516f90]">
+            {emptyDescription}
+          </p>
+        </div>
+      )}
+    </article>
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+function FirstCaseCompletionReport({
+  rows,
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
+  rowFilter,
+  barTone,
+}: {
+  rows: ClientHealthReportRow[];
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  rowFilter: (row: ClientHealthReportRow) => boolean;
+  barTone: string;
+}) {
+  const chartRows = useMemo(
+    () =>
+      rows
+        .filter(
+          (row) =>
+            row.kickoff_completed_at !== null &&
+            row.first_use_case_completed_at !== null &&
+            rowFilter(row),
+        )
+        .sort(
+          (first, second) =>
+            Number(second.days_to_first_use_case ?? 0) -
+            Number(first.days_to_first_use_case ?? 0),
+        ),
+    [rowFilter, rows],
+  );
+
+  const maxDays = Math.max(...chartRows.map((row) => row.days_to_first_use_case ?? 0), 14);
+
   return (
-    <div className="inline-flex items-center gap-2">
-      <span className={`h-3 w-3 rounded-full ${color}`} />
-      {label}
-    </div>
+    <article className="rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+      <div className="border-b border-[#dfe3eb] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-black text-[#213343]">{title}</h3>
+            <p className="mt-1 text-xs font-semibold text-[#516f90]">
+              {description}
+            </p>
+          </div>
+          <span className="rounded-[999px] bg-[#f5f8fa] px-3 py-1 text-xs font-black text-[#516f90]">
+            {formatNumber(chartRows.length)} clientes
+          </span>
+        </div>
+      </div>
+
+      {chartRows.length ? (
+        <div className="divide-y divide-[#edf1f5]">
+          {chartRows.map((row) => {
+            const days = row.days_to_first_use_case ?? 0;
+            const progress = Math.min(Math.max((days / maxDays) * 100, 4), 100);
+
+            return (
+              <div key={row.client_id} className="grid gap-3 px-4 py-4 lg:grid-cols-[260px_1fr_96px] lg:items-center">
+                <div>
+                  <a
+                    href={`/clients/${row.client_id}`}
+                    className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
+                  >
+                    {row.client_name}
+                  </a>
+                  <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
+                    Primer caso:{" "}
+                    {row.first_use_case_completed_at
+                      ? formatDate(row.first_use_case_completed_at.slice(0, 10))
+                      : "Sin fecha"}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.12em] text-[#99acc2]">
+                    <span>{formatNumber(days)} dias</span>
+                    <span>desde Kickoff</span>
+                  </div>
+                  <div className="h-9 overflow-hidden rounded-[4px] bg-[#f1f5f9]">
+                    <div
+                      className={`flex h-full items-center justify-end rounded-[4px] px-2 text-xs font-black text-white ${barTone}`}
+                      style={{ width: `${progress}%` }}
+                    >
+                      {formatNumber(days)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-left lg:text-right">
+                  <p className="text-xl font-black text-[#213343]">{formatNumber(days)}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
+                    Dias
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] text-[#516f90]">
+            <CalendarClock className="h-5 w-5" />
+          </div>
+          <p className="mt-3 text-sm font-black text-[#213343]">{emptyTitle}</p>
+          <p className="mt-1 max-w-sm text-sm font-semibold text-[#516f90]">
+            {emptyDescription}
+          </p>
+        </div>
+      )}
+    </article>
   );
 }
+
+function ClientMetricBarsReport({
+  rows,
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
+  rowFilter,
+  getValue,
+  getMeta,
+  valueLabel,
+  barTone,
+  maxValue,
+  sortDirection,
+}: {
+  rows: ClientHealthReportRow[];
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  rowFilter: (row: ClientHealthReportRow) => boolean;
+  getValue: (row: ClientHealthReportRow) => number;
+  getMeta: (row: ClientHealthReportRow) => string;
+  valueLabel: string;
+  barTone: string;
+  maxValue?: number;
+  sortDirection: "asc" | "desc";
+}) {
+  const chartRows = useMemo(
+    () =>
+      rows
+        .filter(rowFilter)
+        .sort((first, second) => {
+          const delta = getValue(first) - getValue(second);
+          return sortDirection === "asc" ? delta : -delta;
+        }),
+    [getValue, rowFilter, rows, sortDirection],
+  );
+  const resolvedMaxValue = Math.max(maxValue ?? 0, ...chartRows.map(getValue), 1);
+
+  return (
+    <article className="rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+      <div className="border-b border-[#dfe3eb] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-black text-[#213343]">{title}</h3>
+            <p className="mt-1 text-xs font-semibold text-[#516f90]">{description}</p>
+          </div>
+          <span className="rounded-[999px] bg-[#f5f8fa] px-3 py-1 text-xs font-black text-[#516f90]">
+            {formatNumber(chartRows.length)} clientes
+          </span>
+        </div>
+      </div>
+
+      {chartRows.length ? (
+        <div className="divide-y divide-[#edf1f5]">
+          {chartRows.map((row) => {
+            const value = getValue(row);
+            const progress = Math.min(Math.max((value / resolvedMaxValue) * 100, value === 0 ? 2 : 4), 100);
+
+            return (
+              <div key={row.client_id} className="grid gap-3 px-4 py-4 lg:grid-cols-[260px_1fr_96px] lg:items-center">
+                <div>
+                  <a
+                    href={`/clients/${row.client_id}`}
+                    className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
+                  >
+                    {row.client_name}
+                  </a>
+                  <p className="mt-0.5 text-xs font-semibold text-[#516f90]">{getMeta(row)}</p>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.12em] text-[#99acc2]">
+                    <span>{formatNumber(value)} {valueLabel.toLowerCase()}</span>
+                    <span>{sortDirection === "asc" ? "menor primero" : "mayor primero"}</span>
+                  </div>
+                  <div className="h-9 overflow-hidden rounded-[4px] bg-[#f1f5f9]">
+                    <div
+                      className={`flex h-full items-center justify-end rounded-[4px] px-2 text-xs font-black text-white ${barTone}`}
+                      style={{ width: `${progress}%` }}
+                    >
+                      {formatNumber(value)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-left lg:text-right">
+                  <p className="text-xl font-black text-[#213343]">{formatNumber(value)}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
+                    {valueLabel}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] text-[#516f90]">
+            <CalendarClock className="h-5 w-5" />
+          </div>
+          <p className="mt-3 text-sm font-black text-[#213343]">{emptyTitle}</p>
+          <p className="mt-1 max-w-sm text-sm font-semibold text-[#516f90]">{emptyDescription}</p>
+        </div>
+      )}
+    </article>
+  );
+}
+
 
 function SelectFilter({
   label,
@@ -529,7 +939,7 @@ function SelectFilter({
   icon?: ReactNode;
 }) {
   return (
-    <label className={compact ? "min-w-44 space-y-1.5" : "space-y-1.5"}>
+    <label className={compact ? "min-w-0 space-y-1.5" : "space-y-1.5"}>
       <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
         {label}
       </span>
