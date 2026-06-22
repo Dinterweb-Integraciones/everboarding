@@ -565,6 +565,8 @@ export function PublicOnboardingPage({
         Boolean(billing.paid_at) ||
         (!usesStripeMembership && billing.active_credits > 0) ||
         hasActivatedWork;
+  const isProspectAwaitingClientActivation =
+    audience === "prospect" && hasPaidCycleAccess;
   const shouldShowPaymentCta = paymentAmount > 0 && !hasPaidCycleAccess;
   const shouldPromptPayment = shouldShowPaymentCta;
   const hasAppliedCoupon = Boolean(prospectProposal?.appliedCouponCode.trim());
@@ -1465,6 +1467,24 @@ export function PublicOnboardingPage({
                 }`}
               >
                 {audience === "prospect" ? (
+                  isProspectAwaitingClientActivation ? (
+                    <div className="w-full rounded-[10px] border border-[#9fe7dc] bg-[#f7fffc] px-5 py-4 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#e6fffb] text-[#00a88f]">
+                          <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-extrabold text-[#001d3d]">
+                            Tu pago fue confirmado
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-[#516f90]">
+                            Estamos preparando tu espacio de trabajo. El siguiente paso es tu
+                            sesión de kickoff; recibirás los detalles en el correo registrado.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
                   <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
                     <div className="flex flex-col items-stretch sm:flex-row">
                       <div className="flex min-w-0 flex-1 flex-col justify-center px-3 py-2 sm:min-w-[118px]">
@@ -1574,6 +1594,7 @@ export function PublicOnboardingPage({
                       </div>
                     </div>
                   </div>
+                  )
                 ) : null}
                 <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
                   {audience === "client"

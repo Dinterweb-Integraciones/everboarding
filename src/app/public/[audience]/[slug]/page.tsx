@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { PublicOnboardingPage } from "@/components/onboarding/public-onboarding-page";
 import { Card } from "@/components/ui/card";
@@ -69,9 +69,15 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     notFound();
   }
 
+  const prospectProposal =
+    audience === "prospect" ? await getSalesProposalBySlug(slug) : null;
+
+  if (prospectProposal?.activatedClientId) {
+    redirect(`/public/client/${prospectProposal.activatedClientId}`);
+  }
+
   const admin = createSupabaseAdminClient();
   const [
-    prospectProposal,
     { data: catalogRows, error: catalogError },
     { data: catalogCategoryRows, error: catalogCategoriesError },
     { data: catalogGroupRows, error: catalogGroupsError },
@@ -79,7 +85,6 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     { data: catalogGroupCategoryLinkRows, error: catalogGroupCategoryLinksError },
     { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
   ] = await Promise.all([
-    audience === "prospect" ? getSalesProposalBySlug(slug) : Promise.resolve(null),
     admin
       .from("credit_catalog_items")
       .select("*")
