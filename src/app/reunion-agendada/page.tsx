@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import { CalendarCheck2 } from "lucide-react";
 
-import { MeetingLandingFrameEscape } from "@/components/onboarding/meeting-landing-frame-escape";
-
 export const metadata: Metadata = {
   title: "Reunión agendada",
   description: "Tu reunión ha quedado agendada.",
@@ -16,7 +14,6 @@ export const metadata: Metadata = {
 export default function MeetingScheduledPage() {
   return (
     <main className="min-h-screen bg-[#f5f8fa] px-5 py-10 text-[#001d3d] sm:px-8 sm:py-16">
-      <MeetingLandingFrameEscape />
       <Script
         src="https://play.vidyard.com/embed/v4.js"
         strategy="afterInteractive"
