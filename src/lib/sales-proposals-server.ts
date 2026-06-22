@@ -711,11 +711,12 @@ async function activateSalesProposalFromCoupon(
 export async function activateSalesProposal(
   request: Request,
   proposal: SalesProposalRecord,
+  checkoutOptions: SalesProposalCheckoutOptions = {},
 ): Promise<SalesProposalActivationResult> {
   const appliedCouponCode = normalizeSalesCouponCode(proposal.appliedCouponCode);
 
   if (!appliedCouponCode) {
-    return { url: await createSalesProposalCheckout(request, proposal) };
+    return { url: await createSalesProposalCheckout(request, proposal, checkoutOptions) };
   }
 
   if (proposal.quotedPrice > 0) {
@@ -728,7 +729,7 @@ export async function activateSalesProposal(
       };
     }
 
-    return { url: await createSalesProposalCheckout(request, proposal) };
+    return { url: await createSalesProposalCheckout(request, proposal, checkoutOptions) };
   }
 
   const refreshedProposal = await activateSalesProposalFromCoupon(proposal);

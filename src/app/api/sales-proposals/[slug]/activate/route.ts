@@ -17,7 +17,14 @@ export async function POST(request: Request, { params }: SalesProposalActivateRo
       return NextResponse.json({ message: proposalAccess.message }, { status: proposalAccess.status });
     }
 
-    const activationResult = await activateSalesProposal(request, proposalAccess.proposal);
+    const requestOrigin = request.headers.get("origin") || new URL(request.url).origin;
+    const origin =
+      requestOrigin.includes("localhost") || requestOrigin.includes("127.0.0.1")
+        ? requestOrigin.replace(/\/$/, "")
+        : (process.env.NEXT_PUBLIC_SITE_URL || requestOrigin).replace(/\/$/, "");
+    const activationResult = await activateSalesProposal(request, proposalAccess.proposal, {
+      successUrl: `${origin}/public/prospect/${slug}/agendar?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+    });
 
     return NextResponse.json(activationResult);
   } catch (caughtError) {

@@ -134,6 +134,7 @@ export type Database = {
           client_domain: string | null;
           client_phone: string | null;
           client_description: string | null;
+          kickoff_contact_email: string | null;
           assigned_csm_user_id: string | null;
           start_date: string;
           contracted_credits: number;
@@ -178,6 +179,7 @@ export type Database = {
           client_domain?: string | null;
           client_phone?: string | null;
           client_description?: string | null;
+          kickoff_contact_email?: string | null;
           assigned_csm_user_id?: string | null;
           start_date?: string;
           contracted_credits?: number;
@@ -222,6 +224,7 @@ export type Database = {
           client_domain?: string | null;
           client_phone?: string | null;
           client_description?: string | null;
+          kickoff_contact_email?: string | null;
           assigned_csm_user_id?: string | null;
           start_date?: string;
           contracted_credits?: number;

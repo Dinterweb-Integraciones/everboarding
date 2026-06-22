@@ -84,7 +84,12 @@ export async function POST(request: Request) {
         );
       }
 
-      const activationResult = await activateSalesProposal(request, proposal);
+      const origin = resolveOrigin(request);
+      const publicProposalUrl = `${origin}/public/${body.audience}/${body.slug}`;
+      const activationResult = await activateSalesProposal(request, proposal, {
+        successUrl: `${publicProposalUrl}/agendar?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${publicProposalUrl}?payment=cancelled`,
+      });
 
       if ("proposal" in activationResult && activationResult.proposal) {
         const snapshot = buildPublicProspectSnapshotBase(activationResult.proposal);
