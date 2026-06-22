@@ -576,9 +576,7 @@ export function OnboardingClientPage({
   const negotiatedPlanPrice = getEffectivePlanPrice(config);
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
   const isRecurringPlan = negotiatedPlanBillingMode === "subscription";
-  const hasPaidPlanAccess = isRecurringPlan
-    ? billing.current_cycle_paid
-    : billing.active_credits > 0;
+  const hasPaidPlanAccess = billing.current_cycle_paid || billing.active_credits > 0;
   const negotiatedPlanCadence =
     isRecurringPlan
       ? getPlanCadenceLabel(negotiatedPlanPeriodMonths)
@@ -2645,13 +2643,13 @@ export function OnboardingClientPage({
                       : "bg-amber-50 text-amber-700"
                   }`}
                 >
-                  {isRecurringPlan
-                    ? billing.current_cycle_paid
-                      ? "Ciclo pagado"
-                      : "Pago pendiente"
+                  {billing.current_cycle_paid
+                    ? "Ciclo pagado"
                     : hasPaidPlanAccess
                       ? "Creditos activos"
-                      : "Sin creditos vigentes"}
+                      : isRecurringPlan
+                        ? "Pago pendiente"
+                        : "Sin creditos vigentes"}
                 </span>
               </div>
 
