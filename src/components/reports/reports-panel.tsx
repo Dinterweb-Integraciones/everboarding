@@ -1,7 +1,19 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, CalendarClock, Search, Table2, UsersRound } from "lucide-react";
+import {
+  Activity,
+  ArrowDownAZ,
+  ArrowDownWideNarrow,
+  CalendarClock,
+  CheckCircle2,
+  CircleAlert,
+  Search,
+  Table2,
+  Target,
+  UsersRound,
+  X,
+} from "lucide-react";
 
 import type { Views } from "@/types/database";
 
@@ -16,7 +28,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
-type PanelKey = "clients" | "customer_success";
+type PanelKey = "clients" | "customer_success" | "norths";
 type SortKey =
   | "client_name"
   | "health_color"
@@ -35,6 +47,33 @@ type FilterState = {
   billing: "all" | ClientHealthReportRow["billing"];
   customerSuccess: "all" | string;
 };
+
+type InitiativeReportRow = {
+  id: string;
+  client_id: string;
+  title: string;
+  type: string | null;
+  labels: string[];
+  status: "backlog" | "planned" | "executing" | "completed";
+  updated_at: string;
+  credits: number;
+};
+
+type CustomerSuccessConfigRow = {
+  client_id: string;
+  north_star_text: string | null;
+  north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+};
+
+type CustomerSuccessCreditGrantRow = {
+  client_id: string;
+  granted_credits: number;
+  used_credits: number;
+  expired_credits: number;
+  expires_at: string;
+};
+type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string };
+type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
 
 const rowHealthStyles: Record<HealthColor, string> = {
   green: "bg-emerald-50/55 hover:bg-emerald-50",
@@ -75,6 +114,7 @@ const panels: Array<{
     title: "Customer Success",
     description: "Reportes del equipo de Customer Success.",
   },
+  { key: "norths", label: "Nortes", title: "Nortes", description: "Auditoría, calidad y antigüedad de los Nortes." },
 ];
 
 function formatNumber(value: number) {
@@ -152,7 +192,21 @@ function sortRows(rows: ClientHealthReportRow[], sortKey: SortKey) {
   });
 }
 
-export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
+export function ReportsPanel({
+  rows,
+  initiatives,
+  customerSuccessConfigs,
+  customerSuccessCreditGrants,
+  northStarHistory,
+  northStarAudits,
+}: {
+  rows: ClientHealthReportRow[];
+  initiatives: InitiativeReportRow[];
+  customerSuccessConfigs: CustomerSuccessConfigRow[];
+  customerSuccessCreditGrants: CustomerSuccessCreditGrantRow[];
+  northStarHistory: NorthHistoryRow[];
+  northStarAudits: Array<Record<string, unknown>>;
+}) {
   const [selectedPanelKey, setSelectedPanelKey] = useState<PanelKey>("clients");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("days_without_progress");
@@ -566,23 +620,253 @@ export function ReportsPanel({ rows }: { rows: ClientHealthReportRow[] }) {
                 sortDirection="asc"
               />
             </div>
+          ) : selectedPanelKey === "customer_success" ? (
+            <CustomerSuccessDashboard
+              rows={rows}
+              initiatives={initiatives}
+              customerSuccessConfigs={customerSuccessConfigs}
+              customerSuccessCreditGrants={customerSuccessCreditGrants}
+              customerSuccessOptions={customerSuccessOptions}
+            />
           ) : (
-            <div className="p-4">
-              <article className="flex min-h-72 flex-col items-center justify-center rounded-[6px] border border-dashed border-[#cbd6e2] bg-white px-6 py-12 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-[6px] border border-[#dfe3eb] bg-[#f5f8fa] text-[#516f90]">
-                  <UsersRound className="h-5 w-5" />
-                </div>
-                <h3 className="mt-4 text-base font-black text-[#213343]">Panel sin reportes</h3>
-                <p className="mt-2 max-w-md text-sm font-semibold text-[#516f90]">
-                  Este panel queda reservado para los proximos reportes de Customer Success.
-                </p>
-              </article>
-            </div>
+            <NorthsDashboard rows={rows} initiatives={initiatives} northStarHistory={northStarHistory} initialAudits={northStarAudits as unknown as NorthAudit[]} customerSuccessOptions={customerSuccessOptions} />
           )}
         </section>
       </div>
     </div>
   );
+}
+
+type CustomerSuccessDetail = "active" | "stagnant" | "weak" | "completed";
+
+function NorthsDashboard({ rows, initiatives, northStarHistory, initialAudits, customerSuccessOptions }: { rows: ClientHealthReportRow[]; initiatives: InitiativeReportRow[]; northStarHistory: NorthHistoryRow[]; initialAudits: NorthAudit[]; customerSuccessOptions: Array<[string, string]> }) {
+  const [csmId, setCsmId] = useState("all");
+  const [audits, setAudits] = useState(() => new Map(initialAudits.map((audit) => [audit.north_star_history_id, audit])));
+  const clientById = useMemo(() => new Map(rows.map((row) => [row.client_id, row])), [rows]);
+  const scoped = useMemo(() => northStarHistory.filter((north) => csmId === "all" || clientById.get(north.client_id)?.customer_success_id === csmId), [clientById, csmId, northStarHistory]);
+  const quality = scoped.map((north) => { const audit = audits.get(north.id); return audit ? [audit.is_from, audit.is_until, audit.is_timed, audit.is_crucial].filter(Boolean).length * 25 : 0; });
+  const maxDays = Math.max(...scoped.map((north) => getElapsedDays(north.created_at)), 1);
+  const waiting = rows.filter((row) => {
+    const history = northStarHistory.filter((north) => north.client_id === row.client_id);
+    const latest = history.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+    return latest?.north_star_status === "completed" && initiatives.some((item) => item.client_id === row.client_id && item.status === "completed" && new Date(item.updated_at) >= new Date(latest.created_at)) && !history.some((item) => new Date(item.created_at) > new Date(latest.created_at));
+  });
+  async function save(id: string, patch: Partial<NorthAudit>) {
+    const next = { north_star_history_id: id, is_from: false, is_until: false, is_timed: false, is_crucial: false, has_associated_use_cases: false, notes: "", ...(audits.get(id) ?? {}), ...patch };
+    setAudits((current) => new Map(current).set(id, next));
+    await fetch("/api/reports/north-audits", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ northStarHistoryId: id, isFrom: next.is_from, isUntil: next.is_until, isTimed: next.is_timed, isCrucial: next.is_crucial, hasAssociatedUseCases: next.has_associated_use_cases, notes: next.notes }) });
+  }
+  return <div className="space-y-4 p-4"><div className="flex justify-end"><select value={csmId} onChange={(event) => setCsmId(event.target.value)} className="h-10 rounded border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b]"><option value="all">Todo el equipo CS</option>{customerSuccessOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></div><article className="overflow-x-auto rounded-[6px] border border-[#dfe3eb] bg-white"><div className="border-b border-[#dfe3eb] p-4"><h3 className="font-black text-[#213343]">Auditoría de Nortes</h3></div><table className="w-full min-w-[1200px] text-left text-xs"><thead className="bg-[#f8fbfd]"><tr>{["Cliente", "Norte", "CS", "Días", "X", "Y", "T", "C", "Casos asociados", "Anotaciones"].map((heading) => <th key={heading} className="px-3 py-3 font-bold uppercase tracking-wide text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{scoped.map((north) => { const row = clientById.get(north.client_id); const audit = audits.get(north.id) ?? { is_from: false, is_until: false, is_timed: false, is_crucial: false, has_associated_use_cases: false, notes: "" }; const fields: Array<keyof Pick<NorthAudit, "is_from" | "is_until" | "is_timed" | "is_crucial" | "has_associated_use_cases">> = ["is_from", "is_until", "is_timed", "is_crucial", "has_associated_use_cases"]; return <tr key={north.id} className="border-t border-[#edf1f5]"><td className="px-3 py-3 font-bold text-[#213343]">{row?.client_name}</td><td className="max-w-64 px-3 py-3 text-[#516f90]">{north.north_star_text}</td><td className="px-3 py-3">{row?.customer_success_name ?? "Sin asignar"}</td><td className="px-3 py-3 font-bold">{getElapsedDays(north.created_at)}</td>{fields.map((field) => <td key={field} className="px-3 py-3"><input type="checkbox" checked={audit[field]} onChange={(event) => void save(north.id, { [field]: event.target.checked })} /></td>)}<td className="px-3 py-3"><input defaultValue={audit.notes} onBlur={(event) => void save(north.id, { notes: event.target.value })} className="w-44 rounded border border-[#cbd6e2] px-2 py-1" /></td></tr>; })}</tbody></table></article><div className="grid gap-4 xl:grid-cols-2"><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Calidad de Nortes</h3><p className="text-xs text-[#516f90]">Cada X, Y, T y C aporta 25%.</p><div className="mt-4 flex h-36 items-end gap-2">{quality.map((value, index) => <div key={`${scoped[index]?.id}`} className="flex flex-1 flex-col justify-end"><div className="bg-[#00a4bd]" style={{ height: `${Math.max(value, 3)}%` }} /><span className="mt-1 text-center text-[9px] font-bold text-[#516f90]">{value}%</span></div>)}</div></article><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Antigüedad</h3><div className="mt-4 space-y-3">{[...scoped].sort((a,b) => getElapsedDays(b.created_at) - getElapsedDays(a.created_at)).slice(0, 8).map((north) => <div key={north.id}><div className="flex justify-between text-xs font-bold text-[#516f90]"><span>{clientById.get(north.client_id)?.client_name}</span><span>{getElapsedDays(north.created_at)} días</span></div><div className="mt-1 h-3 bg-[#edf3f7]"><div className="h-full bg-[#7c3aed]" style={{ width: `${(getElapsedDays(north.created_at) / maxDays) * 100}%` }} /></div></div>)}</div></article></div><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Esperando nuevo Norte</h3><div className="mt-3 divide-y divide-[#edf1f5]">{waiting.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex justify-between py-3 text-sm font-bold text-[#213343]"><span>{row.client_name}</span><span className="text-[#c2410c]">Norte cumplido sin reemplazo</span></a>)}{!waiting.length ? <p className="py-4 text-sm text-[#516f90]">No hay clientes esperando un nuevo Norte.</p> : null}</div></article></div>;
+}
+
+function getElapsedDays(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return 0;
+  return Math.max(0, Math.floor((Date.now() - timestamp) / 86_400_000));
+}
+
+function getWeekStart(value: Date) {
+  const date = new Date(value);
+  const day = date.getDay() || 7;
+  date.setDate(date.getDate() - day + 1);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function isInCurrentMonth(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+}
+
+function CustomerSuccessDashboard({
+  rows,
+  initiatives,
+  customerSuccessConfigs,
+  customerSuccessCreditGrants,
+  customerSuccessOptions,
+}: {
+  rows: ClientHealthReportRow[];
+  initiatives: InitiativeReportRow[];
+  customerSuccessConfigs: CustomerSuccessConfigRow[];
+  customerSuccessCreditGrants: CustomerSuccessCreditGrantRow[];
+  customerSuccessOptions: Array<[string, string]>;
+}) {
+  const [customerSuccessId, setCustomerSuccessId] = useState("all");
+  const [detail, setDetail] = useState<CustomerSuccessDetail | null>(null);
+  const configByClient = useMemo(
+    () => new Map(customerSuccessConfigs.map((config) => [config.client_id, config])),
+    [customerSuccessConfigs],
+  );
+  const scopedRows = useMemo(
+    () =>
+      customerSuccessId === "all"
+        ? rows
+        : rows.filter((row) => row.customer_success_id === customerSuccessId),
+    [customerSuccessId, rows],
+  );
+  const clientById = useMemo(
+    () => new Map(scopedRows.map((row) => [row.client_id, row])),
+    [scopedRows],
+  );
+  const scopedInitiatives = useMemo(
+    () => initiatives.filter((initiative) => clientById.has(initiative.client_id)),
+    [clientById, initiatives],
+  );
+  const activeCases = useMemo(
+    () => scopedInitiatives.filter((initiative) => getElapsedDays(initiative.updated_at) <= 14),
+    [scopedInitiatives],
+  );
+  const stagnantCases = useMemo(
+    () =>
+      scopedInitiatives.filter(
+        (initiative) => initiative.status !== "completed" && getElapsedDays(initiative.updated_at) > 7,
+      ),
+    [scopedInitiatives],
+  );
+  const weakClients = useMemo(
+    () => scopedRows.filter((row) => row.validated_evaluation_cases_count < 3),
+    [scopedRows],
+  );
+  const completedThisMonth = useMemo(
+    () => scopedInitiatives.filter((initiative) => initiative.status === "completed" && isInCurrentMonth(initiative.updated_at)),
+    [scopedInitiatives],
+  );
+  const capacityRows = useMemo(() => {
+    const grouped = new Map<string, { id: string; name: string; accounts: number; planned: number; executing: number; completed: number }>();
+    scopedRows.forEach((row) => {
+      const id = row.customer_success_id ?? "unassigned";
+      const current = grouped.get(id) ?? {
+        id,
+        name: row.customer_success_name || row.customer_success_email || "Sin asignar",
+        accounts: 0,
+        planned: 0,
+        executing: 0,
+        completed: 0,
+      };
+      current.accounts += 1;
+      grouped.set(id, current);
+    });
+    scopedInitiatives.forEach((initiative) => {
+      const csmId = clientById.get(initiative.client_id)?.customer_success_id ?? "unassigned";
+      const current = grouped.get(csmId);
+      if (!current) return;
+      if (initiative.status === "planned") current.planned += initiative.credits;
+      if (initiative.status === "executing") current.executing += initiative.credits;
+      if (initiative.status === "completed") current.completed += initiative.credits;
+    });
+    return [...grouped.values()].sort((left, right) => right.accounts - left.accounts || left.name.localeCompare(right.name, "es"));
+  }, [clientById, scopedInitiatives, scopedRows]);
+  const funnel = useMemo(
+    () => [
+      ["En evaluación", "backlog"],
+      ["Planificado", "planned"],
+      ["En ejecución", "executing"],
+      ["Completado", "completed"],
+    ].map(([label, status]) => ({ label, status, count: scopedInitiatives.filter((initiative) => initiative.status === status).length })),
+    [scopedInitiatives],
+  );
+  const northCounts = useMemo(() => {
+    const active = scopedRows.filter((row) => {
+      const config = configByClient.get(row.client_id);
+      return Boolean(config?.north_star_text?.trim()) && config?.north_star_status !== "pending";
+    }).length;
+    return { active, inactive: scopedRows.length - active };
+  }, [configByClient, scopedRows]);
+  const weeklyCompleted = useMemo(() => {
+    const currentWeek = getWeekStart(new Date());
+    return Array.from({ length: 8 }, (_, index) => {
+      const start = new Date(currentWeek);
+      start.setDate(start.getDate() - (7 - index) * 7);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
+      const count = scopedInitiatives.filter((initiative) => {
+        const date = new Date(initiative.updated_at);
+        return initiative.status === "completed" && date >= start && date < end;
+      }).length;
+      return { start, count };
+    });
+  }, [scopedInitiatives]);
+  const detailCases = detail === "active" ? activeCases : detail === "stagnant" ? stagnantCases : completedThisMonth;
+  const detailTitle: Record<CustomerSuccessDetail, string> = {
+    active: "Casos con avance en los últimos 14 días",
+    stagnant: "Casos estancados por más de 7 días",
+    weak: "Clientes con menos de 3 casos validados",
+    completed: "Casos completados este mes",
+  };
+  const totalCases = scopedInitiatives.length;
+  const activePercent = totalCases ? Math.round((activeCases.length / totalCases) * 100) : 0;
+  const maxFunnel = Math.max(...funnel.map((item) => item.count), 1);
+  const maxWeekly = Math.max(...weeklyCompleted.map((item) => item.count), 1);
+  const polylinePoints = weeklyCompleted
+    .map((item, index) => `${(index / Math.max(weeklyCompleted.length - 1, 1)) * 100},${100 - (item.count / maxWeekly) * 82 - 9}`)
+    .join(" ");
+
+  return (
+    <div className="space-y-4 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-3 rounded-[6px] border border-[#dfe3eb] bg-white p-4">
+        <div>
+          <h3 className="text-base font-black text-[#213343]">Desempeño de Customer Success</h3>
+          <p className="mt-1 text-xs font-semibold text-[#516f90]">El filtro se aplica a todo este panel.</p>
+        </div>
+        <label className="space-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Customer Success</span>
+          <select value={customerSuccessId} onChange={(event) => setCustomerSuccessId(event.target.value)} className="block h-10 min-w-56 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b] outline-none focus:border-[#00a4bd]">
+            <option value="all">Todo el equipo</option>
+            {customerSuccessOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+        <div className="border-b border-[#dfe3eb] p-4"><h3 className="text-base font-black text-[#213343]">Capacidad</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Carga por CS: máximo de 10 cuentas y 1,000 créditos por etapa.</p></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left"><thead className="bg-[#f8fbfd]"><tr className="border-b border-[#dfe3eb]">{["CS", "% cuentas", "% carga actual", "% cola futura", "% cumplimiento"].map((heading) => <th key={heading} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{capacityRows.map((row) => <tr key={row.id} className="border-b border-[#edf1f5] last:border-0"><td className="px-4 py-3 text-sm font-black text-[#213343]">{row.name}</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round(row.accounts * 10)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.executing / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.planned / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.completed / 1000) * 100)}%</td></tr>)}</tbody></table></div>
+      </article>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard icon={<Activity className="h-5 w-5" />} label="Activos" value={`${activePercent}%`} description={`${formatNumber(activeCases.length)} de ${formatNumber(totalCases)} casos avanzaron en 14 días.`} tone="teal" onClick={() => setDetail("active")} />
+        <MetricCard icon={<CircleAlert className="h-5 w-5" />} label="Estancados" value={formatNumber(new Set(stagnantCases.map((item) => item.client_id)).size)} description={`${formatNumber(stagnantCases.length)} casos sin avance por más de 7 días.`} tone="orange" onClick={() => setDetail("stagnant")} />
+        <MetricCard icon={<UsersRound className="h-5 w-5" />} label="Débiles" value={formatNumber(weakClients.length)} description="Clientes con menos de 3 casos validados en evaluación." tone="purple" onClick={() => setDetail("weak")} />
+        <MetricCard icon={<CheckCircle2 className="h-5 w-5" />} label="Completados" value={formatNumber(completedThisMonth.length)} description="Casos de uso completados este mes." tone="green" onClick={() => setDetail("completed")} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm xl:col-span-2"><h3 className="text-base font-black text-[#213343]">Embudo</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos de uso por etapa del pipeline.</p><div className="mt-5 space-y-4">{funnel.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-xs font-bold text-[#516f90]"><span>{item.label}</span><span>{formatNumber(item.count)}</span></div><div className="h-8 overflow-hidden rounded-[4px] bg-[#edf3f7]"><div className="flex h-full items-center rounded-[4px] bg-[#00a4bd] px-2 text-xs font-black text-white" style={{ width: `${Math.max((item.count / maxFunnel) * 100, item.count ? 8 : 0)}%` }}>{item.count ? formatNumber(item.count) : ""}</div></div></div>)}</div></article>
+        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#7c3aed]" /><h3 className="text-base font-black text-[#213343]">Norte activo</h3></div><p className="mt-1 text-xs font-semibold text-[#516f90]">Clientes con norte definido y en proceso.</p><div className="mt-6 flex items-center gap-5"><div className="h-28 w-28 shrink-0 rounded-full" style={{ background: `conic-gradient(#7c3aed 0 ${(northCounts.active / Math.max(scopedRows.length, 1)) * 360}deg, #e8eef5 0 360deg)` }}><div className="m-[18px] flex h-[76px] w-[76px] items-center justify-center rounded-full bg-white text-lg font-black text-[#213343]">{formatNumber(scopedRows.length)}</div></div><div className="space-y-3 text-sm font-bold text-[#516f90]"><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#7c3aed]" />Activo: {formatNumber(northCounts.active)}</p><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#dfe7f0]" />Sin norte: {formatNumber(northCounts.inactive)}</p></div></div></article>
+      </div>
+
+      <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><h3 className="text-base font-black text-[#213343]">Tendencia de completados</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos completados semanalmente durante las últimas 8 semanas.</p><div className="mt-5 h-52"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible" aria-label="Tendencia semanal de casos completados"><line x1="0" x2="100" y1="91" y2="91" stroke="#dfe7f0" strokeWidth="1" /><polyline points={polylinePoints} fill="none" stroke="#00a4bd" strokeWidth="2.5" vectorEffect="non-scaling-stroke" /></svg></div><div className="grid grid-cols-4 gap-2 border-t border-[#edf1f5] pt-3 sm:grid-cols-8">{weeklyCompleted.map((week) => <div key={week.start.toISOString()} className="text-center"><p className="text-sm font-black text-[#213343]">{week.count}</p><p className="text-[9px] font-bold uppercase tracking-wide text-[#99acc2]">{week.start.toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</p></div>)}</div></article>
+
+      {detail ? <CustomerSuccessDetailModal title={detailTitle[detail]} detail={detail} cases={detailCases} weakClients={weakClients} clientById={clientById} onClose={() => setDetail(null)} /> : null}
+    </div>
+  );
+}
+
+function MetricCard({ icon, label, value, description, tone, onClick }: { icon: ReactNode; label: string; value: string; description: string; tone: "teal" | "orange" | "purple" | "green"; onClick: () => void }) {
+  const toneStyles = { teal: "bg-[#e5f5f8] text-[#007a8a]", orange: "bg-[#fff3e8] text-[#c2410c]", purple: "bg-[#f3e8ff] text-[#7e22ce]", green: "bg-[#eaf8ef] text-[#15803d]" };
+  return <button type="button" onClick={onClick} className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><span className={`flex h-10 w-10 items-center justify-center rounded-[5px] ${toneStyles[tone]}`}>{icon}</span><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{label}</p><p className="mt-1 text-3xl font-black text-[#213343]">{value}</p><p className="mt-2 text-xs font-semibold leading-relaxed text-[#516f90]">{description}</p><span className="mt-3 inline-block text-xs font-black text-[#00a4bd]">Ver detalle →</span></button>;
+}
+
+function CustomerSuccessDetailModal({ title, detail, cases, weakClients, clientById, onClose }: { title: string; detail: CustomerSuccessDetail; cases: InitiativeReportRow[]; weakClients: ClientHealthReportRow[]; clientById: Map<string, ClientHealthReportRow>; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#213343]/65 p-4">
+      <div role="dialog" aria-modal="true" aria-label={title} className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-[8px] bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-[#dfe3eb] p-5">
+          <div><h3 className="text-lg font-black text-[#213343]">{title}</h3><p className="mt-1 text-sm font-semibold text-[#516f90]">{detail === "weak" ? `${formatNumber(weakClients.length)} clientes` : `${formatNumber(cases.length)} casos de uso`}</p></div>
+          <button type="button" onClick={onClose} className="rounded-[4px] p-2 text-[#516f90] hover:bg-[#f5f8fa]" aria-label="Cerrar detalle"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="max-h-[65vh] overflow-y-auto">
+          {detail === "weak" ? weakClients.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex items-center justify-between border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><span className="text-sm font-black text-[#213343]">{row.client_name}</span><span className="text-xs font-bold text-[#7e22ce]">{formatNumber(row.validated_evaluation_cases_count)} validados</span></a>) : cases.map((item) => {
+            const client = clientById.get(item.client_id);
+            return <a key={item.id} href={`/clients/${item.client_id}`} className="flex items-center justify-between gap-4 border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><div><p className="text-sm font-black text-[#213343]">{client?.client_name ?? "Cliente"}</p><p className="mt-0.5 text-xs font-semibold text-[#516f90]">{item.title}</p></div><div className="text-right"><p className="text-xs font-black capitalize text-[#00a4bd]">{item.status === "backlog" ? "En evaluación" : item.status === "planned" ? "Planificado" : item.status === "executing" ? "En ejecución" : "Completado"}</p>{detail === "stagnant" ? <p className="mt-1 text-[11px] font-bold text-[#c2410c]">{formatNumber(getElapsedDays(item.updated_at))} días sin avanzar</p> : null}</div></a>;
+          })}
+        </div>
+      </div>
+    </div>
+  );
+  /*
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#213343]/65 p-4"><div role="dialog" aria-modal="true" aria-label={title} className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-[8px] bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-[#dfe3eb] p-5"><div><h3 className="text-lg font-black text-[#213343]">{title}</h3><p className="mt-1 text-sm font-semibold text-[#516f90]">{detail === "weak" ? `${formatNumber(weakClients.length)} clientes` : `${formatNumber(cases.length)} casos de uso`}</p></div><button type="button" onClick={onClose} className="rounded-[4px] p-2 text-[#516f90] hover:bg-[#f5f8fa]" aria-label="Cerrar detalle"><X className="h-5 w-5" /></button></div><div className="max-h-[65vh] overflow-y-auto">{detail === "weak" ? weakClients.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex items-center justify-between border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><span className="text-sm font-black text-[#213343]">{row.client_name}</span><span className="text-xs font-bold text-[#7e22ce]">{formatNumber(row.validated_evaluation_cases_count)} validados</span></a>) : cases.map((item) => { const client = clientById.get(item.client_id); return <a key={item.id} href={`/clients/${item.client_id}`} className="flex items-center justify-between gap-4 border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><div><p className="text-sm font-black text-[#213343]">{client?.client_name ?? "Cliente"}</p><p className="mt-0.5 text-xs font-semibold text-[#516f90]">{item.title}</p></div><div className="text-right"><p className="text-xs font-black capitalize text-[#00a4bd]">{item.status === "backlog" ? "En evaluación" : item.status === "planned" ? "Planificado" : item.status === "executing" ? "En ejecución" : "Completado"}</p>{detail === "stagnant" ? <p className="mt-1 text-[11px] font-bold text-[#c2410c]">{formatNumber(getElapsedDays(item.updated_at))} días sin avanzar</p> : null}</div></a>)}</div></div></div>;
+  */
 }
 
 function KickoffWindowReport({

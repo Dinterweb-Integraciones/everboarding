@@ -18,12 +18,28 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
 };
 
 type InitiativeReportRow = {
+  id: string;
   client_id: string;
   title: string;
   type: string | null;
   labels: string[];
   status: "backlog" | "planned" | "executing" | "completed";
   updated_at: string;
+  credits: number;
+};
+
+type CustomerSuccessConfigRow = {
+  client_id: string;
+  north_star_text: string | null;
+  north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+};
+
+type CustomerSuccessCreditGrantRow = {
+  client_id: string;
+  granted_credits: number;
+  used_credits: number;
+  expired_credits: number;
+  expires_at: string;
 };
 
 function getElapsedCalendarDays(value: string | null) {
@@ -101,23 +117,69 @@ export default async function ReportsPage() {
   const { data: northStarHistoryRows, error: northStarHistoryError } = clientIds.length
     ? await admin
         .from("onboarding_north_star_history")
-        .select("client_id")
+        .select("id, client_id, north_star_text, north_star_status, created_at")
         .in("client_id", clientIds)
-    : { data: [] as Array<{ client_id: string }>, error: null };
+    : { data: [] as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string }>, error: null };
 
   if (northStarHistoryError) {
     throw new Error("No pudimos cargar el conteo de nortes.");
   }
 
+  const northHistoryIds = (northStarHistoryRows ?? []).map((row) => row.id);
+  const { data: northAuditRows, error: northAuditsError } = northHistoryIds.length
+    ? await admin
+        .from("north_star_audits" as never)
+        .select("*")
+        .in("north_star_history_id", northHistoryIds)
+    : { data: [], error: null };
+
+  if (northAuditsError) {
+    throw new Error("No pudimos cargar la auditoría de Nortes.");
+  }
+
   const { data: initiativeRows, error: initiativesError } = clientIds.length
     ? await admin
         .from("onboarding_initiatives")
-        .select("client_id, title, type, labels, status, updated_at")
+        .select("id, client_id, title, type, labels, status, updated_at")
         .in("client_id", clientIds)
     : { data: [] as InitiativeReportRow[], error: null };
 
+  const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
+    ? await admin
+        .from("onboarding_configs")
+        .select("client_id, north_star_text, north_star_status")
+        .in("client_id", clientIds)
+    : { data: [] as CustomerSuccessConfigRow[], error: null };
+
+  const initiativeIds = (initiativeRows ?? []).map((initiative) => initiative.id);
+  const { data: initiativeSubitemRows, error: initiativeSubitemsError } = initiativeIds.length
+    ? await admin
+        .from("onboarding_initiative_subitems")
+        .select("initiative_id, unit_credits, quantity")
+        .in("initiative_id", initiativeIds)
+    : { data: [] as Array<{ initiative_id: string; unit_credits: number; quantity: number }>, error: null };
+
+  const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
+    ? await admin
+        .from("client_credit_grants")
+        .select("client_id, granted_credits, used_credits, expired_credits, expires_at")
+        .in("client_id", clientIds)
+    : { data: [] as CustomerSuccessCreditGrantRow[], error: null };
+
   if (initiativesError) {
     throw new Error("No pudimos cargar las iniciativas para informes.");
+  }
+
+  if (initiativeSubitemsError) {
+    throw new Error("No pudimos cargar los créditos de las iniciativas.");
+  }
+
+  if (customerSuccessConfigError) {
+    throw new Error("No pudimos cargar la capacidad de Customer Success.");
+  }
+
+  if (customerSuccessCreditGrantError) {
+    throw new Error("No pudimos cargar los créditos vigentes de Customer Success.");
   }
 
   const northStarCounts = new Map<string, number>();
@@ -126,7 +188,17 @@ export default async function ReportsPage() {
   const stagnantStageDays = new Map<string, number>();
   const evaluationCasesCounts = new Map<string, number>();
   const validatedEvaluationCasesCounts = new Map<string, number>();
-  const initiatives = (initiativeRows ?? []) as InitiativeReportRow[];
+  const creditsByInitiative = new Map<string, number>();
+  (initiativeSubitemRows ?? []).forEach((subitem) => {
+    creditsByInitiative.set(
+      subitem.initiative_id,
+      (creditsByInitiative.get(subitem.initiative_id) ?? 0) + Number(subitem.unit_credits) * Number(subitem.quantity),
+    );
+  });
+  const initiatives = ((initiativeRows ?? []) as Omit<InitiativeReportRow, "credits">[]).map((initiative) => ({
+    ...initiative,
+    credits: creditsByInitiative.get(initiative.id) ?? 0,
+  }));
   const completedInitiatives = initiatives.filter((initiative) => initiative.status === "completed");
 
   (northStarHistoryRows ?? []).forEach((row) => {
@@ -200,5 +272,14 @@ export default async function ReportsPage() {
     validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
   })) satisfies ClientHealthReportRow[];
 
-  return <ReportsPanel rows={rows} />;
+  return (
+    <ReportsPanel
+      rows={rows}
+      initiatives={initiatives}
+      customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
+      customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
+      northStarHistory={(northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string }>}
+      northStarAudits={(northAuditRows ?? []) as Array<Record<string, unknown>>}
+    />
+  );
 }
