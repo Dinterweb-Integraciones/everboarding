@@ -1129,13 +1129,25 @@ export function OnboardingClientPage({
     setCatalogPreviewGroup(group);
   }
 
+  function isCatalogGroupBlocked(group: CatalogModalGroup) {
+    const normalizedGroupName = normalizeCatalogText(group.name);
+
+    return initiatives.some(
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizedGroupName,
+    );
+  }
+
   function closeCatalogGroupPreview() {
     setCatalogPreviewGroup(null);
   }
 
   async function removeCatalogGroup(group: CatalogModalGroup) {
     const matchingInitiative = initiatives.find(
-      (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
     );
     if (!matchingInitiative) return;
 
@@ -1156,7 +1168,9 @@ export function OnboardingClientPage({
   ) {
     const groupsById = new Map(catalogGroups.map((group) => [group.id, group]));
     const existingTitles = new Set(
-      initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
+      initiatives
+        .filter((initiative) => initiative.status !== "completed")
+        .map((initiative) => normalizeCatalogText(initiative.title)),
     );
     let usedCredits = 0;
 
@@ -1520,7 +1534,9 @@ export function OnboardingClientPage({
   ) {
     const groupById = new Map(catalogGroups.map((group) => [group.id, group]));
     const existingTitles = new Set(
-      initiatives.map((initiative) => normalizeCatalogText(initiative.title)),
+      initiatives
+        .filter((initiative) => initiative.status !== "completed")
+        .map((initiative) => normalizeCatalogText(initiative.title)),
     );
     const sortOrderByStatus = {
       backlog: groupedInitiatives.backlog.length,
@@ -1697,8 +1713,8 @@ export function OnboardingClientPage({
       return;
     }
 
-    if (initiatives.some((initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name))) {
-      showError("Ese grupo ya existe en el plan de trabajo.");
+    if (isCatalogGroupBlocked(group)) {
+      showError("Ese grupo ya está activo en el plan de trabajo.");
       return;
     }
 
@@ -4399,9 +4415,7 @@ export function OnboardingClientPage({
                     {visibleCatalogGroups.length ? (
                       <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                         {visibleCatalogGroups.map((group) => {
-                      const alreadyAdded = initiatives.some(
-                        (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
-                      );
+                      const alreadyAdded = isCatalogGroupBlocked(group);
 
                       return (
                         <div
@@ -4475,7 +4489,7 @@ export function OnboardingClientPage({
                             </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {alreadyAdded ? "Ya agregado" : "Disponible"}
+                                {alreadyAdded ? "Bloqueado" : "Disponible"}
                               </span>
                               {alreadyAdded ? (
                                 <button

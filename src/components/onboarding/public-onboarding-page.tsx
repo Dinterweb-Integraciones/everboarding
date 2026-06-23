@@ -1294,6 +1294,16 @@ export function PublicOnboardingPage({
     setCatalogPreviewGroup(group);
   }
 
+  function isCatalogGroupBlocked(group: CatalogModalGroup) {
+    const normalizedGroupName = normalizeCatalogText(group.name);
+
+    return initiatives.some(
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizedGroupName,
+    );
+  }
+
   function closeCatalogGroupPreview() {
     setCatalogPreviewGroup(null);
   }
@@ -1312,6 +1322,11 @@ export function PublicOnboardingPage({
   }
 
   async function quickAddCatalogGroup(group: CatalogModalGroup) {
+    if (isCatalogGroupBlocked(group)) {
+      setFeedback({ tone: "error", message: "Ese caso de uso ya está activo." });
+      return;
+    }
+
     await createPublicRequest({
       title: group.name,
       description: getPlainInitiativeDescription(group.description, ""),
@@ -1323,7 +1338,9 @@ export function PublicOnboardingPage({
 
   async function removeCatalogGroup(group: CatalogModalGroup) {
     const matchingInitiative = initiatives.find(
-      (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
     );
     if (!matchingInitiative) return;
 
@@ -2397,10 +2414,7 @@ export function PublicOnboardingPage({
                   {visibleCatalogGroups.length ? (
                     <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                       {visibleCatalogGroups.map((group) => {
-                        const alreadyAdded = initiatives.some(
-                          (initiative) =>
-                            normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
-                        );
+                        const alreadyAdded = isCatalogGroupBlocked(group);
 
                         return (
                           <div
@@ -2474,7 +2488,7 @@ export function PublicOnboardingPage({
                               </span>
                               <div className="flex items-center gap-3">
                                 <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                  {alreadyAdded ? "Ya agregado" : "Disponible"}
+                                  {alreadyAdded ? "Bloqueado" : "Disponible"}
                                 </span>
                                 {alreadyAdded ? (
                                   <button

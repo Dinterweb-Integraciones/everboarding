@@ -1514,6 +1514,16 @@ function createInitiativeFromGroup(
     setCatalogPreviewGroup(group);
   }
 
+  function isCatalogGroupBlocked(group: CatalogModalGroup) {
+    const normalizedGroupName = normalizeCatalogText(group.name);
+
+    return proposal.initiatives.some(
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizedGroupName,
+    );
+  }
+
   function closeCatalogGroupPreview() {
     setCatalogPreviewGroup(null);
   }
@@ -1521,7 +1531,9 @@ function createInitiativeFromGroup(
   function removeCatalogGroup(group: CatalogModalGroup) {
     const normalizedGroupName = normalizeCatalogText(group.name);
     const matchingInitiatives = proposal.initiatives.filter(
-      (initiative) => normalizeCatalogText(initiative.title) === normalizedGroupName,
+      (initiative) =>
+        initiative.status !== "completed" &&
+        normalizeCatalogText(initiative.title) === normalizedGroupName,
     );
 
     if (!matchingInitiatives.length) {
@@ -1530,7 +1542,11 @@ function createInitiativeFromGroup(
 
     setProposal((current) => {
       const nextInitiatives = current.initiatives
-        .filter((initiative) => normalizeCatalogText(initiative.title) !== normalizedGroupName)
+        .filter(
+          (initiative) =>
+            initiative.status === "completed" ||
+            normalizeCatalogText(initiative.title) !== normalizedGroupName,
+        )
         .map((initiative, index) => ({
           ...initiative,
           sortOrder: index,
@@ -1557,6 +1573,11 @@ function createInitiativeFromGroup(
 
   function addCatalogPreviewGroup(status: InitiativeStatus) {
     if (!catalogPreviewGroup) return;
+
+    if (isCatalogGroupBlocked(catalogPreviewGroup)) {
+      setFeedback({ tone: "error", message: "Ese caso de uso ya está activo en la propuesta." });
+      return;
+    }
 
     const next = createInitiativeFromGroup(
       catalogPreviewGroup,
@@ -4167,9 +4188,7 @@ function mergeRecommendedGroups(
                     {visibleCatalogGroups.length ? (
                       <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                         {visibleCatalogGroups.map((group) => {
-                      const alreadyAdded = proposal.initiatives.some(
-                        (initiative) => normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
-                      );
+                      const alreadyAdded = isCatalogGroupBlocked(group);
 
                       return (
                         <div
@@ -4243,7 +4262,7 @@ function mergeRecommendedGroups(
                             </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {alreadyAdded ? "Ya agregado" : "Disponible"}
+                                {alreadyAdded ? "Bloqueado" : "Disponible"}
                               </span>
                               {alreadyAdded ? (
                                 <button
