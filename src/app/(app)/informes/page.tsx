@@ -42,6 +42,15 @@ type CustomerSuccessCreditGrantRow = {
   expires_at: string;
 };
 
+type CustomerSuccessProfileRow = {
+  id: string;
+  full_name: string | null;
+  email: string;
+};
+type CustomerSuccessPlatformProfileRow = CustomerSuccessProfileRow & {
+  platform_role: "superadmin" | "admin" | "sales" | "csm" | "finance" | null;
+};
+
 function getElapsedCalendarDays(value: string | null) {
   if (!value) {
     return null;
@@ -103,6 +112,16 @@ export default async function ReportsPage() {
   }
 
   const admin = createSupabaseAdminClient();
+  const { data: customerSuccessProfileRows, error: customerSuccessProfilesError } = await admin
+    .from("profiles")
+    .select("id, full_name, email, platform_role")
+    .in("platform_role", ["csm", "admin", "superadmin"])
+    .order("full_name", { ascending: true });
+
+  if (customerSuccessProfilesError) {
+    throw new Error("No pudimos cargar los perfiles de Customer Success.");
+  }
+
   const { data, error } = await admin
     .from("client_health_report")
     .select("*")
@@ -113,6 +132,15 @@ export default async function ReportsPage() {
   }
 
   const clientRows = (data ?? []) as Views<"client_health_report">[];
+  const assignedCustomerSuccessIds = new Set(
+    clientRows.flatMap((row) => (row.customer_success_id ? [row.customer_success_id] : [])),
+  );
+  const customerSuccessProfiles = ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
+    (profile) =>
+      profile.platform_role === "csm" ||
+      ((profile.platform_role === "admin" || profile.platform_role === "superadmin") &&
+        assignedCustomerSuccessIds.has(profile.id)),
+  );
   const clientIds = clientRows.map((row) => row.client_id);
   const { data: northStarHistoryRows, error: northStarHistoryError } = clientIds.length
     ? await admin
@@ -278,6 +306,7 @@ export default async function ReportsPage() {
       initiatives={initiatives}
       customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
       customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
+      customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}
       northStarHistory={(northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string }>}
       northStarAudits={(northAuditRows ?? []) as Array<Record<string, unknown>>}
     />

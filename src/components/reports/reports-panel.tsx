@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CheckCircle2,
   CircleAlert,
+  CircleHelp,
   Search,
   Table2,
   Target,
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 
+import { getEvaluationValidationLabel } from "@/lib/onboarding";
 import type { Views } from "@/types/database";
 
 type ClientHealthReportRow = Views<"client_health_report"> & {
@@ -72,6 +74,11 @@ type CustomerSuccessCreditGrantRow = {
   expired_credits: number;
   expires_at: string;
 };
+type CustomerSuccessProfileRow = {
+  id: string;
+  full_name: string | null;
+  email: string;
+};
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
 
@@ -119,6 +126,17 @@ const panels: Array<{
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
+}
+
+function InfoTooltip({ children }: { children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex cursor-help align-middle">
+      <CircleHelp className="h-4 w-4 text-[#99acc2]" aria-hidden="true" />
+      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 -translate-x-1/2 rounded-[4px] bg-[#213343] px-3 py-2 text-xs font-semibold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {children}
+      </span>
+    </span>
+  );
 }
 
 function formatDate(value: string) {
@@ -197,6 +215,7 @@ export function ReportsPanel({
   initiatives,
   customerSuccessConfigs,
   customerSuccessCreditGrants,
+  customerSuccessProfiles,
   northStarHistory,
   northStarAudits,
 }: {
@@ -204,6 +223,7 @@ export function ReportsPanel({
   initiatives: InitiativeReportRow[];
   customerSuccessConfigs: CustomerSuccessConfigRow[];
   customerSuccessCreditGrants: CustomerSuccessCreditGrantRow[];
+  customerSuccessProfiles: CustomerSuccessProfileRow[];
   northStarHistory: NorthHistoryRow[];
   northStarAudits: Array<Record<string, unknown>>;
 }) {
@@ -218,22 +238,13 @@ export function ReportsPanel({
     [filters, rows, searchTerm, sortKey],
   );
 
-  const customerSuccessOptions = useMemo(() => {
-    const options = new Map<string, string>();
-
-    rows.forEach((row) => {
-      if (row.customer_success_id) {
-        options.set(
-          row.customer_success_id,
-          row.customer_success_name || row.customer_success_email || "Sin nombre",
-        );
-      }
-    });
-
-    return [...options.entries()].sort(([, firstName], [, secondName]) =>
-      firstName.localeCompare(secondName, "es"),
-    );
-  }, [rows]);
+  const customerSuccessOptions = useMemo(
+    () =>
+      customerSuccessProfiles
+        .map((profile) => [profile.id, profile.full_name || profile.email || "Sin nombre"] as [string, string])
+        .sort(([, firstName], [, secondName]) => firstName.localeCompare(secondName, "es")),
+    [customerSuccessProfiles],
+  );
 
   function setFilter<Key extends keyof FilterState>(key: Key, value: FilterState[Key]) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -673,10 +684,15 @@ function getWeekStart(value: Date) {
   return date;
 }
 
-function isInCurrentMonth(value: string) {
+function isWithinLastDays(value: string, days: number) {
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+
   const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  const start = new Date(now);
+  start.setDate(start.getDate() - days);
+
+  return date >= start && date <= now;
 }
 
 function CustomerSuccessDashboard({
@@ -728,35 +744,44 @@ function CustomerSuccessDashboard({
     () => scopedRows.filter((row) => row.validated_evaluation_cases_count < 3),
     [scopedRows],
   );
-  const completedThisMonth = useMemo(
-    () => scopedInitiatives.filter((initiative) => initiative.status === "completed" && isInCurrentMonth(initiative.updated_at)),
+  const completedLast30Days = useMemo(
+    () => scopedInitiatives.filter((initiative) => initiative.status === "completed" && isWithinLastDays(initiative.updated_at, 30)),
     [scopedInitiatives],
   );
+  const scopedCustomerSuccessOptions = useMemo(
+    () =>
+      customerSuccessId === "all"
+        ? customerSuccessOptions
+        : customerSuccessOptions.filter(([id]) => id === customerSuccessId),
+    [customerSuccessId, customerSuccessOptions],
+  );
   const capacityRows = useMemo(() => {
-    const grouped = new Map<string, { id: string; name: string; accounts: number; planned: number; executing: number; completed: number }>();
-    scopedRows.forEach((row) => {
-      const id = row.customer_success_id ?? "unassigned";
-      const current = grouped.get(id) ?? {
+    const grouped = new Map<string, { id: string; name: string; evaluation: number; planned: number; executing: number; completed: number }>();
+    scopedCustomerSuccessOptions.forEach(([id, name]) => {
+      grouped.set(id, {
         id,
-        name: row.customer_success_name || row.customer_success_email || "Sin asignar",
-        accounts: 0,
+        name,
+        evaluation: 0,
         planned: 0,
         executing: 0,
         completed: 0,
-      };
-      current.accounts += 1;
-      grouped.set(id, current);
+      });
     });
     scopedInitiatives.forEach((initiative) => {
-      const csmId = clientById.get(initiative.client_id)?.customer_success_id ?? "unassigned";
+      if (!isWithinLastDays(initiative.updated_at, 30)) return;
+
+      const csmId = clientById.get(initiative.client_id)?.customer_success_id;
+      if (!csmId) return;
+
       const current = grouped.get(csmId);
       if (!current) return;
+      if (initiative.status === "backlog" && getEvaluationValidationLabel(initiative.labels) === "Validado") current.evaluation += initiative.credits;
       if (initiative.status === "planned") current.planned += initiative.credits;
       if (initiative.status === "executing") current.executing += initiative.credits;
       if (initiative.status === "completed") current.completed += initiative.credits;
     });
-    return [...grouped.values()].sort((left, right) => right.accounts - left.accounts || left.name.localeCompare(right.name, "es"));
-  }, [clientById, scopedInitiatives, scopedRows]);
+    return [...grouped.values()].sort((left, right) => (right.evaluation + right.planned + right.executing + right.completed) - (left.evaluation + left.planned + left.executing + left.completed) || left.name.localeCompare(right.name, "es"));
+  }, [clientById, scopedCustomerSuccessOptions, scopedInitiatives]);
   const funnel = useMemo(
     () => [
       ["En evaluación", "backlog"],
@@ -787,12 +812,12 @@ function CustomerSuccessDashboard({
       return { start, count };
     });
   }, [scopedInitiatives]);
-  const detailCases = detail === "active" ? activeCases : detail === "stagnant" ? stagnantCases : completedThisMonth;
+  const detailCases = detail === "active" ? activeCases : detail === "stagnant" ? stagnantCases : completedLast30Days;
   const detailTitle: Record<CustomerSuccessDetail, string> = {
     active: "Casos con avance en los últimos 14 días",
     stagnant: "Casos estancados por más de 7 días",
     weak: "Clientes con menos de 3 casos validados",
-    completed: "Casos completados este mes",
+    completed: "Casos completados en los últimos 30 días",
   };
   const totalCases = scopedInitiatives.length;
   const activePercent = totalCases ? Math.round((activeCases.length / totalCases) * 100) : 0;
@@ -819,19 +844,19 @@ function CustomerSuccessDashboard({
       </div>
 
       <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
-        <div className="border-b border-[#dfe3eb] p-4"><h3 className="text-base font-black text-[#213343]">Capacidad</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Carga por CS: máximo de 10 cuentas y 1,000 créditos por etapa.</p></div>
-        <div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left"><thead className="bg-[#f8fbfd]"><tr className="border-b border-[#dfe3eb]">{["CS", "% cuentas", "% carga actual", "% cola futura", "% cumplimiento"].map((heading) => <th key={heading} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{capacityRows.map((row) => <tr key={row.id} className="border-b border-[#edf1f5] last:border-0"><td className="px-4 py-3 text-sm font-black text-[#213343]">{row.name}</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round(row.accounts * 10)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.executing / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.planned / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.completed / 1000) * 100)}%</td></tr>)}</tbody></table></div>
+        <div className="border-b border-[#dfe3eb] p-4"><h3 className="flex items-center gap-1.5 text-base font-black text-[#213343]">Capacidad <InfoTooltip>Suma créditos de iniciativas actualizadas en los últimos 30 días. En evaluación solo considera las iniciativas validadas; los porcentajes usan una base de 1,000 créditos.</InfoTooltip></h3></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left"><thead className="bg-[#f8fbfd]"><tr className="border-b border-[#dfe3eb]">{["CS", "Completado (%)", "Comprometido (%)", "En evaluación", "Planificado", "En ejecución", "Completado", "Total"].map((heading, index) => <th key={`${heading}-${index}`} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{capacityRows.map((row) => { const committed = row.evaluation + row.planned + row.executing; const total = committed + row.completed; return <tr key={row.id} className="border-b border-[#edf1f5] last:border-0"><td className="px-4 py-3 text-sm font-black text-[#213343]">{row.name}</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.completed / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((committed / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.evaluation)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.planned)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.executing)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.completed)}</td><td className="px-4 py-3 text-sm font-black text-[#213343]">{formatNumber(total)}</td></tr>; })}</tbody></table></div>
       </article>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard icon={<Activity className="h-5 w-5" />} label="Activos" value={`${activePercent}%`} description={`${formatNumber(activeCases.length)} de ${formatNumber(totalCases)} casos avanzaron en 14 días.`} tone="teal" onClick={() => setDetail("active")} />
         <MetricCard icon={<CircleAlert className="h-5 w-5" />} label="Estancados" value={formatNumber(new Set(stagnantCases.map((item) => item.client_id)).size)} description={`${formatNumber(stagnantCases.length)} casos sin avance por más de 7 días.`} tone="orange" onClick={() => setDetail("stagnant")} />
         <MetricCard icon={<UsersRound className="h-5 w-5" />} label="Débiles" value={formatNumber(weakClients.length)} description="Clientes con menos de 3 casos validados en evaluación." tone="purple" onClick={() => setDetail("weak")} />
-        <MetricCard icon={<CheckCircle2 className="h-5 w-5" />} label="Completados" value={formatNumber(completedThisMonth.length)} description="Casos de uso completados este mes." tone="green" onClick={() => setDetail("completed")} />
+        <MetricCard icon={<CheckCircle2 className="h-5 w-5" />} label="Completados" value={formatNumber(completedLast30Days.length)} description="Casos de uso completados en los últimos 30 días." tone="green" onClick={() => setDetail("completed")} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm xl:col-span-2"><h3 className="text-base font-black text-[#213343]">Embudo</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos de uso por etapa del pipeline.</p><div className="mt-5 space-y-4">{funnel.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-xs font-bold text-[#516f90]"><span>{item.label}</span><span>{formatNumber(item.count)}</span></div><div className="h-8 overflow-hidden rounded-[4px] bg-[#edf3f7]"><div className="flex h-full items-center rounded-[4px] bg-[#00a4bd] px-2 text-xs font-black text-white" style={{ width: `${Math.max((item.count / maxFunnel) * 100, item.count ? 8 : 0)}%` }}>{item.count ? formatNumber(item.count) : ""}</div></div></div>)}</div></article>
+        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm xl:col-span-2"><h3 className="flex items-center gap-1.5 text-base font-black text-[#213343]">Embudo <InfoTooltip>Cuenta casos de uso por etapa, no créditos. Incluye todos los casos del CS seleccionado, por lo que sus valores pueden diferir de Capacidad.</InfoTooltip></h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos de uso por etapa del pipeline.</p><div className="mt-5 space-y-4">{funnel.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-xs font-bold text-[#516f90]"><span>{item.label}</span><span>{formatNumber(item.count)}</span></div><div className="h-8 overflow-hidden rounded-[4px] bg-[#edf3f7]"><div className="flex h-full items-center rounded-[4px] bg-[#00a4bd] px-2 text-xs font-black text-white" style={{ width: `${Math.max((item.count / maxFunnel) * 100, item.count ? 8 : 0)}%` }}>{item.count ? formatNumber(item.count) : ""}</div></div></div>)}</div></article>
         <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#7c3aed]" /><h3 className="text-base font-black text-[#213343]">Norte activo</h3></div><p className="mt-1 text-xs font-semibold text-[#516f90]">Clientes con norte definido y en proceso.</p><div className="mt-6 flex items-center gap-5"><div className="h-28 w-28 shrink-0 rounded-full" style={{ background: `conic-gradient(#7c3aed 0 ${(northCounts.active / Math.max(scopedRows.length, 1)) * 360}deg, #e8eef5 0 360deg)` }}><div className="m-[18px] flex h-[76px] w-[76px] items-center justify-center rounded-full bg-white text-lg font-black text-[#213343]">{formatNumber(scopedRows.length)}</div></div><div className="space-y-3 text-sm font-bold text-[#516f90]"><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#7c3aed]" />Activo: {formatNumber(northCounts.active)}</p><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#dfe7f0]" />Sin norte: {formatNumber(northCounts.inactive)}</p></div></div></article>
       </div>
 
