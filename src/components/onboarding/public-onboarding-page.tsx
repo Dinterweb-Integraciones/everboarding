@@ -20,6 +20,7 @@ import { PUBLIC_EXTRA_CREDIT_PACKAGE, STATUS_META, STAGE_META } from "@/lib/cons
 import {
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
+  calculateCredits,
   calculateMetrics,
   compareInitiativesForBoard,
   formatDateRange,
@@ -63,6 +64,24 @@ const EVALUATION_VALIDATION_META = {
     className: "border-[#99f6e4] bg-[#ecfffb] text-[#008f7f]",
   },
 } satisfies Record<EvaluationValidationLabel, { className: string }>;
+
+function isCommerciallyWaivedInitiative(initiative: Pick<InitiativeRecord, "labels">) {
+  return (initiative.labels ?? []).some(
+    (label) => label === "Bonificado comercialmente" || label === "Obsequiado comercialmente",
+  );
+}
+
+function getOriginalInitiativeCredits(initiative: Pick<InitiativeRecord, "subitems" | "credits">) {
+  return Math.max(
+    initiative.credits,
+    calculateCredits(
+      initiative.subitems.map((subitem) => ({
+        unit_credits: subitem.unit_credits,
+        quantity: subitem.quantity,
+      })),
+    ),
+  );
+}
 
 function getStatusDot(status: InitiativeStatus) {
   if (status === "executing") return "bg-emerald-500";
@@ -597,6 +616,12 @@ export function PublicOnboardingPage({
         : usesStripeMembership
           ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
           : `Pagar ${formatCurrency(paymentAmount)}`;
+  const activeInitiativeIsCommerciallyWaived = activeInitiativePreview
+    ? isCommerciallyWaivedInitiative(activeInitiativePreview)
+    : false;
+  const activeInitiativeOriginalCredits = activeInitiativePreview
+    ? getOriginalInitiativeCredits(activeInitiativePreview)
+    : 0;
 
   async function exportPublicPlanPdf() {
     setFeedback(null);
@@ -1785,13 +1810,19 @@ export function PublicOnboardingPage({
                           : 0;
                       const progressPercent = Math.max(0, Math.min(100, initiative.progressPercent ?? 0));
                       const validationLabel = getEvaluationValidationLabel(initiative.labels);
+                      const isCommerciallyWaived = isCommerciallyWaivedInitiative(initiative);
+                      const originalCredits = getOriginalInitiativeCredits(initiative);
 
                       return (
                         <button
                           key={initiative.id}
                           type="button"
                           onClick={() => openInitiativePreview(initiative)}
-                          className="relative w-full rounded-[4px] border border-[#dfe3eb] bg-white px-4 py-3 text-left shadow-sm"
+                          className={`relative w-full rounded-[4px] border px-4 py-3 text-left shadow-sm ${
+                            isCommerciallyWaived
+                              ? "border-[#9ee7db] bg-[#f0fffc]"
+                              : "border-[#dfe3eb] bg-white"
+                          }`}
                         >
                           <div
                             className={`absolute left-0 top-0 h-full w-[3px] ${getPublicBoardAccentClass(status)}`}
@@ -1817,6 +1848,11 @@ export function PublicOnboardingPage({
                                   <h3 className="text-[13px] font-bold leading-4 text-[#33475b]">
                                     {initiative.title}
                                   </h3>
+                                  {isCommerciallyWaived ? (
+                                    <span className="rounded-[3px] bg-[#dffaf5] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#007f70]">
+                                      Bonificado
+                                    </span>
+                                  ) : null}
                                   <span className="rounded-[2px] bg-[#f5f8fa] px-1.5 py-0.5 text-[9px] font-bold text-[#516f90]">
                                     {progressPercent}%
                                   </span>
@@ -1864,8 +1900,23 @@ export function PublicOnboardingPage({
                                   Ver detalle
                                 </span>
                               </div>
-                              <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[10px] font-bold text-[#33475b]">
-                                {initiative.credits} CR
+                              <span
+                                className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-bold ${
+                                  isCommerciallyWaived
+                                    ? "bg-[#dffaf5] text-[#007f70]"
+                                    : "bg-[#eaf0f6] text-[#33475b]"
+                                }`}
+                              >
+                                {isCommerciallyWaived ? (
+                                  <>
+                                    <span className="mr-1 text-[#7faea7] line-through">
+                                      {originalCredits} CR
+                                    </span>
+                                    {initiative.credits} CR
+                                  </>
+                                ) : (
+                                  `${initiative.credits} CR`
+                                )}
                               </span>
                             </div>
                           </div>
@@ -2228,8 +2279,28 @@ export function PublicOnboardingPage({
                   <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
                     {Math.max(0, Math.min(100, activeInitiativePreview.progressPercent ?? 0))}% progreso
                   </span>
-                  <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
-                    {activeInitiativePreview.credits} CR
+                  {activeInitiativeIsCommerciallyWaived ? (
+                    <span className="rounded-[3px] border border-[#99f6e4] bg-[#dffaf5] px-2.5 py-[5px] text-[10px] font-bold uppercase tracking-[0.08em] text-[#007f70]">
+                      Bonificado
+                    </span>
+                  ) : null}
+                  <span
+                    className={`rounded-[3px] border px-2.5 py-[5px] text-[10px] font-bold ${
+                      activeInitiativeIsCommerciallyWaived
+                        ? "border-[#99f6e4] bg-[#dffaf5] text-[#007f70]"
+                        : "border-[#cbd6e2] bg-white text-[#33475b]"
+                    }`}
+                  >
+                    {activeInitiativeIsCommerciallyWaived ? (
+                      <>
+                        <span className="mr-1 text-[#7faea7] line-through">
+                          {activeInitiativeOriginalCredits} CR
+                        </span>
+                        {activeInitiativePreview.credits} CR
+                      </>
+                    ) : (
+                      `${activeInitiativePreview.credits} CR`
+                    )}
                   </span>
                   <span className="rounded-[3px] border border-[#cbd6e2] bg-white px-2.5 py-[5px] text-[10px] font-bold text-[#33475b]">
                     {activeInitiativePreview.subitems.length} actividades
@@ -2275,8 +2346,21 @@ export function PublicOnboardingPage({
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                     Actividades incluidas
                   </p>
-                  <span className="text-[13px] font-bold text-[#ff7a59]">
-                    {activeInitiativePreview.credits} CR
+                  <span
+                    className={`text-[13px] font-bold ${
+                      activeInitiativeIsCommerciallyWaived ? "text-[#007f70]" : "text-[#ff7a59]"
+                    }`}
+                  >
+                    {activeInitiativeIsCommerciallyWaived ? (
+                      <>
+                        <span className="mr-1 text-[#7faea7] line-through">
+                          {activeInitiativeOriginalCredits} CR
+                        </span>
+                        {activeInitiativePreview.credits} CR
+                      </>
+                    ) : (
+                      `${activeInitiativePreview.credits} CR`
+                    )}
                   </span>
                 </div>
 

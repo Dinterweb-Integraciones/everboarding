@@ -133,10 +133,7 @@ export function mapProposalInitiativeToPublicRecord(
     updated_at: nowIso,
     created_by_user_id: null,
     updated_by_user_id: null,
-    subitems: subitems.map((subitem) => ({
-      ...subitem,
-      unit_credits: initiative.commerciallyWaived ? 0 : subitem.unit_credits,
-    })),
+    subitems,
     logs: [],
     credits: calculateSalesInitiativeCredits(initiative),
     progressPercent: calculateSalesInitiativeProgress(initiative),
