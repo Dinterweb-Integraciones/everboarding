@@ -1129,7 +1129,7 @@ export function OnboardingClientPage({
     setCatalogPreviewGroup(group);
   }
 
-  function isCatalogGroupBlocked(group: CatalogModalGroup) {
+  function isCatalogGroupAlreadyAdded(group: CatalogModalGroup) {
     const normalizedGroupName = normalizeCatalogText(group.name);
 
     return initiatives.some(
@@ -1141,17 +1141,6 @@ export function OnboardingClientPage({
 
   function closeCatalogGroupPreview() {
     setCatalogPreviewGroup(null);
-  }
-
-  async function removeCatalogGroup(group: CatalogModalGroup) {
-    const matchingInitiative = initiatives.find(
-      (initiative) =>
-        initiative.status !== "completed" &&
-        normalizeCatalogText(initiative.title) === normalizeCatalogText(group.name),
-    );
-    if (!matchingInitiative) return;
-
-    await deleteInitiative(matchingInitiative);
   }
 
   function findCatalogGroupsByCategory(category: string) {
@@ -1713,10 +1702,7 @@ export function OnboardingClientPage({
       return;
     }
 
-    if (isCatalogGroupBlocked(group)) {
-      showError("Ese grupo ya está activo en el plan de trabajo.");
-      return;
-    }
+    const wasAlreadyAdded = isCatalogGroupAlreadyAdded(group);
 
     setFeedback(null);
     setIsSavingInitiative(true);
@@ -1726,7 +1712,11 @@ export function OnboardingClientPage({
 
       setInitiatives((current) => [...current, insertedInitiative]);
       closeCatalogModal();
-      showSuccess("Grupo agregado al plan de trabajo.");
+      showSuccess(
+        wasAlreadyAdded
+          ? "Este grupo ya estaba agregado. Sumamos otra instancia al plan de trabajo."
+          : "Grupo agregado al plan de trabajo.",
+      );
     } catch (caughtError) {
       showError(
         caughtError instanceof Error ? caughtError.message : "No fue posible agregar el grupo.",
@@ -4415,25 +4405,25 @@ export function OnboardingClientPage({
                     {visibleCatalogGroups.length ? (
                       <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                         {visibleCatalogGroups.map((group) => {
-                      const alreadyAdded = isCatalogGroupBlocked(group);
+                      const alreadyAdded = isCatalogGroupAlreadyAdded(group);
 
                       return (
                         <div
                           key={group.id}
-                          role={alreadyAdded ? undefined : "button"}
-                          tabIndex={alreadyAdded ? -1 : 0}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
-                            if (!alreadyAdded) openCatalogGroupPreview(group);
+                            openCatalogGroupPreview(group);
                           }}
                           onKeyDown={(event) => {
-                            if (!alreadyAdded && (event.key === "Enter" || event.key === " ")) {
+                            if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
                               openCatalogGroupPreview(group);
                             }
                           }}
                           className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
-                              ? "cursor-default border-[#d7dee8] bg-[#f3f5f7]"
+                              ? "cursor-pointer border-[#bfd9d4] bg-[#f8fffd] hover:-translate-y-[1px] hover:shadow-md"
                               : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
@@ -4489,31 +4479,18 @@ export function OnboardingClientPage({
                             </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {alreadyAdded ? "Bloqueado" : "Disponible"}
+                                {alreadyAdded ? "Ya agregado" : "Disponible"}
                               </span>
-                              {alreadyAdded ? (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void removeCatalogGroup(group);
-                                  }}
-                                  className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5]"
-                                >
-                                  Quitar
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openCatalogGroupPreview(group);
-                                  }}
-                                  className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                                >
-                                  Ver detalles
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openCatalogGroupPreview(group);
+                                }}
+                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                              >
+                                Ver detalles
+                              </button>
                             </div>
                           </div>
                         </div>

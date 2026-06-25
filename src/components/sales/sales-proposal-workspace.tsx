@@ -1514,7 +1514,7 @@ function createInitiativeFromGroup(
     setCatalogPreviewGroup(group);
   }
 
-  function isCatalogGroupBlocked(group: CatalogModalGroup) {
+  function isCatalogGroupAlreadyAdded(group: CatalogModalGroup) {
     const normalizedGroupName = normalizeCatalogText(group.name);
 
     return proposal.initiatives.some(
@@ -1528,56 +1528,10 @@ function createInitiativeFromGroup(
     setCatalogPreviewGroup(null);
   }
 
-  function removeCatalogGroup(group: CatalogModalGroup) {
-    const normalizedGroupName = normalizeCatalogText(group.name);
-    const matchingInitiatives = proposal.initiatives.filter(
-      (initiative) =>
-        initiative.status !== "completed" &&
-        normalizeCatalogText(initiative.title) === normalizedGroupName,
-    );
-
-    if (!matchingInitiatives.length) {
-      return;
-    }
-
-    setProposal((current) => {
-      const nextInitiatives = current.initiatives
-        .filter(
-          (initiative) =>
-            initiative.status === "completed" ||
-            normalizeCatalogText(initiative.title) !== normalizedGroupName,
-        )
-        .map((initiative, index) => ({
-          ...initiative,
-          sortOrder: index,
-        }));
-
-      return {
-        ...current,
-        initiatives: nextInitiatives,
-      };
-    });
-
-    if (
-      catalogPreviewGroup &&
-      normalizeCatalogText(catalogPreviewGroup.name) === normalizedGroupName
-    ) {
-      closeCatalogGroupPreview();
-    }
-
-    setFeedback({
-      tone: "success",
-      message: "Caso de uso removido del Plan de Trabajo.",
-    });
-  }
-
   function addCatalogPreviewGroup(status: InitiativeStatus) {
     if (!catalogPreviewGroup) return;
 
-    if (isCatalogGroupBlocked(catalogPreviewGroup)) {
-      setFeedback({ tone: "error", message: "Ese caso de uso ya está activo en la propuesta." });
-      return;
-    }
+    const wasAlreadyAdded = isCatalogGroupAlreadyAdded(catalogPreviewGroup);
 
     const next = createInitiativeFromGroup(
       catalogPreviewGroup,
@@ -1602,7 +1556,9 @@ function createInitiativeFromGroup(
     setFeedback({
       tone: "success",
       message:
-        status === "planned"
+        wasAlreadyAdded
+          ? "Este caso de uso ya estaba agregado. Sumamos otra instancia a la propuesta."
+          : status === "planned"
           ? wasPersistQueued
             ? "Grupo incluido en Planificacion."
             : "Grupo incluido en Planificacion. Se guardara cuando completes el correo del cliente."
@@ -2428,6 +2384,7 @@ function mergeRecommendedGroups(
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
   const hasPlanningItems =
     groupedInitiatives.backlog.length > 0 || groupedInitiatives.planned.length > 0;
+  const hasBoardItems = boardStatuses.some((status) => groupedInitiatives[status].length > 0);
   const isOverCapacity = metrics.committed + metrics.completed > metrics.total;
   const currentPlanCredits = proposal.initiatives.reduce(
     (sum, initiative) => sum + calculateSalesInitiativeCredits(initiative),
@@ -2915,7 +2872,7 @@ function mergeRecommendedGroups(
           <div className="overflow-x-auto overflow-y-hidden">
             <div className="flex min-h-[420px] min-w-max gap-6">
               {boardStatuses.map((status) => {
-                if (!hasPlanningItems && status !== "backlog") {
+                if (!hasBoardItems && status !== "backlog") {
                   return null;
                 }
 
@@ -2925,7 +2882,7 @@ function mergeRecommendedGroups(
                   0,
                 );
 
-                if (!hasPlanningItems && status === "backlog") {
+                if (!hasBoardItems && status === "backlog") {
                   if (isDinterwebVariant) {
                     return (
                       <div key="planning-empty-state" className="flex min-w-[1352px] flex-col">
@@ -4188,25 +4145,25 @@ function mergeRecommendedGroups(
                     {visibleCatalogGroups.length ? (
                       <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                         {visibleCatalogGroups.map((group) => {
-                      const alreadyAdded = isCatalogGroupBlocked(group);
+                      const alreadyAdded = isCatalogGroupAlreadyAdded(group);
 
                       return (
                         <div
                           key={group.id}
-                          role={alreadyAdded ? undefined : "button"}
-                          tabIndex={alreadyAdded ? -1 : 0}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
-                            if (!alreadyAdded) openCatalogGroupPreview(group);
+                            openCatalogGroupPreview(group);
                           }}
                           onKeyDown={(event) => {
-                            if (!alreadyAdded && (event.key === "Enter" || event.key === " ")) {
+                            if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
                               openCatalogGroupPreview(group);
                             }
                           }}
                           className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
                             alreadyAdded
-                              ? "cursor-default border-[#d7dee8] bg-[#f3f5f7]"
+                              ? "cursor-pointer border-[#bfd9d4] bg-[#f8fffd] hover:-translate-y-[1px] hover:shadow-md"
                               : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
@@ -4262,31 +4219,18 @@ function mergeRecommendedGroups(
                             </span>
                             <div className="flex items-center gap-3">
                               <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {alreadyAdded ? "Bloqueado" : "Disponible"}
+                                {alreadyAdded ? "Ya agregado" : "Disponible"}
                               </span>
-                              {alreadyAdded ? (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    removeCatalogGroup(group);
-                                  }}
-                                  className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5]"
-                                >
-                                  Quitar
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openCatalogGroupPreview(group);
-                                  }}
-                                  className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                                >
-                                  Ver detalles
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openCatalogGroupPreview(group);
+                                }}
+                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
+                              >
+                                Ver detalles
+                              </button>
                             </div>
                           </div>
                         </div>
