@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Download, Link2, Loader2, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
+import { CalendarDays, Download, Link2, Loader2, Minus, Plus, Search, SlidersHorizontal, Sparkles, Trash2, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -192,6 +192,21 @@ function getDinterwebMonthlyPrice(proposal: Pick<SalesProposalDraft, "quotedPric
     0,
     Math.round(proposal.quotedPrice / getDinterwebChargeMultiplier(proposal.billingMode, proposal.periodMonths)),
   );
+}
+
+function inferDinterwebPackageCreditsStep(monthlyCredits: number) {
+  if (monthlyCredits > DINTERWEB_BASE_PACKAGE.credits && monthlyCredits % 80 === 0 && monthlyCredits % 60 !== 0) {
+    return 80;
+  }
+
+  return DINTERWEB_BASE_PACKAGE.credits;
+}
+
+function inferDinterwebPackagePriceStep(monthlyCredits: number, monthlyPrice: number) {
+  const creditsStep = inferDinterwebPackageCreditsStep(monthlyCredits);
+  const packageCount = Math.max(1, Math.round(monthlyCredits / creditsStep));
+
+  return Math.max(DINTERWEB_BASE_PACKAGE.price, Math.round(monthlyPrice / packageCount));
 }
 
 function getStatusDot(status: InitiativeStatus) {
@@ -757,6 +772,15 @@ export function SalesProposalWorkspace({
   );
   const [dinterwebPlanPriceDraft, setDinterwebPlanPriceDraft] = useState(
     String(Math.max(DINTERWEB_BASE_PACKAGE.price, getDinterwebMonthlyPrice(initialDraft))),
+  );
+  const [dinterwebPackageCreditsStep, setDinterwebPackageCreditsStep] = useState(() =>
+    inferDinterwebPackageCreditsStep(getDinterwebMonthlyCredits(initialDraft)),
+  );
+  const [dinterwebPackagePriceStep, setDinterwebPackagePriceStep] = useState(() =>
+    inferDinterwebPackagePriceStep(
+      getDinterwebMonthlyCredits(initialDraft),
+      getDinterwebMonthlyPrice(initialDraft),
+    ),
   );
   const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
     Boolean(initialProposal?.appliedCouponCode?.trim()),
@@ -1367,6 +1391,44 @@ export function SalesProposalWorkspace({
     setIsUpsellModalOpen(false);
   }
 
+  function adjustDinterwebPackage(direction: 1 | -1) {
+    if (hasAppliedCoupon) {
+      setFeedback({
+        tone: "error",
+        message: "Quita o cambia el cupon antes de reconfigurar el paquete.",
+      });
+      return;
+    }
+
+    if (isProposalCheckoutLocked) {
+      return;
+    }
+
+    const currentMonthlyCredits = Math.max(DINTERWEB_BASE_PACKAGE.credits, dinterwebMonthlyCredits);
+    const currentMonthlyPrice = Math.max(DINTERWEB_BASE_PACKAGE.price, dinterwebMonthlyPrice);
+    const nextMonthlyCredits = Math.max(
+      dinterwebPackageCreditsStep,
+      currentMonthlyCredits + dinterwebPackageCreditsStep * direction,
+    );
+    const nextMonthlyPrice = Math.max(
+      dinterwebPackagePriceStep,
+      currentMonthlyPrice + dinterwebPackagePriceStep * direction,
+    );
+
+    applyDinterwebCommercialTerms(
+      nextMonthlyCredits,
+      nextMonthlyPrice,
+      proposal.billingMode,
+      proposal.periodMonths,
+    );
+    setDinterwebPlanCreditsDraft(String(nextMonthlyCredits));
+    setDinterwebPlanPriceDraft(String(nextMonthlyPrice));
+    setFeedback({
+      tone: "success",
+      message: `Capacidad configurada en ${nextMonthlyCredits} creditos por periodo.`,
+    });
+  }
+
   function addUpsellPackage() {
     setUpsellCartCount((current) => current + 1);
   }
@@ -1400,6 +1462,8 @@ export function SalesProposalWorkspace({
     );
     setDinterwebPlanCreditsDraft(String(DINTERWEB_BASE_PACKAGE.credits));
     setDinterwebPlanPriceDraft(String(DINTERWEB_BASE_PACKAGE.price));
+    setDinterwebPackageCreditsStep(DINTERWEB_BASE_PACKAGE.credits);
+    setDinterwebPackagePriceStep(DINTERWEB_BASE_PACKAGE.price);
     setFeedback({
       tone: "success",
       message: "El paquete volvio a la base de 60 creditos.",
@@ -1443,6 +1507,8 @@ export function SalesProposalWorkspace({
         proposal.billingMode,
         proposal.periodMonths,
       );
+      setDinterwebPackageCreditsStep(nextMonthlyCredits);
+      setDinterwebPackagePriceStep(nextMonthlyPrice);
       setFeedback({
         tone: "success",
         message: `Plan configurado en ${nextMonthlyCredits} creditos por periodo.`,
@@ -2695,38 +2761,68 @@ function mergeRecommendedGroups(
 
             <div className="w-full max-w-[520px] rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md xl:w-[520px] xl:max-w-[520px]">
               <div className="flex items-stretch">
-                <div className="flex min-w-[132px] flex-col justify-center px-3 py-2">
+                <div className="flex min-w-[112px] flex-col justify-center px-2.5 py-2">
                   <p className="text-[7px] font-bold uppercase tracking-[0.16em] text-[#9cb1c6]">
                     Inversión total
                   </p>
-                  <p className="mt-1 whitespace-nowrap text-[20px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
+                  <p className="mt-1 whitespace-nowrap text-[18px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
                     {formatCurrency(proposal.quotedPrice, proposal.currency.toUpperCase())}
                   </p>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex shrink-0 items-center px-2.5">
-                  <span className="inline-flex h-10 min-w-[88px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-3 text-[13px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
+                <div className="flex shrink-0 items-center px-1.5">
+                  <span className="inline-flex h-9 min-w-[78px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-2 text-[12px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
                     {proposal.contractedCredits} CR
                   </span>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex shrink-0 items-center px-1.5">
+                <div className="flex shrink-0 items-center gap-1 px-1">
+                  {isDinterwebVariant ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => adjustDinterwebPackage(-1)}
+                        disabled={
+                          isUpsellDisabled ||
+                          dinterwebMonthlyCredits <= dinterwebPackageCreditsStep ||
+                          dinterwebMonthlyPrice <= dinterwebPackagePriceStep
+                        }
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Reducir capacidad"
+                        title="Reducir capacidad"
+                      >
+                        <Minus className="h-2.5 w-2.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustDinterwebPackage(1)}
+                        disabled={isUpsellDisabled}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Aumentar capacidad"
+                        title="Aumentar capacidad"
+                      >
+                        <Plus className="h-2.5 w-2.5" />
+                      </button>
+                    </>
+                  ) : null}
                   <button
                     type="button"
                     onClick={openUpsellModal}
                     disabled={isUpsellDisabled}
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={isDinterwebVariant ? "Configurar paquete" : "Agregar creditos extra"}
+                    title={isDinterwebVariant ? "Configurar paquete" : "Agregar creditos extra"}
                   >
-                    <Plus className="h-3 w-3" />
+                    {isDinterwebVariant ? <SlidersHorizontal className="h-2.5 w-2.5" /> : <Plus className="h-2.5 w-2.5" />}
                   </button>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
-                <div className="flex min-w-0 flex-1 items-center px-1.5 py-1">
+                <div className="flex min-w-0 flex-1 items-center px-1 py-1">
                   <button
                     type="button"
                     onClick={activatePlan}
                     disabled={isActivatePlanDisabled}
-                    className="inline-flex h-10 w-full min-w-[190px] items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
+                    className="inline-flex h-10 w-full min-w-[150px] items-center justify-center gap-1.5 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-3 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <span className="whitespace-nowrap">{activatePlanButtonLabel}</span>
                     <Sparkles className="h-3 w-3 shrink-0" />
