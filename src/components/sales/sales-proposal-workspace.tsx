@@ -3509,6 +3509,20 @@ function mergeRecommendedGroups(
                 Agregar Caso de Uso
               </button>
             </div>
+          ) : isDinterwebVariant && !isProposalCheckoutLocked ? (
+            <div className="mt-6 w-[664px] min-w-[664px] rounded-[8px] border border-[#8ee1d5] bg-[#e8fffb] p-4 shadow-[0_8px_24px_rgba(0,189,165,0.14)]">
+              <button
+                type="button"
+                onClick={() => openCatalogModal("wizard")}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[6px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Guia Inteligente</span>
+                <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
+                  Beta
+                </span>
+              </button>
+            </div>
           ) : null}
         </section>
 
