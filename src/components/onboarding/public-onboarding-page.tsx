@@ -622,6 +622,9 @@ export function PublicOnboardingPage({
   const activeInitiativeOriginalCredits = activeInitiativePreview
     ? getOriginalInitiativeCredits(activeInitiativePreview)
     : 0;
+  const shouldShowActiveInitiativeOriginalCredits =
+    activeInitiativeIsCommerciallyWaived &&
+    activeInitiativeOriginalCredits > (activeInitiativePreview?.credits ?? 0);
 
   async function exportPublicPlanPdf() {
     setFeedback(null);
@@ -1812,6 +1815,8 @@ export function PublicOnboardingPage({
                       const validationLabel = getEvaluationValidationLabel(initiative.labels);
                       const isCommerciallyWaived = isCommerciallyWaivedInitiative(initiative);
                       const originalCredits = getOriginalInitiativeCredits(initiative);
+                      const shouldShowOriginalCredits =
+                        isCommerciallyWaived && originalCredits > initiative.credits;
 
                       return (
                         <button
@@ -1909,9 +1914,11 @@ export function PublicOnboardingPage({
                               >
                                 {isCommerciallyWaived ? (
                                   <>
-                                    <span className="mr-1 text-[#7faea7] line-through">
-                                      {originalCredits} CR
-                                    </span>
+                                    {shouldShowOriginalCredits ? (
+                                      <span className="mr-1 text-[#7faea7] line-through">
+                                        {originalCredits} CR
+                                      </span>
+                                    ) : null}
                                     {initiative.credits} CR
                                   </>
                                 ) : (
@@ -2293,9 +2300,11 @@ export function PublicOnboardingPage({
                   >
                     {activeInitiativeIsCommerciallyWaived ? (
                       <>
-                        <span className="mr-1 text-[#7faea7] line-through">
-                          {activeInitiativeOriginalCredits} CR
-                        </span>
+                        {shouldShowActiveInitiativeOriginalCredits ? (
+                          <span className="mr-1 text-[#7faea7] line-through">
+                            {activeInitiativeOriginalCredits} CR
+                          </span>
+                        ) : null}
                         {activeInitiativePreview.credits} CR
                       </>
                     ) : (
@@ -2353,9 +2362,11 @@ export function PublicOnboardingPage({
                   >
                     {activeInitiativeIsCommerciallyWaived ? (
                       <>
-                        <span className="mr-1 text-[#7faea7] line-through">
-                          {activeInitiativeOriginalCredits} CR
-                        </span>
+                        {shouldShowActiveInitiativeOriginalCredits ? (
+                          <span className="mr-1 text-[#7faea7] line-through">
+                            {activeInitiativeOriginalCredits} CR
+                          </span>
+                        ) : null}
                         {activeInitiativePreview.credits} CR
                       </>
                     ) : (
