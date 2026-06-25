@@ -148,6 +148,7 @@ const EVALUATION_VALIDATION_META = {
     className: "border-[#99f6e4] bg-[#ecfffb] text-[#008f7f]",
   },
 } as const;
+const SHOW_CATALOG_WIZARD_TAB = false;
 const WIZARD_HUB_OPTIONS = ["Sales", "Marketing", "Service", "Content"] as const;
 const WIZARD_LOADING_MESSAGES = [
   "Analizando el contexto brindado...",
@@ -861,7 +862,7 @@ export function SalesProposalWorkspace({
     () => [
       { id: "wizard", label: "Guía de Activación" },
       ...catalogGroupOptions.map((category) => ({ id: category.id, label: category.label })),
-    ],
+    ].filter((tab) => SHOW_CATALOG_WIZARD_TAB || tab.id !== "wizard"),
     [catalogGroupOptions],
   );
 
@@ -1322,7 +1323,7 @@ export function SalesProposalWorkspace({
   }
 
   function openCatalogModal(tab?: string) {
-    const nextTab = tab ?? (hasPlanningItems ? defaultCatalogLibraryTab : "wizard");
+    const nextTab = tab ?? defaultCatalogLibraryTab;
     setActiveCatalogTab(nextTab);
     setCatalogSearchQuery("");
     setIsCatalogModalOpen(true);
@@ -2922,14 +2923,11 @@ function mergeRecommendedGroups(
                         <div className="mt-28 w-[664px] min-w-[664px] rounded-[8px] border border-[#8ee1d5] bg-[#e8fffb] p-4 shadow-[0_8px_24px_rgba(0,189,165,0.14)]">
                           <button
                             type="button"
-                            onClick={() => openCatalogModal("wizard")}
+                            onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
                             className="inline-flex w-full items-center justify-center gap-2 rounded-[6px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
                           >
-                            <Sparkles className="h-4 w-4" />
-                            <span>Guia Inteligente</span>
-                            <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
-                              Beta
-                            </span>
+                            <Plus className="h-4 w-4" />
+                            <span>Agregar casos de uso</span>
                           </button>
                         </div>
                       </div>
@@ -2979,14 +2977,11 @@ function mergeRecommendedGroups(
                             </p>
                             <button
                               type="button"
-                              onClick={() => openCatalogModal("wizard")}
+                              onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
                               className="mt-8 inline-flex min-w-[282px] items-center justify-center gap-2 rounded-[4px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
                             >
-                              <Sparkles className="h-4 w-4" />
-                              <span>Guia Inteligente</span>
-                              <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
-                                Beta
-                              </span>
+                              <Plus className="h-4 w-4" />
+                              <span>Agregar casos de uso</span>
                             </button>
                           </div>
                         </div>
@@ -3513,14 +3508,11 @@ function mergeRecommendedGroups(
             <div className="mt-6 w-[664px] min-w-[664px] rounded-[8px] border border-[#8ee1d5] bg-[#e8fffb] p-4 shadow-[0_8px_24px_rgba(0,189,165,0.14)]">
               <button
                 type="button"
-                onClick={() => openCatalogModal("wizard")}
+                onClick={() => openCatalogModal(defaultCatalogLibraryTab)}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[6px] bg-[#14b8a6] px-8 py-3.5 text-[14px] font-extrabold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#0ea899]"
               >
-                <Sparkles className="h-4 w-4" />
-                <span>Guia Inteligente</span>
-                <span className="rounded-full border border-white/35 bg-white/18 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.2em] text-white">
-                  Beta
-                </span>
+                <Plus className="h-4 w-4" />
+                <span>Agregar casos de uso</span>
               </button>
             </div>
           ) : null}
