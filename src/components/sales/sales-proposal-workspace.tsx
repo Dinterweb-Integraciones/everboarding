@@ -3612,7 +3612,7 @@ function mergeRecommendedGroups(
                 Agregar Caso de Uso
               </button>
             </div>
-          ) : isDinterwebVariant && !isProposalCheckoutLocked ? (
+          ) : !isProposalCheckoutLocked ? (
             <div className="mt-6 w-[664px] min-w-[664px] rounded-[8px] border border-[#8ee1d5] bg-[#e8fffb] p-4 shadow-[0_8px_24px_rgba(0,189,165,0.14)]">
               <button
                 type="button"
