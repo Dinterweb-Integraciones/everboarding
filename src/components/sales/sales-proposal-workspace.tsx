@@ -104,6 +104,31 @@ function getCatalogGroupInitiativeDescription(group: CatalogModalGroup) {
   );
 }
 
+function findCatalogGroupForInitiative(
+  initiative: Pick<SalesProposalInitiativeDraft, "title" | "type" | "subitems">,
+  groups: CatalogModalGroup[],
+) {
+  const normalizedTitle = normalizeCatalogText(initiative.title);
+  const normalizedType = normalizeCatalogText(initiative.type);
+  const subitemCatalogIds = new Set(
+    initiative.subitems.flatMap((subitem) => (subitem.catalogItemId ? [subitem.catalogItemId] : [])),
+  );
+
+  const titleMatches = groups.filter((group) => normalizeCatalogText(group.name) === normalizedTitle);
+  const typedTitleMatch = titleMatches.find((group) => normalizeCatalogText(group.modalCategory) === normalizedType);
+  if (typedTitleMatch) return typedTitleMatch;
+  if (titleMatches[0]) return titleMatches[0];
+
+  if (!subitemCatalogIds.size) return null;
+
+  return (
+    groups.find((group) => {
+      const groupItemIds = new Set(group.items.map((item) => item.id));
+      return [...subitemCatalogIds].every((itemId) => groupItemIds.has(itemId));
+    }) ?? null
+  );
+}
+
 type WizardRecommendationStatus = Extract<InitiativeStatus, "backlog" | "planned" | "executing">;
 
 type WizardRecommendation = {
@@ -3901,16 +3926,36 @@ function mergeRecommendedGroups(
                     </span>
                   </div>
                   <div className="divide-y divide-[#eef2f7]">
-                    {items.map((initiative) => (
+                    {items.map((initiative) => {
+                      const summaryCatalogGroup = findCatalogGroupForInitiative(initiative, catalogGroups);
+                      const summaryFields = [
+                        {
+                          label: "Alcance y descripcion detallada",
+                          value: summaryCatalogGroup?.description || initiative.description,
+                          fallback: "Sin descripcion detallada.",
+                        },
+                        {
+                          label: "Al terminar el caso de uso",
+                          value: summaryCatalogGroup?.completionOutcome || "",
+                          fallback: "Sin resultado definido.",
+                        },
+                        {
+                          label: "Hito de exito",
+                          value: summaryCatalogGroup?.successMilestone || "",
+                          fallback: "Sin hito definido.",
+                        },
+                      ];
+
+                      return (
                       <div
                         key={`summary-card-${initiative.id}`}
-                        className="grid w-full gap-6 px-5 py-5 text-left lg:grid-cols-[1.35fr_0.65fr]"
+                        className="w-full px-5 py-5 text-left"
                       >
                         <div>
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <h4 className="text-[14px] font-bold text-[#33475b]">{initiative.title}</h4>
-                              <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
+                              <p className="hidden">
                                 {getPlainInitiativeDescription(initiative.description, "Sin descripción ejecutiva.")}
                               </p>
                               <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
@@ -3919,18 +3964,25 @@ function mergeRecommendedGroups(
                             </div>
                           </div>
                         </div>
-                        <div className="rounded-[4px] border border-[#dfe3eb] bg-white p-3">
-                          <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                            Historial de notas
-                          </p>
-                          <div className="mt-2 border-t border-[#dfe3eb] pt-3">
-                            <p className="text-[11px] italic text-[#516f90]">
-                              Sin notas registradas.
-                            </p>
-                          </div>
+                        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                          {summaryFields.map((field) => (
+                            <div key={`${initiative.id}-${field.label}`} className="rounded-[4px] border border-[#dfe3eb] bg-white p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                                {field.label}
+                              </p>
+                              <div className="mt-2 border-t border-[#dfe3eb] pt-3">
+                                <RichTextDisplay
+                                  value={field.value}
+                                  fallback={field.fallback}
+                                  className="text-[11px] leading-5 text-[#516f90]"
+                                />
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -4761,6 +4813,8 @@ function mergeRecommendedGroups(
           const draftOriginalCredits = calculateSalesInitiativeOriginalCredits(initiativeDraft);
           const canUseCommercialAgreement =
             isDinterwebVariant && canToggleCommercialWaiver(initiativeDraft);
+          const catalogGroupForDraft = findCatalogGroupForInitiative(initiativeDraft, catalogGroups);
+          const draftDescriptionValue = catalogGroupForDraft?.description || initiativeDraft.description;
 
           return (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">
@@ -4827,16 +4881,43 @@ function mergeRecommendedGroups(
               </section>
 
               <section>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Descripción</p>
-                <div className="mt-3 rounded-[6px] border border-[#d9e6f2] bg-[#f8fbff] p-4 shadow-[0_8px_24px_rgba(81,111,144,0.08)]">
-                  <textarea
-                    rows={7}
-                    value={initiativeDraft.description}
-                    onChange={(event) => updateInitiativeDraft("description", event.target.value)}
-                    className="min-h-[220px] w-full resize-y rounded-[2px] border border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">Alcance y descripcion detallada</p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                  <RichTextDisplay
+                    value={draftDescriptionValue}
+                    fallback="Este caso de uso no tiene descripcion detallada todavia."
+                    className="text-[13px] leading-relaxed text-[#33475b]"
                   />
                 </div>
               </section>
+
+              {catalogGroupForDraft?.completionOutcome ? (
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Al terminar el caso de uso
+                  </p>
+                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                    <RichTextDisplay
+                      value={catalogGroupForDraft.completionOutcome}
+                      className="text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {catalogGroupForDraft?.successMilestone ? (
+                <section>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Hito de exito
+                  </p>
+                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                    <RichTextDisplay
+                      value={catalogGroupForDraft.successMilestone}
+                      className="text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </div>
+                </section>
+              ) : null}
 
               <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
@@ -4866,6 +4947,11 @@ function mergeRecommendedGroups(
                             onChange={(event) => updateDraftSubitem(index, "name", event.target.value)}
                             className="block w-full resize-none border-0 bg-transparent p-0 text-[12px] font-bold leading-[1.25] text-[#33475b] outline-none"
                           />
+                          {initialCatalog.find((item) => item.id === subitem.catalogItemId)?.category ? (
+                            <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[#516f90]">
+                              {initialCatalog.find((item) => item.id === subitem.catalogItemId)?.category}
+                            </p>
+                          ) : null}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span className="text-[9px] text-[#516f90]">{subitem.unitCredits} CR c/u</span>
                             <span className={`inline-flex items-center rounded-[999px] px-2 py-1 text-[9px] font-bold ${TASK_STATUS_META[subitem.status].muted}`}>
