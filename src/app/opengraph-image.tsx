@@ -49,11 +49,11 @@ export default async function Image() {
               justifyContent: "center",
               width: "220px",
               height: "220px",
-              borderRadius: "44px",
+              borderRadius: "999px",
               background: "#ffffff",
             }}
           >
-            <img src={logoSrc} alt="" style={{ width: 150, height: 150 }} />
+            <img src={logoSrc} alt="" style={{ width: 220, height: 220 }} />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
             <div
