@@ -5,11 +5,13 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { NorthStarHistoryRecord, NorthStarStatus } from "@/lib/onboarding";
+import { cn } from "@/lib/utils";
+import type { NorthStarHistoryRecord, NorthStarLifecycleStatus, NorthStarStatus } from "@/lib/onboarding";
 
 type NorthStarModalProps = {
   role: "cs" | "client";
   status: NorthStarStatus;
+  lifecycleStatus?: NorthStarLifecycleStatus;
   text: string;
   history?: NorthStarHistoryRecord[];
   dismissalsRemaining: number;
@@ -21,6 +23,7 @@ type NorthStarModalProps = {
   onCsSave?: () => void;
   onClientApprove?: () => void;
   onCsComplete?: () => void;
+  onFulfillmentChange?: (fulfilled: boolean) => void;
 };
 
 function getStatusLabel(status: NorthStarStatus) {
@@ -35,6 +38,14 @@ function formatHistoryDate(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function getHistoryStateLabel(entry: NorthStarHistoryRecord) {
+  if (entry.north_star_lifecycle_status === "fulfilled") return "Cumplido";
+  if (entry.north_star_status === "client_approved" || entry.north_star_status === "completed") {
+    return "Validado";
+  }
+  return "Propuesta";
 }
 
 function getGuidance(role: NorthStarModalProps["role"], status: NorthStarStatus) {
@@ -62,6 +73,7 @@ function getGuidance(role: NorthStarModalProps["role"], status: NorthStarStatus)
 export function NorthStarModal({
   role,
   status,
+  lifecycleStatus = "active",
   text,
   history = [],
   dismissalsRemaining,
@@ -73,6 +85,7 @@ export function NorthStarModal({
   onCsSave,
   onClientApprove,
   onCsComplete,
+  onFulfillmentChange,
 }: NorthStarModalProps) {
   const canDismiss = !isBlocking || (dismissalsRemaining > 0 && status !== "completed");
   const canEdit =
@@ -127,6 +140,11 @@ export function NorthStarModal({
     );
   }
 
+  const canManageFulfillment = role === "cs" && status === "completed";
+  const shouldClientValidateFulfillment = role === "client" && status === "completed" && lifecycleStatus === "fulfilled";
+  const showFulfillmentActions = canManageFulfillment || shouldClientValidateFulfillment;
+  const historyEntries = history.filter((entry) => entry.north_star_lifecycle_status !== "active");
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#33475b]/75 p-4 backdrop-blur-sm">
       <div className="w-full max-w-[980px] rounded-[8px] border border-[#dfe3eb] bg-white p-6 shadow-2xl">
@@ -173,6 +191,37 @@ export function NorthStarModal({
               <span>Cerrar</span>
               {isBlocking ? <span className="mt-0.5 text-[11px]">{dismissalsRemaining}/3</span> : null}
             </button>
+
+            {showFulfillmentActions ? (
+              <div className="grid w-full gap-2">
+                <button
+                  type="button"
+                  onClick={() => onFulfillmentChange?.(true)}
+                  disabled={isSaving || lifecycleStatus === "fulfilled"}
+                  className={cn(
+                    "inline-flex h-16 w-full items-center justify-center rounded-[6px] border px-3 text-center text-[12px] font-bold transition disabled:cursor-default",
+                    lifecycleStatus === "fulfilled"
+                      ? "border-[#00a88f] bg-[#00bda5] text-white shadow-sm"
+                      : "border-[#00a88f] bg-[#e7fbf7] text-[#007a69] hover:bg-[#00bda5] hover:text-white",
+                  )}
+                >
+                  Cumplido
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onFulfillmentChange?.(false)}
+                  disabled={isSaving || lifecycleStatus === "active"}
+                  className={cn(
+                    "inline-flex h-16 w-full items-center justify-center rounded-[6px] border px-3 text-center text-[12px] font-bold transition disabled:cursor-default",
+                    lifecycleStatus === "active"
+                      ? "border-[#f59e0b] bg-[#fffbeb] text-[#b45309]"
+                      : "border-[#f59e0b] bg-white text-[#b45309] hover:bg-[#f59e0b] hover:text-white",
+                  )}
+                >
+                  No cumplido
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -189,13 +238,13 @@ export function NorthStarModal({
                 Historial de Nortes
               </h3>
               <span className="text-[11px] font-semibold text-[#516f90]">
-                {history.length ? `${history.length} versiones` : "Sin versiones previas"}
+                {historyEntries.length ? `${historyEntries.length} versiones` : "Sin versiones previas"}
               </span>
             </div>
 
-            {history.length ? (
+            {historyEntries.length ? (
               <div className="max-h-[260px] space-y-3 overflow-y-auto pr-1">
-                {history.map((entry, index) => (
+                {historyEntries.map((entry, index) => (
                   <article
                     key={entry.id}
                     className="rounded-[4px] border border-[#dfe3eb] bg-[#f8fbff] px-4 py-3"
@@ -203,10 +252,10 @@ export function NorthStarModal({
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[11px] font-extrabold text-[#33475b]">
-                          {index === 0 ? "Version actual" : `Version ${history.length - index}`}
+                          {`Version ${historyEntries.length - index}`}
                         </span>
                         <span className="rounded-[3px] border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] text-[#516f90]">
-                          {getStatusLabel(entry.north_star_status)}
+                          {getHistoryStateLabel(entry)}
                         </span>
                       </div>
                       <span className="text-[11px] font-semibold text-[#7c98b6]">

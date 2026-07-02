@@ -658,7 +658,9 @@ export function PublicOnboardingPage({
     setActiveInitiativePreview(null);
   }
 
-  async function updatePublicNorthStar(action: "client_approve" | "dismiss") {
+  async function updatePublicNorthStar(
+    action: "client_approve" | "dismiss" | "confirm_fulfilled" | "reject_fulfilled",
+  ) {
     setIsSavingNorthStar(true);
     setFeedback(null);
 
@@ -681,13 +683,20 @@ export function PublicOnboardingPage({
 
       setConfig(payload.config);
       setIsNorthStarModalDismissed(
-        action === "dismiss" || payload.config.north_star_status === "completed",
+        action === "dismiss" ||
+          payload.config.north_star_status === "completed" ||
+          action === "confirm_fulfilled" ||
+          action === "reject_fulfilled",
       );
       setFeedback({
         tone: "success",
         message:
           action === "client_approve"
             ? "El Norte quedo aprobado de tu lado."
+            : action === "confirm_fulfilled"
+              ? "Confirmaste que El Norte fue cumplido."
+              : action === "reject_fulfilled"
+                ? "Marcaste que El Norte aun no esta cumplido."
             : "Puedes revisar el tablero temporalmente.",
       });
     } catch (caughtError) {
@@ -3134,12 +3143,16 @@ export function PublicOnboardingPage({
         <NorthStarModal
           role="client"
           status={config.north_star_status}
+          lifecycleStatus={config.north_star_lifecycle_status}
           text={config.north_star_text ?? ""}
           dismissalsRemaining={northStarDismissalsRemaining}
           isSaving={isSavingNorthStar}
           isBlocking={isNorthStarBlockingModal}
           onDismiss={closePublicNorthStarModal}
           onClientApprove={() => void updatePublicNorthStar("client_approve")}
+          onFulfillmentChange={(fulfilled) =>
+            void updatePublicNorthStar(fulfilled ? "confirm_fulfilled" : "reject_fulfilled")
+          }
         />
       ) : null}
 

@@ -12,6 +12,7 @@ const catalogLinks = [
   { href: "/cs/categorias-grupos", label: "Categorias de casos de uso" },
   { href: "/cs/tareas", label: "Actividades" },
   { href: "/cs/grupos", label: "Casos de Uso" },
+  { href: "/cs/clientes", label: "Clientes" },
   { href: "/cs/cupones", label: "Cupones" },
   { href: "/cs/ventas", label: "Ventas" },
 ];
@@ -58,6 +59,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           { href: "/cs/categorias-grupos", label: "Cat. casos de uso", icon: LayoutGrid },
           { href: "/cs/tareas", label: "Actividades", icon: LayoutGrid },
           { href: "/cs/grupos", label: "Casos de Uso", icon: LayoutGrid },
+          { href: "/cs/clientes", label: "Clientes", icon: LayoutGrid },
           { href: "/cs/cupones", label: "Cupones", icon: LayoutGrid },
           { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
         ]

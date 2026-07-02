@@ -65,6 +65,7 @@ type CustomerSuccessConfigRow = {
   client_id: string;
   north_star_text: string | null;
   north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+  north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
 };
 
 type CustomerSuccessCreditGrantRow = {
@@ -79,7 +80,7 @@ type CustomerSuccessProfileRow = {
   full_name: string | null;
   email: string;
 };
-type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string };
+type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
 
 const rowHealthStyles: Record<HealthColor, string> = {
@@ -113,7 +114,7 @@ const panels: Array<{
     key: "clients",
     label: "Clientes",
     title: "Clientes",
-    description: "Seguimiento operativo de clientes, avance, creditos y nortes.",
+    description: "Seguimiento operativo de clientes, avance, créditos y nortes.",
   },
   {
     key: "customer_success",
@@ -237,6 +238,22 @@ export function ReportsPanel({
     () => sortRows(rows.filter((row) => applyFilters(row, filters, searchTerm)), sortKey),
     [filters, rows, searchTerm, sortKey],
   );
+  const clientReportRows = useMemo(
+    () =>
+      filters.customerSuccess === "all"
+        ? rows
+        : rows.filter((row) => row.customer_success_id === filters.customerSuccess),
+    [filters.customerSuccess, rows],
+  );
+  const activeNorthStarsCount = useMemo(
+    () =>
+      northStarHistory.filter((north) => north.north_star_lifecycle_status === "active").length,
+    [northStarHistory],
+  );
+  const totalNorthStarsCount = useMemo(
+    () => rows.reduce((sum, row) => sum + row.north_stars_count, 0),
+    [rows],
+  );
 
   const customerSuccessOptions = useMemo(
     () =>
@@ -298,7 +315,9 @@ export function ReportsPanel({
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Filtrados</p>
               </div>
               <div>
-                <p className="text-lg font-black text-[#213343]">{formatNumber(rows.reduce((sum, row) => sum + row.north_stars_count, 0))}</p>
+                <p className="text-lg font-black text-[#213343]">
+                  {formatNumber(selectedPanelKey === "norths" ? activeNorthStarsCount : totalNorthStarsCount)}
+                </p>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">Nortes</p>
               </div>
             </div>
@@ -312,7 +331,7 @@ export function ReportsPanel({
                   <div>
                     <h3 className="text-base font-black text-[#213343]">Clientes</h3>
                     <p className="mt-1 text-xs font-semibold text-[#516f90]">
-                      Estado operativo, avance, creditos y nortes por cliente.
+                      Estado operativo, avance, créditos y nortes por cliente.
                     </p>
                   </div>
                   <span className="rounded-[999px] bg-[#f5f8fa] px-3 py-1 text-xs font-black text-[#516f90]">
@@ -338,7 +357,7 @@ export function ReportsPanel({
 
               <SelectFilter
                 compact
-                label="Semaforo"
+                label="Semáforo"
                 value={filters.health}
                 onChange={(value) => setFilter("health", value as FilterState["health"])}
                 options={[
@@ -376,7 +395,7 @@ export function ReportsPanel({
 
               <SelectFilter
                 compact
-                label="Creditos"
+                label="Créditos"
                 value={filters.credits}
                 onChange={(value) => setFilter("credits", value as FilterState["credits"])}
                 options={[
@@ -399,11 +418,11 @@ export function ReportsPanel({
 
               <SelectFilter
                 compact
-                label="Facturacion"
+                label="Facturación"
                 value={filters.billing}
                 onChange={(value) => setFilter("billing", value as FilterState["billing"])}
                 options={[
-                  ["all", "Toda facturacion"],
+                  ["all", "Toda facturación"],
                   ["paquetes", "Paquetes"],
                   ["recurrencia", "Recurrencia"],
                 ]}
@@ -417,12 +436,12 @@ export function ReportsPanel({
                 icon={<ArrowDownWideNarrow className="h-4 w-4" />}
                 options={[
                   ["start_date", "Fecha de inicio"],
-                  ["days_without_progress", "Dias sin avanzar"],
+                  ["days_without_progress", "Días sin avanzar"],
                   ["approved_work_remaining", "Casos validados"],
-                  ["credits_remaining", "Creditos restantes"],
+                  ["credits_remaining", "Créditos restantes"],
                   ["north_stars_count", "Cantidad de nortes"],
                   ["north_stars_completed", "Norte definido"],
-                  ["health_color", "Semaforo"],
+                  ["health_color", "Semáforo"],
                   ["client_name", "Cliente A-Z"],
                 ]}
               />
@@ -442,7 +461,7 @@ export function ReportsPanel({
             </div>
 
               <div className="overflow-x-auto">
-            <table className="w-full min-w-[1360px] border-collapse text-left">
+            <table className="w-full min-w-[1240px] border-collapse text-left">
               <thead className="bg-[#f8fbfd]">
                 <tr className="border-b border-[#dfe3eb]">
                   {[
@@ -450,13 +469,12 @@ export function ReportsPanel({
                     "Fecha de inicio",
                     "Customer Success",
                     "Etapa",
-                    "Primer caso a tiempo",
-                    "Dias sin avanzar",
+                    "Días sin avanzar",
                     "Casos validados",
-                    "Creditos restantes",
+                    "Créditos restantes",
                     "Cantidad de nortes",
                     "Norte definido",
-                    "Facturacion",
+                    "Facturación",
                   ].map((header) => (
                     <th
                       key={header}
@@ -496,9 +514,6 @@ export function ReportsPanel({
                     </td>
                     <td className="px-4 py-4 text-sm font-bold capitalize text-[#33475b]">
                       {row.stage}
-                    </td>
-                    <td className="px-4 py-4">
-                      <StatusPill value={row.first_case_on_time} />
                     </td>
                     <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
                       {formatNumber(row.days_without_progress)}
@@ -540,35 +555,37 @@ export function ReportsPanel({
               </article>
 
               <KickoffWindowReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Dentro de 14 dias"
                 description="Clientes con Kickoff completado hace menos de 14 dias y primer caso de uso pendiente."
                 emptyTitle="Sin clientes dentro de esta ventana"
                 emptyDescription="No hay clientes con Kickoff completado hace menos de 14 dias y primer caso pendiente."
                 rowFilter={(row) =>
                   row.days_since_kickoff_completed !== null &&
-                  row.days_since_kickoff_completed < 14
+                  row.days_since_kickoff_completed < 14 &&
+                  row.first_use_case_completed_at === null
                 }
                 barTone="bg-[#00a4bd]"
                 getSecondaryLabel={(days) => `${formatNumber(Math.max(14 - days, 0))} restantes`}
               />
 
               <KickoffWindowReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Fuera de 14 dias"
                 description="Clientes con Kickoff completado hace mas de 14 dias y primer caso de uso pendiente."
                 emptyTitle="Sin clientes fuera de esta ventana"
                 emptyDescription="No hay clientes con Kickoff completado hace mas de 14 dias y primer caso pendiente."
                 rowFilter={(row) =>
                   row.days_since_kickoff_completed !== null &&
-                  row.days_since_kickoff_completed > 14
+                  row.days_since_kickoff_completed > 14 &&
+                  row.first_use_case_completed_at === null
                 }
                 barTone="bg-[#f97316]"
                 getSecondaryLabel={(days) => `${formatNumber(Math.max(days - 14, 0))} dias fuera`}
               />
 
               <FirstCaseCompletionReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Logrados en 14 dias"
                 description="Clientes que cumplieron su primer caso de uso en menos de 14 dias desde Kickoff completado."
                 emptyTitle="Sin clientes logrados en esta ventana"
@@ -578,7 +595,7 @@ export function ReportsPanel({
               />
 
               <FirstCaseCompletionReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Incumplidos en 14 dias"
                 description="Clientes que cumplieron su primer caso de uso en mas de 14 dias desde Kickoff completado."
                 emptyTitle="Sin clientes incumplidos en esta ventana"
@@ -588,7 +605,7 @@ export function ReportsPanel({
               />
 
               <ClientMetricBarsReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Clientes estancados"
                 description="Clientes activos con casos de uso que llevan mas de 7 dias en la misma etapa."
                 emptyTitle="Sin clientes estancados"
@@ -596,13 +613,13 @@ export function ReportsPanel({
                 rowFilter={(row) => row.stagnant_stage_days !== null && row.stagnant_stage_days > 7}
                 getValue={(row) => row.stagnant_stage_days ?? 0}
                 getMeta={(row) => `${formatNumber(row.stagnant_stage_days ?? 0)} dias en etapa actual`}
-                valueLabel="Dias"
+                valueLabel="Días"
                 barTone="bg-[#8b5cf6]"
                 sortDirection="desc"
               />
 
               <ClientMetricBarsReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Casos en Evaluacion"
                 description="Clientes activos con menos de 3 casos de uso en la etapa En Evaluacion."
                 emptyTitle="Sin clientes bajo el minimo"
@@ -617,7 +634,7 @@ export function ReportsPanel({
               />
 
               <ClientMetricBarsReport
-                rows={rows}
+                rows={clientReportRows}
                 title="Casos validados en Evaluacion"
                 description="Clientes activos con menos de 3 casos de uso validados en la etapa En Evaluacion."
                 emptyTitle="Sin clientes bajo el minimo"
@@ -654,20 +671,39 @@ function NorthsDashboard({ rows, initiatives, northStarHistory, initialAudits, c
   const [csmId, setCsmId] = useState("all");
   const [audits, setAudits] = useState(() => new Map(initialAudits.map((audit) => [audit.north_star_history_id, audit])));
   const clientById = useMemo(() => new Map(rows.map((row) => [row.client_id, row])), [rows]);
-  const scoped = useMemo(() => northStarHistory.filter((north) => csmId === "all" || clientById.get(north.client_id)?.customer_success_id === csmId), [clientById, csmId, northStarHistory]);
-  const quality = scoped.map((north) => { const audit = audits.get(north.id); return audit ? [audit.is_from, audit.is_until, audit.is_timed, audit.is_crucial].filter(Boolean).length * 25 : 0; });
+  const scoped = useMemo(
+    () =>
+      northStarHistory.filter(
+        (north) =>
+          north.north_star_lifecycle_status === "active" &&
+          (csmId === "all" || clientById.get(north.client_id)?.customer_success_id === csmId),
+      ),
+    [clientById, csmId, northStarHistory],
+  );
+  const qualityRows = scoped.map((north) => {
+    const audit = audits.get(north.id);
+    const value = audit
+      ? [audit.is_from, audit.is_until, audit.is_timed, audit.is_crucial].filter(Boolean).length * 25
+      : 0;
+
+    return {
+      id: north.id,
+      clientName: clientById.get(north.client_id)?.client_name ?? "Cliente",
+      value,
+    };
+  }).sort((first, second) => second.value - first.value || first.clientName.localeCompare(second.clientName, "es"));
   const maxDays = Math.max(...scoped.map((north) => getElapsedDays(north.created_at)), 1);
   const waiting = rows.filter((row) => {
     const history = northStarHistory.filter((north) => north.client_id === row.client_id);
     const latest = history.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-    return latest?.north_star_status === "completed" && initiatives.some((item) => item.client_id === row.client_id && item.status === "completed" && new Date(item.updated_at) >= new Date(latest.created_at)) && !history.some((item) => new Date(item.created_at) > new Date(latest.created_at));
+    return latest?.north_star_lifecycle_status === "fulfilled" && row.credits_remaining > 0 && !history.some((item) => item.north_star_lifecycle_status === "active");
   });
   async function save(id: string, patch: Partial<NorthAudit>) {
     const next = { north_star_history_id: id, is_from: false, is_until: false, is_timed: false, is_crucial: false, has_associated_use_cases: false, notes: "", ...(audits.get(id) ?? {}), ...patch };
     setAudits((current) => new Map(current).set(id, next));
     await fetch("/api/reports/north-audits", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ northStarHistoryId: id, isFrom: next.is_from, isUntil: next.is_until, isTimed: next.is_timed, isCrucial: next.is_crucial, hasAssociatedUseCases: next.has_associated_use_cases, notes: next.notes }) });
   }
-  return <div className="space-y-4 p-4"><div className="flex justify-end"><select value={csmId} onChange={(event) => setCsmId(event.target.value)} className="h-10 rounded border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b]"><option value="all">Todo el equipo CS</option>{customerSuccessOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></div><article className="overflow-x-auto rounded-[6px] border border-[#dfe3eb] bg-white"><div className="border-b border-[#dfe3eb] p-4"><h3 className="font-black text-[#213343]">Auditoría de Nortes</h3></div><table className="w-full min-w-[1200px] text-left text-xs"><thead className="bg-[#f8fbfd]"><tr>{["Cliente", "Norte", "CS", "Días", "X", "Y", "T", "C", "Casos asociados", "Anotaciones"].map((heading) => <th key={heading} className="px-3 py-3 font-bold uppercase tracking-wide text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{scoped.map((north) => { const row = clientById.get(north.client_id); const audit = audits.get(north.id) ?? { is_from: false, is_until: false, is_timed: false, is_crucial: false, has_associated_use_cases: false, notes: "" }; const fields: Array<keyof Pick<NorthAudit, "is_from" | "is_until" | "is_timed" | "is_crucial" | "has_associated_use_cases">> = ["is_from", "is_until", "is_timed", "is_crucial", "has_associated_use_cases"]; return <tr key={north.id} className="border-t border-[#edf1f5]"><td className="px-3 py-3 font-bold text-[#213343]">{row?.client_name}</td><td className="max-w-64 px-3 py-3 text-[#516f90]">{north.north_star_text}</td><td className="px-3 py-3">{row?.customer_success_name ?? "Sin asignar"}</td><td className="px-3 py-3 font-bold">{getElapsedDays(north.created_at)}</td>{fields.map((field) => <td key={field} className="px-3 py-3"><input type="checkbox" checked={audit[field]} onChange={(event) => void save(north.id, { [field]: event.target.checked })} /></td>)}<td className="px-3 py-3"><input defaultValue={audit.notes} onBlur={(event) => void save(north.id, { notes: event.target.value })} className="w-44 rounded border border-[#cbd6e2] px-2 py-1" /></td></tr>; })}</tbody></table></article><div className="grid gap-4 xl:grid-cols-2"><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Calidad de Nortes</h3><p className="text-xs text-[#516f90]">Cada X, Y, T y C aporta 25%.</p><div className="mt-4 flex h-36 items-end gap-2">{quality.map((value, index) => <div key={`${scoped[index]?.id}`} className="flex flex-1 flex-col justify-end"><div className="bg-[#00a4bd]" style={{ height: `${Math.max(value, 3)}%` }} /><span className="mt-1 text-center text-[9px] font-bold text-[#516f90]">{value}%</span></div>)}</div></article><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Antigüedad</h3><div className="mt-4 space-y-3">{[...scoped].sort((a,b) => getElapsedDays(b.created_at) - getElapsedDays(a.created_at)).slice(0, 8).map((north) => <div key={north.id}><div className="flex justify-between text-xs font-bold text-[#516f90]"><span>{clientById.get(north.client_id)?.client_name}</span><span>{getElapsedDays(north.created_at)} días</span></div><div className="mt-1 h-3 bg-[#edf3f7]"><div className="h-full bg-[#7c3aed]" style={{ width: `${(getElapsedDays(north.created_at) / maxDays) * 100}%` }} /></div></div>)}</div></article></div><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Esperando nuevo Norte</h3><div className="mt-3 divide-y divide-[#edf1f5]">{waiting.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex justify-between py-3 text-sm font-bold text-[#213343]"><span>{row.client_name}</span><span className="text-[#c2410c]">Norte cumplido sin reemplazo</span></a>)}{!waiting.length ? <p className="py-4 text-sm text-[#516f90]">No hay clientes esperando un nuevo Norte.</p> : null}</div></article></div>;
+  return <div className="space-y-4 p-4"><div className="flex justify-end"><select value={csmId} onChange={(event) => setCsmId(event.target.value)} className="h-10 rounded border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b]"><option value="all">Todo el equipo CS</option>{customerSuccessOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></div><article className="overflow-x-auto rounded-[6px] border border-[#dfe3eb] bg-white"><div className="border-b border-[#dfe3eb] p-4"><h3 className="font-black text-[#213343]">Auditoría de Nortes</h3></div><table className="w-full min-w-[1200px] text-left text-xs"><thead className="bg-[#f8fbfd]"><tr>{["Cliente", "Norte", "CS", "Días", "X", "Y", "T", "C", "Casos asociados", "Anotaciones"].map((heading) => <th key={heading} className="px-3 py-3 font-bold uppercase tracking-wide text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{scoped.map((north) => { const row = clientById.get(north.client_id); const audit = audits.get(north.id) ?? { is_from: false, is_until: false, is_timed: false, is_crucial: false, has_associated_use_cases: false, notes: "" }; const fields: Array<keyof Pick<NorthAudit, "is_from" | "is_until" | "is_timed" | "is_crucial" | "has_associated_use_cases">> = ["is_from", "is_until", "is_timed", "is_crucial", "has_associated_use_cases"]; return <tr key={north.id} className="border-t border-[#edf1f5]"><td className="px-3 py-3 font-bold text-[#213343]">{row?.client_name}</td><td className="max-w-64 px-3 py-3 text-[#516f90]">{north.north_star_text}</td><td className="px-3 py-3">{row?.customer_success_name ?? "Sin asignar"}</td><td className="px-3 py-3 font-bold">{getElapsedDays(north.created_at)}</td>{fields.map((field) => <td key={field} className="px-3 py-3"><input type="checkbox" checked={audit[field]} onChange={(event) => void save(north.id, { [field]: event.target.checked })} /></td>)}<td className="px-3 py-3"><input defaultValue={audit.notes} onBlur={(event) => void save(north.id, { notes: event.target.value })} className="w-44 rounded border border-[#cbd6e2] px-2 py-1" /></td></tr>; })}</tbody></table></article><div className="grid gap-4 xl:grid-cols-2"><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Calidad de Nortes</h3><p className="text-xs text-[#516f90]">Cada X, Y, T y C aporta 25%.</p><div className="mt-4 space-y-3">{qualityRows.map((row) => <div key={row.id}><div className="flex justify-between gap-3 text-xs font-bold text-[#516f90]"><span className="truncate">{row.clientName}</span><span>{row.value}%</span></div><div className="mt-1 h-3 bg-[#edf3f7]"><div className="h-full bg-[#00a4bd]" style={{ width: `${row.value}%` }} /></div></div>)}{!qualityRows.length ? <p className="py-4 text-sm text-[#516f90]">No hay Nortes activos para auditar.</p> : null}</div></article><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Antigüedad</h3><div className="mt-4 space-y-3">{[...scoped].sort((a,b) => getElapsedDays(b.created_at) - getElapsedDays(a.created_at)).slice(0, 8).map((north) => <div key={north.id}><div className="flex justify-between text-xs font-bold text-[#516f90]"><span>{clientById.get(north.client_id)?.client_name}</span><span>{getElapsedDays(north.created_at)} días</span></div><div className="mt-1 h-3 bg-[#edf3f7]"><div className="h-full bg-[#7c3aed]" style={{ width: `${(getElapsedDays(north.created_at) / maxDays) * 100}%` }} /></div></div>)}</div></article></div><article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4"><h3 className="font-black text-[#213343]">Esperando nuevo Norte</h3><div className="mt-3 divide-y divide-[#edf1f5]">{waiting.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex justify-between py-3 text-sm font-bold text-[#213343]"><span>{row.client_name}</span><span className="text-[#c2410c]">Créditos pendientes: {formatNumber(row.credits_remaining)}</span></a>)}{!waiting.length ? <p className="py-4 text-sm text-[#516f90]">No hay clientes esperando un nuevo Norte.</p> : null}</div></article></div>;
 }
 
 function getElapsedDays(value: string) {
@@ -794,9 +830,13 @@ function CustomerSuccessDashboard({
   const northCounts = useMemo(() => {
     const active = scopedRows.filter((row) => {
       const config = configByClient.get(row.client_id);
-      return Boolean(config?.north_star_text?.trim()) && config?.north_star_status !== "pending";
+      return Boolean(config?.north_star_text?.trim()) && config?.north_star_lifecycle_status === "active";
     }).length;
-    return { active, inactive: scopedRows.length - active };
+    const fulfilled = scopedRows.filter((row) => {
+      const config = configByClient.get(row.client_id);
+      return Boolean(config?.north_star_text?.trim()) && config?.north_star_lifecycle_status === "fulfilled";
+    }).length;
+    return { active, fulfilled, inactive: scopedRows.length - active - fulfilled };
   }, [configByClient, scopedRows]);
   const weeklyCompleted = useMemo(() => {
     const currentWeek = getWeekStart(new Date());
@@ -857,7 +897,7 @@ function CustomerSuccessDashboard({
 
       <div className="grid gap-4 xl:grid-cols-3">
         <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm xl:col-span-2"><h3 className="flex items-center gap-1.5 text-base font-black text-[#213343]">Embudo <InfoTooltip>Cuenta casos de uso por etapa, no créditos. Incluye todos los casos del CS seleccionado, por lo que sus valores pueden diferir de Capacidad.</InfoTooltip></h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos de uso por etapa del pipeline.</p><div className="mt-5 space-y-4">{funnel.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-xs font-bold text-[#516f90]"><span>{item.label}</span><span>{formatNumber(item.count)}</span></div><div className="h-8 overflow-hidden rounded-[4px] bg-[#edf3f7]"><div className="flex h-full items-center rounded-[4px] bg-[#00a4bd] px-2 text-xs font-black text-white" style={{ width: `${Math.max((item.count / maxFunnel) * 100, item.count ? 8 : 0)}%` }}>{item.count ? formatNumber(item.count) : ""}</div></div></div>)}</div></article>
-        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#7c3aed]" /><h3 className="text-base font-black text-[#213343]">Norte activo</h3></div><p className="mt-1 text-xs font-semibold text-[#516f90]">Clientes con norte definido y en proceso.</p><div className="mt-6 flex items-center gap-5"><div className="h-28 w-28 shrink-0 rounded-full" style={{ background: `conic-gradient(#7c3aed 0 ${(northCounts.active / Math.max(scopedRows.length, 1)) * 360}deg, #e8eef5 0 360deg)` }}><div className="m-[18px] flex h-[76px] w-[76px] items-center justify-center rounded-full bg-white text-lg font-black text-[#213343]">{formatNumber(scopedRows.length)}</div></div><div className="space-y-3 text-sm font-bold text-[#516f90]"><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#7c3aed]" />Activo: {formatNumber(northCounts.active)}</p><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#dfe7f0]" />Sin norte: {formatNumber(northCounts.inactive)}</p></div></div></article>
+        <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#7c3aed]" /><h3 className="text-base font-black text-[#213343]">Estado del Norte</h3></div><p className="mt-1 text-xs font-semibold text-[#516f90]">Clientes por estado operativo del Norte.</p><div className="mt-6 flex items-center gap-5"><div className="h-28 w-28 shrink-0 rounded-full" style={{ background: `conic-gradient(#7c3aed 0 ${(northCounts.active / Math.max(scopedRows.length, 1)) * 360}deg, #16a34a 0 ${((northCounts.active + northCounts.fulfilled) / Math.max(scopedRows.length, 1)) * 360}deg, #e8eef5 0 360deg)` }}><div className="m-[18px] flex h-[76px] w-[76px] items-center justify-center rounded-full bg-white text-lg font-black text-[#213343]">{formatNumber(scopedRows.length)}</div></div><div className="space-y-3 text-sm font-bold text-[#516f90]"><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#7c3aed]" />Activo: {formatNumber(northCounts.active)}</p><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#16a34a]" />Cumplido: {formatNumber(northCounts.fulfilled)}</p><p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-[#dfe7f0]" />Inactivo: {formatNumber(northCounts.inactive)}</p></div></div></article>
       </div>
 
       <article className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm"><h3 className="text-base font-black text-[#213343]">Tendencia de completados</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Casos completados semanalmente durante las últimas 8 semanas.</p><div className="mt-5 h-52"><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible" aria-label="Tendencia semanal de casos completados"><line x1="0" x2="100" y1="91" y2="91" stroke="#dfe7f0" strokeWidth="1" /><polyline points={polylinePoints} fill="none" stroke="#00a4bd" strokeWidth="2.5" vectorEffect="non-scaling-stroke" /></svg></div><div className="grid grid-cols-4 gap-2 border-t border-[#edf1f5] pt-3 sm:grid-cols-8">{weeklyCompleted.map((week) => <div key={week.start.toISOString()} className="text-center"><p className="text-sm font-black text-[#213343]">{week.count}</p><p className="text-[9px] font-bold uppercase tracking-wide text-[#99acc2]">{week.start.toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</p></div>)}</div></article>
@@ -869,7 +909,7 @@ function CustomerSuccessDashboard({
 
 function MetricCard({ icon, label, value, description, tone, onClick }: { icon: ReactNode; label: string; value: string; description: string; tone: "teal" | "orange" | "purple" | "green"; onClick: () => void }) {
   const toneStyles = { teal: "bg-[#e5f5f8] text-[#007a8a]", orange: "bg-[#fff3e8] text-[#c2410c]", purple: "bg-[#f3e8ff] text-[#7e22ce]", green: "bg-[#eaf8ef] text-[#15803d]" };
-  return <button type="button" onClick={onClick} className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><span className={`flex h-10 w-10 items-center justify-center rounded-[5px] ${toneStyles[tone]}`}>{icon}</span><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{label}</p><p className="mt-1 text-3xl font-black text-[#213343]">{value}</p><p className="mt-2 text-xs font-semibold leading-relaxed text-[#516f90]">{description}</p><span className="mt-3 inline-block text-xs font-black text-[#00a4bd]">Ver detalle →</span></button>;
+  return <button type="button" onClick={onClick} className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><span className={`flex h-10 w-10 items-center justify-center rounded-[5px] ${toneStyles[tone]}`}>{icon}</span><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{label}</p><p className="mt-1 text-3xl font-black text-[#213343]">{value}</p><p className="mt-2 text-xs font-semibold leading-relaxed text-[#516f90]">{description}</p><span className="mt-3 inline-block text-xs font-black text-[#00a4bd]">Ver detalle</span></button>;
 }
 
 function CustomerSuccessDetailModal({ title, detail, cases, weakClients, clientById, onClose }: { title: string; detail: CustomerSuccessDetail; cases: InitiativeReportRow[]; weakClients: ClientHealthReportRow[]; clientById: Map<string, ClientHealthReportRow>; onClose: () => void }) {
@@ -985,7 +1025,7 @@ function KickoffWindowReport({
                 <div className="text-left lg:text-right">
                   <p className="text-xl font-black text-[#213343]">{formatNumber(days)}</p>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
-                    Dias
+                    Días
                   </p>
                 </div>
               </div>
@@ -1100,7 +1140,7 @@ function FirstCaseCompletionReport({
                 <div className="text-left lg:text-right">
                   <p className="text-xl font-black text-[#213343]">{formatNumber(days)}</p>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#99acc2]">
-                    Dias
+                    Días
                   </p>
                 </div>
               </div>

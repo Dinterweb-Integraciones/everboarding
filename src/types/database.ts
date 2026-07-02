@@ -94,6 +94,7 @@ export type Database = {
           name: string;
           slug: string;
           description: string | null;
+          is_active: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -105,6 +106,7 @@ export type Database = {
           name: string;
           slug?: string;
           description?: string | null;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -116,6 +118,7 @@ export type Database = {
           name?: string;
           slug?: string;
           description?: string | null;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -416,6 +419,7 @@ export type Database = {
           north_star_required: boolean;
           north_star_text: string | null;
           north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
           north_star_dismissals_used: number;
           north_star_cs_preapproved_at: string | null;
           north_star_client_approved_at: string | null;
@@ -443,6 +447,7 @@ export type Database = {
           north_star_required?: boolean;
           north_star_text?: string | null;
           north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status?: "active" | "inactive" | "fulfilled";
           north_star_dismissals_used?: number;
           north_star_cs_preapproved_at?: string | null;
           north_star_client_approved_at?: string | null;
@@ -470,6 +475,7 @@ export type Database = {
           north_star_required?: boolean;
           north_star_text?: string | null;
           north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status?: "active" | "inactive" | "fulfilled";
           north_star_dismissals_used?: number;
           north_star_cs_preapproved_at?: string | null;
           north_star_client_approved_at?: string | null;
@@ -486,6 +492,7 @@ export type Database = {
           client_id: string;
           north_star_text: string;
           north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
           created_by_user_id: string | null;
           created_at: string;
         };
@@ -494,6 +501,7 @@ export type Database = {
           client_id: string;
           north_star_text: string;
           north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status?: "active" | "inactive" | "fulfilled";
           created_by_user_id?: string | null;
           created_at?: string;
         };
@@ -502,6 +510,7 @@ export type Database = {
           client_id?: string;
           north_star_text?: string;
           north_star_status?: "pending" | "cs_preapproved" | "client_approved" | "completed";
+          north_star_lifecycle_status?: "active" | "inactive" | "fulfilled";
           created_by_user_id?: string | null;
           created_at?: string;
         };

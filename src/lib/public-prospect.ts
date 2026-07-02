@@ -75,6 +75,7 @@ function createProspectConfig(proposal: SalesProposalRecord): OnboardingConfig {
     north_star_required: false,
     north_star_text: null,
     north_star_status: "pending",
+    north_star_lifecycle_status: "inactive",
     north_star_dismissals_used: 0,
     north_star_cs_preapproved_at: null,
     north_star_client_approved_at: null,

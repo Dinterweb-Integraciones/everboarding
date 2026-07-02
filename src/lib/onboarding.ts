@@ -18,6 +18,7 @@ export type ProjectStage = Database["public"]["Enums"]["project_stage"];
 export type PublicOnboardingAudience = "client" | "prospect";
 export type PlanPeriodMonths = 1 | 3 | 6 | 12;
 export type NorthStarStatus = OnboardingConfig["north_star_status"];
+export type NorthStarLifecycleStatus = OnboardingConfig["north_star_lifecycle_status"];
 export const EVALUATION_VALIDATION_LABELS = ["En revisión", "Validado"] as const;
 export type EvaluationValidationLabel = (typeof EVALUATION_VALIDATION_LABELS)[number];
 
@@ -256,6 +257,7 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
     north_star_required: true,
     north_star_text: null,
     north_star_status: "pending",
+    north_star_lifecycle_status: "inactive",
     north_star_dismissals_used: 0,
     north_star_cs_preapproved_at: null,
     north_star_client_approved_at: null,

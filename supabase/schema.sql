@@ -55,6 +55,7 @@ create table if not exists public.clients (
   name text not null,
   slug text not null unique default replace(gen_random_uuid()::text, '-', ''),
   description text,
+  is_active boolean not null default true,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -262,6 +263,8 @@ create table if not exists public.onboarding_configs (
   north_star_text text,
   north_star_status text not null default 'pending'
     check (north_star_status in ('pending', 'cs_preapproved', 'client_approved', 'completed')),
+  north_star_lifecycle_status text not null default 'inactive'
+    check (north_star_lifecycle_status in ('active', 'inactive', 'fulfilled')),
   north_star_dismissals_used integer not null default 0
     check (north_star_dismissals_used >= 0 and north_star_dismissals_used <= 3),
   north_star_cs_preapproved_at timestamptz,
@@ -283,6 +286,7 @@ alter table public.onboarding_configs
 add column if not exists north_star_required boolean not null default true,
 add column if not exists north_star_text text,
 add column if not exists north_star_status text not null default 'pending',
+add column if not exists north_star_lifecycle_status text not null default 'inactive',
 add column if not exists north_star_dismissals_used integer not null default 0,
 add column if not exists north_star_cs_preapproved_at timestamptz,
 add column if not exists north_star_client_approved_at timestamptz,
@@ -295,6 +299,8 @@ create table if not exists public.onboarding_north_star_history (
   north_star_text text not null,
   north_star_status text not null default 'pending'
     check (north_star_status in ('pending', 'cs_preapproved', 'client_approved', 'completed')),
+  north_star_lifecycle_status text not null default 'inactive'
+    check (north_star_lifecycle_status in ('active', 'inactive', 'fulfilled')),
   created_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default timezone('utc', now())
 );
@@ -311,16 +317,25 @@ begin
        tg_op = 'INSERT'
        or coalesce(old.north_star_text, '') is distinct from coalesce(new.north_star_text, '')
      ) then
+    if coalesce(new.north_star_lifecycle_status, 'inactive') = 'active' then
+      update public.onboarding_north_star_history
+      set north_star_lifecycle_status = 'inactive'
+      where client_id = new.client_id
+        and north_star_lifecycle_status = 'active';
+    end if;
+
     insert into public.onboarding_north_star_history (
       client_id,
       north_star_text,
       north_star_status,
+      north_star_lifecycle_status,
       created_by_user_id
     )
     values (
       new.client_id,
       btrim(new.north_star_text),
       new.north_star_status,
+      coalesce(new.north_star_lifecycle_status, 'inactive'),
       new.north_star_updated_by_user_id
     );
   end if;
@@ -338,6 +353,7 @@ insert into public.onboarding_north_star_history (
   client_id,
   north_star_text,
   north_star_status,
+  north_star_lifecycle_status,
   created_by_user_id,
   created_at
 )
@@ -345,6 +361,7 @@ select
   config.client_id,
   btrim(config.north_star_text),
   config.north_star_status,
+  config.north_star_lifecycle_status,
   config.north_star_updated_by_user_id,
   coalesce(
     config.north_star_completed_at,
@@ -485,6 +502,7 @@ create table if not exists public.onboarding_activity_logs (
 create index if not exists clients_owner_user_id_idx on public.clients (owner_user_id);
 create index if not exists clients_seller_user_id_idx on public.clients (seller_user_id);
 create index if not exists clients_csm_user_id_idx on public.clients (csm_user_id);
+create index if not exists clients_is_active_updated_at_idx on public.clients (is_active, updated_at desc);
 create index if not exists clients_updated_at_idx on public.clients (updated_at desc);
 create index if not exists client_members_user_id_idx on public.client_members (user_id);
 create index if not exists client_share_links_client_id_idx on public.client_share_links (client_id, created_at desc);
@@ -1604,6 +1622,7 @@ begin
         'north_star_required', true,
         'north_star_text', null,
         'north_star_status', 'pending',
+        'north_star_lifecycle_status', 'inactive',
         'north_star_dismissals_used', 0,
         'north_star_cs_preapproved_at', null,
         'north_star_client_approved_at', null,
@@ -2237,6 +2256,12 @@ initiative_credits as (
       from fundamental_groups groups
       where lower(trim(groups.name)) in (lower(trim(coalesce(i.type, ''))), lower(trim(i.title)))
     ) as is_fundamental,
+    (
+      regexp_replace(lower(coalesce(i.title, '')), '[^a-z0-9]+', '', 'g') like '%kickoff%'
+      or lower(coalesce(i.title, '')) like '%kick off%'
+      or regexp_replace(lower(coalesce(i.type, '')), '[^a-z0-9]+', '', 'g') like '%kickoff%'
+      or lower(coalesce(i.type, '')) like '%kick off%'
+    ) as is_kickoff,
     coalesce(sum(s.unit_credits * s.quantity), 0)::integer as credits
   from public.onboarding_initiatives i
   left join public.onboarding_initiative_subitems s
@@ -2256,7 +2281,7 @@ client_rollup as (
     coalesce(config.custom_plan_billing_mode::text, 'subscription') as billing_mode,
     count(i.id)::integer as total_cases,
     count(i.id) filter (where i.status = 'completed')::integer as completed_cases,
-    count(i.id) filter (where i.status = 'completed' and not i.is_fundamental)::integer as completed_additional_cases,
+    count(i.id) filter (where i.status = 'completed' and not i.is_fundamental and not i.is_kickoff)::integer as completed_additional_cases,
     count(i.id) filter (
       where i.status = 'backlog'
         and exists (
@@ -2266,7 +2291,7 @@ client_rollup as (
         )
     )::integer as approved_work_remaining,
     min(i.updated_at) filter (where i.status = 'completed') as first_completed_at,
-    min(i.updated_at) filter (where i.status = 'completed' and not i.is_fundamental) as first_additional_completed_at,
+    min(i.updated_at) filter (where i.status = 'completed' and not i.is_fundamental and not i.is_kickoff) as first_additional_completed_at,
     max(i.updated_at) filter (where i.status = 'completed') as last_completed_at,
     coalesce(sum(i.credits) filter (where i.status in ('planned', 'executing')), 0)::integer as reserved_credits,
     coalesce(sum(i.credits) filter (where i.status = 'completed'), 0)::integer as consumed_credits,
@@ -2321,9 +2346,11 @@ signals as (
       else 'red'
     end as credits_signal,
     case
-      when r.first_additional_completed_at is not null then null
+      when r.first_additional_completed_at is not null
+        and r.north_star_completed_date is not null
+        and r.first_additional_completed_at::date <= r.north_star_completed_date + 14 then null
+      when r.first_additional_completed_at is not null then 'red'
       when r.north_star_completed_date is null then 'yellow'
-      when current_date - r.north_star_completed_date <= 10 then 'green'
       when current_date - r.north_star_completed_date <= 14 then 'yellow'
       else 'red'
     end as first_case_signal,
@@ -2333,7 +2360,6 @@ signals as (
         and r.first_additional_completed_at::date <= r.north_star_completed_date + 14 then 'si'
       when r.first_additional_completed_at is not null then 'no'
       when r.north_star_completed_date is null then 'en riesgo'
-      when current_date - r.north_star_completed_date <= 10 then 'si'
       when current_date - r.north_star_completed_date <= 14 then 'en riesgo'
       else 'no'
     end as first_case_on_time,

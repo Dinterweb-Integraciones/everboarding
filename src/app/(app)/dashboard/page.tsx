@@ -43,7 +43,8 @@ export default async function DashboardPage() {
   }>;
   const clientRecords = (clientRows ?? []) as Tables<"clients">[];
 
-  const ownerClients = clientRecords.filter((client) => client.owner_user_id === user.id);
+  const activeClientRecords = clientRecords.filter((client) => client.is_active);
+  const ownerClients = activeClientRecords.filter((client) => client.owner_user_id === user.id);
   const clientOnlyMode =
     ownerClients.length === 0 &&
     membershipRecords.length > 0 &&
@@ -62,19 +63,52 @@ export default async function DashboardPage() {
 
   const visibleClientRecords =
     platformRole === "csm"
-      ? clientRecords.filter(
+      ? activeClientRecords.filter(
           (client) =>
             client.csm_user_id === user.id ||
             membershipRecords.some(
               (membership) => membership.client_id === client.id && membership.profile_role === "csm",
             ),
         )
-      : clientRecords;
+      : activeClientRecords;
+
+  const customerSuccessIds = Array.from(
+    new Set(
+      visibleClientRecords
+        .map((client) => client.csm_user_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const { data: customerSuccessRows, error: customerSuccessError } =
+    canSeeAllClients && customerSuccessIds.length > 0
+      ? await clientReader
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", customerSuccessIds)
+        .order("full_name", { ascending: true })
+      : { data: [], error: null };
+
+  if (customerSuccessError) {
+    throw new Error("No pudimos cargar los Customer Success para filtrar clientes.");
+  }
+
+  const customerSuccessOptions = canSeeAllClients
+    ? (customerSuccessRows ?? []).map((profile) => ({
+        id: profile.id,
+        name: profile.full_name || profile.email || "Sin nombre",
+      }))
+    : [];
 
   const clients: ClientSummary[] = visibleClientRecords.map((client) => ({
     ...client,
     access_role: client.owner_user_id === user.id ? "owner" : membershipMap.get(client.id) ?? "viewer",
   }));
 
-  return <ClientsDashboard initialClients={clients} />;
+  return (
+    <ClientsDashboard
+      initialClients={clients}
+      customerSuccessOptions={customerSuccessOptions}
+      showCustomerSuccessFilter={canSeeAllClients}
+    />
+  );
 }

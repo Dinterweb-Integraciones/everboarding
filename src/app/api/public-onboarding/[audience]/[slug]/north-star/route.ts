@@ -55,7 +55,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const body = (await request.json()) as {
-      action?: "client_approve" | "dismiss";
+      action?: "client_approve" | "dismiss" | "confirm_fulfilled" | "reject_fulfilled";
     };
     const { admin, config } = await resolveClientConfig(slug);
 
@@ -82,6 +82,54 @@ export async function POST(request: Request, context: RouteContext) {
 
       if (error || !updatedConfig) {
         throw new Error(formatUserError(error, "No fue posible cerrar temporalmente El Norte."));
+      }
+
+      return NextResponse.json({ config: updatedConfig });
+    }
+
+    if (body.action === "confirm_fulfilled" || body.action === "reject_fulfilled") {
+      if (config.north_star_status !== "completed") {
+        return NextResponse.json(
+          { message: "El Norte debe estar validado antes de marcarlo como cumplido." },
+          { status: 400 },
+        );
+      }
+
+      const nextLifecycleStatus = body.action === "confirm_fulfilled" ? "fulfilled" : "active";
+      const { data: latestHistory, error: latestHistoryError } = await admin
+        .from("onboarding_north_star_history")
+        .select("id")
+        .eq("client_id", config.client_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestHistoryError) {
+        throw new Error(formatUserError(latestHistoryError, "No fue posible cargar la version actual de El Norte."));
+      }
+
+      const latestHistoryId = (latestHistory as { id?: string } | null)?.id;
+
+      if (latestHistoryId) {
+        const { error: historyError } = await admin
+          .from("onboarding_north_star_history" as never)
+          .update({ north_star_lifecycle_status: nextLifecycleStatus } as never)
+          .eq("id", latestHistoryId as never);
+
+        if (historyError) {
+          throw new Error(formatUserError(historyError, "No fue posible actualizar la version actual de El Norte."));
+        }
+      }
+
+      const { data: updatedConfig, error } = await admin
+        .from("onboarding_configs" as never)
+        .update({ north_star_lifecycle_status: nextLifecycleStatus } as never)
+        .eq("client_id", config.client_id)
+        .select("*")
+        .single();
+
+      if (error || !updatedConfig) {
+        throw new Error(formatUserError(error, "No fue posible actualizar El Norte."));
       }
 
       return NextResponse.json({ config: updatedConfig });
@@ -117,6 +165,23 @@ export async function POST(request: Request, context: RouteContext) {
 
     if (error || !updatedConfig) {
       throw new Error(formatUserError(error, "No fue posible aprobar El Norte."));
+    }
+
+    const { data: latestHistory, error: latestHistoryError } = await admin
+      .from("onboarding_north_star_history")
+      .select("id")
+      .eq("client_id", config.client_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const latestHistoryId = (latestHistory as { id?: string } | null)?.id;
+
+    if (!latestHistoryError && latestHistoryId) {
+      await admin
+        .from("onboarding_north_star_history" as never)
+        .update({ north_star_status: "client_approved" } as never)
+        .eq("id", latestHistoryId as never);
     }
 
     return NextResponse.json({ config: updatedConfig });

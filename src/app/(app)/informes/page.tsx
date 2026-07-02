@@ -32,6 +32,7 @@ type CustomerSuccessConfigRow = {
   client_id: string;
   north_star_text: string | null;
   north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
+  north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
 };
 
 type CustomerSuccessCreditGrantRow = {
@@ -122,10 +123,24 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar los perfiles de Customer Success.");
   }
 
-  const { data, error } = await admin
-    .from("client_health_report")
-    .select("*")
-    .order("client_name", { ascending: true });
+  const { data: activeClientRows, error: activeClientsError } = await admin
+    .from("clients")
+    .select("id")
+    .eq("is_active", true);
+
+  if (activeClientsError) {
+    throw new Error("No pudimos cargar los clientes activos para informes.");
+  }
+
+  const activeClientIds = ((activeClientRows ?? []) as Array<{ id: string }>).map((client) => client.id);
+
+  const { data, error } = activeClientIds.length
+    ? await admin
+        .from("client_health_report")
+        .select("*")
+        .in("client_id", activeClientIds)
+        .order("client_name", { ascending: true })
+    : { data: [] as Views<"client_health_report">[], error: null };
 
   if (error) {
     throw new Error("No pudimos cargar el informe de estado de clientes.");
@@ -145,9 +160,9 @@ export default async function ReportsPage() {
   const { data: northStarHistoryRows, error: northStarHistoryError } = clientIds.length
     ? await admin
         .from("onboarding_north_star_history")
-        .select("id, client_id, north_star_text, north_star_status, created_at")
+        .select("id, client_id, north_star_text, north_star_status, north_star_lifecycle_status, created_at")
         .in("client_id", clientIds)
-    : { data: [] as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string }>, error: null };
+    : { data: [] as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>, error: null };
 
   if (northStarHistoryError) {
     throw new Error("No pudimos cargar el conteo de nortes.");
@@ -175,7 +190,7 @@ export default async function ReportsPage() {
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
         .from("onboarding_configs")
-        .select("client_id, north_star_text, north_star_status")
+        .select("client_id, north_star_text, north_star_status, north_star_lifecycle_status")
         .in("client_id", clientIds)
     : { data: [] as CustomerSuccessConfigRow[], error: null };
 
@@ -273,9 +288,8 @@ export default async function ReportsPage() {
 
   completedInitiatives.forEach((initiative) => {
     const isKickoff = isKickoffText(initiative.title) || isKickoffText(initiative.type);
-    const kickoffDate = kickoffCompletedDates.get(initiative.client_id);
 
-    if (isKickoff || !kickoffDate || new Date(initiative.updated_at) < new Date(kickoffDate)) {
+    if (isKickoff) {
       return;
     }
 
@@ -307,7 +321,7 @@ export default async function ReportsPage() {
       customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
       customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
       customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}
-      northStarHistory={(northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; created_at: string }>}
+      northStarHistory={(northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>}
       northStarAudits={(northAuditRows ?? []) as Array<Record<string, unknown>>}
     />
   );

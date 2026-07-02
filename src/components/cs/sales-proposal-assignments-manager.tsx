@@ -119,6 +119,48 @@ function matchesProposalSearch(proposal: SalesProposalRecord, sellerUsers: Assig
   return searchableText.includes(normalizedQuery);
 }
 
+function matchesProposalFilters(
+  proposal: SalesProposalRecord,
+  sellerUsers: AssignableUser[],
+  filters: {
+    status: SalesProposalStatus | "all";
+    seller: string;
+    paymentMethod: SalesProposalPaymentMethod | "all";
+    csm: string;
+  },
+) {
+  if (filters.status !== "all" && proposal.status !== filters.status) {
+    return false;
+  }
+
+  if (filters.paymentMethod !== "all" && proposal.paymentMethod !== filters.paymentMethod) {
+    return false;
+  }
+
+  if (filters.seller !== "all") {
+    const sellerSelection = resolveSellerSelection(proposal, sellerUsers);
+    if (filters.seller === "unassigned") {
+      if (sellerSelection || proposal.sellerName || proposal.sellerEmail) {
+        return false;
+      }
+    } else if (sellerSelection !== filters.seller) {
+      return false;
+    }
+  }
+
+  if (filters.csm !== "all") {
+    if (filters.csm === "unassigned") {
+      if (proposal.assignedCsmUserId) {
+        return false;
+      }
+    } else if (proposal.assignedCsmUserId !== filters.csm) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function getProposalSortPriority(proposal: SalesProposalRecord) {
   if (!proposal.assignedCsmUserId && proposal.status === "paid") return 0;
   if (!proposal.assignedCsmUserId) return 1;
@@ -159,6 +201,10 @@ export function SalesProposalAssignmentsManager({
   );
   const [savingProposalId, setSavingProposalId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<SalesProposalStatus | "all">("all");
+  const [sellerFilter, setSellerFilter] = useState("all");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<SalesProposalPaymentMethod | "all">("all");
+  const [csmFilter, setCsmFilter] = useState("all");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const floatingScrollRef = useRef<HTMLDivElement | null>(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
@@ -178,8 +224,18 @@ export function SalesProposalAssignmentsManager({
   }, [proposals]);
 
   const filteredProposals = useMemo(
-    () => proposals.filter((proposal) => matchesProposalSearch(proposal, sellerUsers, searchQuery)),
-    [proposals, searchQuery, sellerUsers],
+    () =>
+      proposals.filter(
+        (proposal) =>
+          matchesProposalSearch(proposal, sellerUsers, searchQuery) &&
+          matchesProposalFilters(proposal, sellerUsers, {
+            status: statusFilter,
+            seller: sellerFilter,
+            paymentMethod: paymentMethodFilter,
+            csm: csmFilter,
+          }),
+      ),
+    [csmFilter, paymentMethodFilter, proposals, searchQuery, sellerFilter, sellerUsers, statusFilter],
   );
 
   const sortedProposals = useMemo(() => {
@@ -194,6 +250,12 @@ export function SalesProposalAssignmentsManager({
       return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
     });
   }, [filteredProposals]);
+
+  const hasActiveFilters =
+    statusFilter !== "all" ||
+    sellerFilter !== "all" ||
+    paymentMethodFilter !== "all" ||
+    csmFilter !== "all";
 
   useEffect(() => {
     function syncTableWidth() {
@@ -217,6 +279,13 @@ export function SalesProposalAssignmentsManager({
     if (source === "floating" && table.scrollLeft !== floating.scrollLeft) {
       table.scrollLeft = floating.scrollLeft;
     }
+  }
+
+  function clearFilters() {
+    setStatusFilter("all");
+    setSellerFilter("all");
+    setPaymentMethodFilter("all");
+    setCsmFilter("all");
   }
 
   async function saveAssignment(proposalId: string) {
@@ -336,20 +405,91 @@ export function SalesProposalAssignmentsManager({
         <section className="mt-6">
           {proposals.length ? (
             <>
-              <div className="mb-3 flex flex-col gap-3 px-1 lg:flex-row lg:items-center lg:justify-between">
-                <p className="text-sm font-semibold text-slate-700">
-                  Orden actual: pagadas pendientes de CS primero, luego pendientes y actualizadas mas recientemente.
-                </p>
-                <label className="relative block w-full max-w-[420px]">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    type="search"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Buscar empresa, cliente, vendedor, email..."
-                    className="pl-9"
-                  />
-                </label>
+              <div className="mb-3 space-y-3 px-1">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <p className="text-sm font-semibold text-slate-700">
+                    Orden actual: pagadas pendientes de CS primero, luego pendientes y actualizadas mas recientemente.
+                  </p>
+                  <label className="relative block w-full max-w-[420px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Buscar empresa, cliente, vendedor, email..."
+                      className="pl-9"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-2 rounded-[14px] border border-slate-200 bg-white p-3 shadow-[0_8px_24px_rgba(15,23,42,0.04)] sm:grid-cols-2 lg:grid-cols-[1fr_1.2fr_1fr_1.2fr_auto]">
+                  <label className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Estado</span>
+                    <Select
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value as SalesProposalStatus | "all")}
+                    >
+                      <option value="all">Todos</option>
+                      {(Object.keys(salesStatusMeta) as SalesProposalStatus[]).map((status) => (
+                        <option key={status} value={status}>
+                          {salesStatusMeta[status].label}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+
+                  <label className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Vendedor</span>
+                    <Select value={sellerFilter} onChange={(event) => setSellerFilter(event.target.value)}>
+                      <option value="all">Todos</option>
+                      <option value="unassigned">Sin asignar</option>
+                      {sellerUsers.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name || user.email}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+
+                  <label className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Pago</span>
+                    <Select
+                      value={paymentMethodFilter}
+                      onChange={(event) =>
+                        setPaymentMethodFilter(event.target.value as SalesProposalPaymentMethod | "all")
+                      }
+                    >
+                      <option value="all">Todos</option>
+                      <option value="stripe">Stripe</option>
+                      <option value="bank_transfer">Transferencia</option>
+                    </Select>
+                  </label>
+
+                  <label className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">CS</span>
+                    <Select value={csmFilter} onChange={(event) => setCsmFilter(event.target.value)}>
+                      <option value="all">Todos</option>
+                      <option value="unassigned">Sin asignar</option>
+                      {assignableUsers.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name || user.email}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full px-3 py-2 text-sm"
+                      onClick={clearFilters}
+                      disabled={!hasActiveFilters}
+                    >
+                      Limpiar
+                    </Button>
+                  </div>
+                </div>
               </div>
 
               <div className="hidden overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.05)] lg:block">

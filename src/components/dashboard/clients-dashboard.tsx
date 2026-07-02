@@ -14,6 +14,8 @@ import type { ClientSummary } from "@/lib/onboarding";
 
 type ClientsDashboardProps = {
   initialClients: ClientSummary[];
+  customerSuccessOptions?: Array<{ id: string; name: string }>;
+  showCustomerSuccessFilter?: boolean;
 };
 
 const PAGE_SIZE_OPTIONS = [9, 18, 36];
@@ -26,23 +28,44 @@ function normalizeSearchText(value: string) {
     .trim();
 }
 
-export function ClientsDashboard({ initialClients }: ClientsDashboardProps) {
+export function ClientsDashboard({
+  initialClients,
+  customerSuccessOptions = [],
+  showCustomerSuccessFilter = false,
+}: ClientsDashboardProps) {
   const [clients, setClients] = useState(initialClients);
   const [error, setError] = useState<string | null>(null);
   const [sharingClient, setSharingClient] = useState<ClientSummary | null>(null);
   const [gameplanClient, setGameplanClient] = useState<ClientSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [customerSuccessFilter, setCustomerSuccessFilter] = useState("all");
   const [pageSize, setPageSize] = useState(9);
   const [currentPage, setCurrentPage] = useState(1);
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const hasUnassignedClients = useMemo(
+    () => clients.some((client) => !client.csm_user_id),
+    [clients],
+  );
 
   const filteredClients = useMemo(() => {
     const normalizedQuery = normalizeSearchText(deferredSearchQuery);
-    if (!normalizedQuery) {
-      return clients;
-    }
-
     return clients.filter((client) => {
+      if (customerSuccessFilter === "unassigned" && client.csm_user_id) {
+        return false;
+      }
+
+      if (
+        customerSuccessFilter !== "all" &&
+        customerSuccessFilter !== "unassigned" &&
+        client.csm_user_id !== customerSuccessFilter
+      ) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
       const searchableText = [
         client.name,
         client.description ?? "",
@@ -51,7 +74,7 @@ export function ClientsDashboard({ initialClients }: ClientsDashboardProps) {
 
       return normalizeSearchText(searchableText).includes(normalizedQuery);
     });
-  }, [clients, deferredSearchQuery]);
+  }, [clients, customerSuccessFilter, deferredSearchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredClients.length / pageSize));
   const activePage = Math.min(currentPage, totalPages);
@@ -110,18 +133,43 @@ export function ClientsDashboard({ initialClients }: ClientsDashboardProps) {
 
       <Card className="p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="w-full max-w-xl">
-            <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-              Buscar cliente
-            </label>
-            <Input
-              value={searchQuery}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-                setCurrentPage(1);
-              }}
-              placeholder="Buscar por nombre, descripcion o nivel de acceso"
-            />
+          <div className="grid w-full gap-3 lg:max-w-4xl lg:grid-cols-[minmax(280px,1fr)_260px] lg:items-end">
+            <div>
+              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Buscar cliente
+              </label>
+              <Input
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Buscar por nombre, descripcion o nivel de acceso"
+              />
+            </div>
+
+            {showCustomerSuccessFilter ? (
+              <div>
+                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Customer Success
+                </label>
+                <Select
+                  value={customerSuccessFilter}
+                  onChange={(event) => {
+                    setCustomerSuccessFilter(event.target.value);
+                    setCurrentPage(1);
+                  }}
+                >
+                  <option value="all">Todos los CS</option>
+                  {customerSuccessOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                  {hasUnassignedClients ? <option value="unassigned">Sin asignar</option> : null}
+                </Select>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

@@ -929,6 +929,7 @@ export function OnboardingClientPage({
       typeof config,
       | "north_star_text"
       | "north_star_status"
+      | "north_star_lifecycle_status"
       | "north_star_dismissals_used"
       | "north_star_cs_preapproved_at"
       | "north_star_completed_at"
@@ -986,6 +987,7 @@ export function OnboardingClientPage({
       {
         north_star_text: text,
         north_star_status: "cs_preapproved",
+        north_star_lifecycle_status: "active",
         north_star_cs_preapproved_at: config.north_star_cs_preapproved_at ?? new Date().toISOString(),
       },
       "El Norte fue enviado para aprobacion del cliente.",
@@ -1001,10 +1003,20 @@ export function OnboardingClientPage({
     await updateNorthStarConfig(
       {
         north_star_status: "completed",
+        north_star_lifecycle_status: "active",
         north_star_completed_at: new Date().toISOString(),
       },
       "El Norte quedo definido y consensuado.",
     );
+
+    const latestHistoryId = northStarHistory[0]?.id;
+    if (latestHistoryId) {
+      await supabase
+        .from("onboarding_north_star_history")
+        .update({ north_star_status: "completed" })
+        .eq("id", latestHistoryId);
+      await refreshNorthStarHistory();
+    }
   }
 
   async function saveNorthStarManualEdit() {
@@ -1021,6 +1033,55 @@ export function OnboardingClientPage({
       "El Norte fue actualizado.",
     );
     setIsNorthStarManualOpen(false);
+  }
+
+  async function updateNorthStarFulfillment(fulfilled: boolean) {
+    const latestHistoryId = northStarHistory[0]?.id;
+
+    if (!latestHistoryId) {
+      showError("No encontramos la version actual de El Norte.");
+      return;
+    }
+
+    const status = fulfilled ? "fulfilled" : "active";
+    setIsSavingNorthStar(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(
+        `/api/clients/${client.id}/north-star-history/${latestHistoryId}/lifecycle`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        },
+      );
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No fue posible actualizar el estado del Norte.");
+      }
+
+      await refreshNorthStarHistory();
+      setConfig((current) => ({
+        ...current,
+        north_star_lifecycle_status: status,
+      }));
+
+      showSuccess(
+        fulfilled
+          ? "El Norte quedo marcado como cumplido para validacion del cliente."
+          : "El Norte quedo marcado como no cumplido.",
+      );
+    } catch (caughtError) {
+      showError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "No fue posible actualizar el estado del Norte.",
+      );
+    } finally {
+      setIsSavingNorthStar(false);
+    }
   }
 
   async function dismissNorthStarModal() {
@@ -5310,6 +5371,7 @@ export function OnboardingClientPage({
           onCsPreapprove={() => void preapproveNorthStar()}
           onCsSave={() => void saveNorthStarManualEdit()}
           onCsComplete={() => void completeNorthStar()}
+          onFulfillmentChange={(fulfilled) => void updateNorthStarFulfillment(fulfilled)}
         />
       ) : null}
 
