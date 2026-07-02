@@ -23,73 +23,10 @@ export default async function Image() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#111820",
-          color: "white",
-          fontFamily: "Arial, sans-serif",
-          padding: "72px",
+          background: "#ffffff",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "44px",
-            width: "100%",
-            height: "100%",
-            border: "1px solid rgba(255,255,255,0.14)",
-            borderRadius: "28px",
-            background: "rgba(255,255,255,0.04)",
-            padding: "64px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: "220px",
-              height: "220px",
-              borderRadius: "999px",
-              background: "#ffffff",
-            }}
-          >
-            <img src={logoSrc} alt="" style={{ width: 220, height: 220 }} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-            <div
-              style={{
-                color: "#ff3b30",
-                fontSize: "32px",
-                fontWeight: 800,
-                letterSpacing: "0.14em",
-                textTransform: "uppercase",
-              }}
-            >
-              Dinterweb
-            </div>
-            <div
-              style={{
-                maxWidth: "720px",
-                fontSize: "58px",
-                lineHeight: 1.05,
-                fontWeight: 900,
-              }}
-            >
-              Strategic Roadmap & Capacity Manager
-            </div>
-            <div
-              style={{
-                maxWidth: "680px",
-                color: "#c8d3df",
-                fontSize: "28px",
-                lineHeight: 1.35,
-                fontWeight: 600,
-              }}
-            >
-              Gestiona clientes, roadmap de estrategia y capacidad operativa.
-            </div>
-          </div>
-        </div>
+        <img src={logoSrc} alt="" style={{ width: 360, height: 360 }} />
       </div>
     ),
     size,
