@@ -9,6 +9,7 @@ const lexend = Lexend({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://app.dinterweb.com"),
   title: "Strategic Roadmap & Capacity Manager",
   description:
     "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
@@ -16,6 +17,30 @@ export const metadata: Metadata = {
     icon: "/dinterweb.png",
     shortcut: "/dinterweb.png",
     apple: "/dinterweb.png",
+  },
+  openGraph: {
+    title: "Strategic Roadmap & Capacity Manager",
+    description:
+      "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
+    url: "https://app.dinterweb.com",
+    siteName: "Dinterweb",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "Dinterweb",
+      },
+    ],
+    locale: "es_CO",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Strategic Roadmap & Capacity Manager",
+    description:
+      "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
+    images: ["/opengraph-image"],
   },
 };
 
