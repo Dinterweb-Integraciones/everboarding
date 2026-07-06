@@ -94,24 +94,24 @@ export function NorthStarModal({
   const trimmedText = text.trim();
   let primaryAction: ReactNode = null;
 
-  if (role === "cs" && !isBlocking) {
-    primaryAction = (
-      <Button
-        className="h-16 w-full rounded-[6px] px-0"
-        onClick={onCsSave}
-        disabled={isSaving || trimmedText.length < 12}
-        aria-label="Guardar El Norte"
-      >
-        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
-      </Button>
-    );
-  } else if (role === "cs" && (status === "pending" || status === "cs_preapproved")) {
+  if (role === "cs" && (status === "pending" || status === "cs_preapproved")) {
     primaryAction = (
       <Button
         className="h-16 w-full rounded-[6px] px-0"
         onClick={onCsPreapprove}
         disabled={isSaving || trimmedText.length < 12}
         aria-label="Enviar El Norte al cliente"
+      >
+        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
+      </Button>
+    );
+  } else if (role === "cs" && !isBlocking) {
+    primaryAction = (
+      <Button
+        className="h-16 w-full rounded-[6px] px-0"
+        onClick={onCsSave}
+        disabled={isSaving || trimmedText.length < 12}
+        aria-label="Guardar El Norte"
       >
         {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
       </Button>
