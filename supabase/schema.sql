@@ -467,7 +467,8 @@ create table if not exists public.onboarding_initiatives (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   created_by_user_id uuid references auth.users(id) on delete set null,
-  updated_by_user_id uuid references auth.users(id) on delete set null
+  updated_by_user_id uuid references auth.users(id) on delete set null,
+  north_star_history_id uuid references public.onboarding_north_star_history(id) on delete set null
 );
 
 create table if not exists public.onboarding_initiative_subitems (
@@ -485,7 +486,8 @@ create table if not exists public.onboarding_initiative_subitems (
 );
 
 alter table public.onboarding_initiatives
-add column if not exists labels text[] not null default '{}'::text[];
+add column if not exists labels text[] not null default '{}'::text[],
+add column if not exists north_star_history_id uuid references public.onboarding_north_star_history(id) on delete set null;
 
 alter table public.onboarding_initiative_subitems
 add column if not exists status public.initiative_task_status not null default 'pending',
@@ -521,6 +523,7 @@ where billing_cycle_id is not null;
 alter table public.client_billing_cycles
 drop constraint if exists client_billing_cycles_stripe_checkout_session_id_key;
 create index if not exists onboarding_initiatives_client_status_idx on public.onboarding_initiatives (client_id, status, sort_order);
+create index if not exists onboarding_initiatives_north_star_history_idx on public.onboarding_initiatives (north_star_history_id);
 create index if not exists onboarding_subitems_initiative_id_idx on public.onboarding_initiative_subitems (initiative_id, sort_order);
 create index if not exists onboarding_logs_initiative_id_idx on public.onboarding_activity_logs (initiative_id, created_at desc);
 create index if not exists onboarding_north_star_history_client_idx on public.onboarding_north_star_history (client_id, created_at desc);
@@ -1532,6 +1535,34 @@ drop trigger if exists enforce_north_star_for_kickoff_flow_on_write on public.on
 create trigger enforce_north_star_for_kickoff_flow_on_write
 before insert or update of status on public.onboarding_initiatives
 for each row execute procedure public.enforce_north_star_for_kickoff_flow();
+
+create or replace function public.assign_active_north_star_to_completed_initiative()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status = 'completed'
+     and new.north_star_history_id is null
+     and (tg_op = 'INSERT' or old.status is distinct from 'completed') then
+    select history.id
+    into new.north_star_history_id
+    from public.onboarding_north_star_history history
+    where history.client_id = new.client_id
+      and history.north_star_lifecycle_status = 'active'
+    order by history.created_at desc
+    limit 1;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists assign_active_north_star_to_completed_initiative_on_write on public.onboarding_initiatives;
+create trigger assign_active_north_star_to_completed_initiative_on_write
+before insert or update of status on public.onboarding_initiatives
+for each row execute procedure public.assign_active_north_star_to_completed_initiative();
 
 create or replace function public.resolve_public_client_id(p_slug text)
 returns uuid

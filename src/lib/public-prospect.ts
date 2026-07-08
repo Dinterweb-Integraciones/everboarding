@@ -134,6 +134,7 @@ export function mapProposalInitiativeToPublicRecord(
     updated_at: nowIso,
     created_by_user_id: null,
     updated_by_user_id: null,
+    north_star_history_id: null,
     subitems,
     logs: [],
     credits: calculateSalesInitiativeCredits(initiative),

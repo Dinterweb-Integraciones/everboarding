@@ -645,6 +645,7 @@ export type Database = {
           updated_at: string;
           created_by_user_id: string | null;
           updated_by_user_id: string | null;
+          north_star_history_id: string | null;
         };
         Insert: {
           id?: string;
@@ -666,6 +667,7 @@ export type Database = {
           updated_at?: string;
           created_by_user_id?: string | null;
           updated_by_user_id?: string | null;
+          north_star_history_id?: string | null;
         };
         Update: {
           id?: string;
@@ -687,6 +689,7 @@ export type Database = {
           updated_at?: string;
           created_by_user_id?: string | null;
           updated_by_user_id?: string | null;
+          north_star_history_id?: string | null;
         };
       };
       onboarding_initiative_subitems: {
