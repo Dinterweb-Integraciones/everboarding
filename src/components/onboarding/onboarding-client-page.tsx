@@ -61,7 +61,7 @@ import {
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
-  shouldRequireNorthStar,
+  shouldRequireNorthStarDraft,
   setEvaluationValidationLabel,
   suggestPlanPrice,
   type CatalogModalGroup,
@@ -527,7 +527,7 @@ export function OnboardingClientPage({
   const writable = canEdit(initialData.accessRole);
   const ownerCanShare = initialData.accessRole === "owner";
   const stageMeta = STAGE_META[activeStage];
-  const requiresNorthStar = shouldRequireNorthStar(client, config, initiatives);
+  const requiresNorthStar = shouldRequireNorthStarDraft(client, config, initiatives);
   const shouldShowNorthStarModal =
     activeStage === "cs" && ((requiresNorthStar && !isNorthStarModalDismissed) || isNorthStarManualOpen);
   const isNorthStarBlockingModal = requiresNorthStar && !isNorthStarManualOpen;

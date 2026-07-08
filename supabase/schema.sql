@@ -1500,7 +1500,6 @@ set search_path = public
 as $$
 declare
   target_config public.onboarding_configs;
-  kickoff_completed boolean;
 begin
   if tg_op = 'INSERT' or old.status is distinct from new.status then
     select *
@@ -1512,26 +1511,16 @@ begin
     if coalesce(target_config.north_star_required, false)
        and lower(trim(new.title)) like '%kickoff%'
        and new.status = 'completed'
-       and coalesce(target_config.north_star_status, 'pending') <> 'completed' then
-      raise exception 'Antes de completar Kickoff, El Norte debe estar aprobado por cliente y Customer Success';
+       and nullif(btrim(coalesce(target_config.north_star_text, '')), '') is null then
+      raise exception 'Antes de completar Kickoff, redacta El Norte.';
     end if;
-
-    select exists (
-      select 1
-      from public.onboarding_initiatives i
-      where i.client_id = new.client_id
-        and lower(trim(i.title)) like '%kickoff%'
-        and i.status = 'completed'
-        and i.id <> new.id
-    )
-    into kickoff_completed;
 
     if coalesce(target_config.north_star_required, false)
        and lower(trim(new.title)) not like '%kickoff%'
        and old.status = 'planned'
        and new.status in ('executing', 'completed')
-       and not kickoff_completed then
-      raise exception 'Primero completa Kickoff con El Norte aprobado antes de iniciar o completar otros casos planificados';
+       and coalesce(target_config.north_star_status, 'pending') not in ('client_approved', 'completed') then
+      raise exception 'Para iniciar casos planificados, El Norte debe estar validado por el cliente.';
     end if;
   end if;
 

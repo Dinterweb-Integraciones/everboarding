@@ -285,6 +285,14 @@ export function isNorthStarCompleted(config: Pick<OnboardingConfig, "north_star_
   return config.north_star_status === "completed";
 }
 
+export function hasNorthStarDraft(config: Pick<OnboardingConfig, "north_star_text">) {
+  return Boolean(config.north_star_text?.trim());
+}
+
+export function isNorthStarClientValidated(config: Pick<OnboardingConfig, "north_star_status">) {
+  return config.north_star_status === "client_approved" || config.north_star_status === "completed";
+}
+
 export function shouldRequireNorthStar(
   client: Pick<Tables<"clients">, "csm_user_id">,
   config: Pick<OnboardingConfig, "north_star_required" | "north_star_status">,
@@ -296,38 +304,49 @@ export function shouldRequireNorthStar(
     initiatives.some((initiative) => isKickoffInitiative(initiative) && initiative.status === "executing");
 }
 
+export function shouldRequireNorthStarDraft(
+  client: Pick<Tables<"clients">, "csm_user_id">,
+  config: Pick<OnboardingConfig, "north_star_required" | "north_star_text">,
+  initiatives: Pick<InitiativeRecord, "title" | "status">[],
+) {
+  return config.north_star_required &&
+    Boolean(client.csm_user_id) &&
+    !hasNorthStarDraft(config) &&
+    initiatives.some((initiative) => isKickoffInitiative(initiative) && initiative.status === "executing");
+}
+
 export function canMoveInitiativeWithNorthStarRules(input: {
   initiative: Pick<InitiativeRecord, "title" | "status">;
   targetStatus: InitiativeStatus;
-  config: Pick<OnboardingConfig, "north_star_required" | "north_star_status">;
+  config: Pick<OnboardingConfig, "north_star_required" | "north_star_status" | "north_star_text">;
   initiatives: Pick<InitiativeRecord, "title" | "status">[];
 }) {
-  if (!input.config.north_star_required || isNorthStarCompleted(input.config)) {
+  if (!input.config.north_star_required) {
     return { allowed: true, message: null };
   }
 
   const isKickoff = isKickoffInitiative(input.initiative);
-  const kickoffIsCompleted = input.initiatives.some(
-    (initiative) => isKickoffInitiative(initiative) && initiative.status === "completed",
-  );
 
   if (isKickoff && input.targetStatus === "completed") {
-    return {
-      allowed: false,
-      message: "Antes de completar Kickoff, El Norte debe quedar aprobado por cliente y Customer Success.",
-    };
+    return hasNorthStarDraft(input.config)
+      ? { allowed: true, message: null }
+      : {
+          allowed: false,
+          message: "Antes de completar Kickoff, redacta El Norte.",
+        };
   }
 
   if (
     !isKickoff &&
-    !kickoffIsCompleted &&
     input.initiative.status === "planned" &&
     (input.targetStatus === "executing" || input.targetStatus === "completed")
   ) {
-    return {
-      allowed: false,
-      message: "Primero completa Kickoff con El Norte aprobado antes de iniciar o completar otros casos planificados.",
-    };
+    return isNorthStarClientValidated(input.config)
+      ? { allowed: true, message: null }
+      : {
+          allowed: false,
+          message: "Para iniciar casos planificados, El Norte debe estar validado por el cliente.",
+        };
   }
 
   return { allowed: true, message: null };
