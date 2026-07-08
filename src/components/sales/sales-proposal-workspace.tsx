@@ -3931,7 +3931,7 @@ function mergeRecommendedGroups(
                       const summaryFields = [
                         {
                           label: "Alcance y descripcion detallada",
-                          value: summaryCatalogGroup?.description || initiative.description,
+                          value: initiative.description || summaryCatalogGroup?.description || "",
                           fallback: "Sin descripcion detallada.",
                         },
                         {
@@ -4884,7 +4884,7 @@ function mergeRecommendedGroups(
                 <div className="mt-3">
                   <RichTextTextarea
                     rows={4}
-                    value={initiativeDraft.description}
+                    value={initiativeDraft.description || catalogGroupForDraft?.description || ""}
                     onChange={(value) => updateInitiativeDraft("description", value)}
                     placeholder="Describe el alcance, entregables y contexto de este caso de uso."
                     className="text-[13px] leading-relaxed text-[#33475b]"
