@@ -11,7 +11,7 @@ import {
   type PlanReportInitiative,
 } from "@/components/onboarding/plan-report-export";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
-import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
+import { RichTextDisplay, RichTextTextarea, richTextToPlainText } from "@/components/ui/rich-text";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   SALES_PROPOSAL_BASE_CREDITS,
@@ -4814,7 +4814,6 @@ function mergeRecommendedGroups(
           const canUseCommercialAgreement =
             isDinterwebVariant && canToggleCommercialWaiver(initiativeDraft);
           const catalogGroupForDraft = findCatalogGroupForInitiative(initiativeDraft, catalogGroups);
-          const draftDescriptionValue = catalogGroupForDraft?.description || initiativeDraft.description;
 
           return (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">
@@ -4882,10 +4881,12 @@ function mergeRecommendedGroups(
 
               <section>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">Alcance y descripcion detallada</p>
-                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                  <RichTextDisplay
-                    value={draftDescriptionValue}
-                    fallback="Este caso de uso no tiene descripcion detallada todavia."
+                <div className="mt-3">
+                  <RichTextTextarea
+                    rows={4}
+                    value={initiativeDraft.description}
+                    onChange={(value) => updateInitiativeDraft("description", value)}
+                    placeholder="Describe el alcance, entregables y contexto de este caso de uso."
                     className="text-[13px] leading-relaxed text-[#33475b]"
                   />
                 </div>
