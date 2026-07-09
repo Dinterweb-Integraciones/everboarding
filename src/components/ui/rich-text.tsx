@@ -14,6 +14,7 @@ type RichTextTextareaProps = {
 };
 
 const ALLOWED_TAGS = new Set(["B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "P", "DIV", "BR"]);
+const HTML_TOKEN_PATTERN = /<\/?([a-z][a-z0-9]*)\b[^>]*>/gi;
 
 function escapeHtml(value: string) {
   return value
@@ -64,47 +65,41 @@ function sanitizeHtml(value: string) {
     return "";
   }
 
-  if (typeof window === "undefined") {
-    return escapeHtml(value);
+  let sanitized = "";
+  let lastIndex = 0;
+
+  for (const match of value.matchAll(HTML_TOKEN_PATTERN)) {
+    sanitized += escapeHtml(value.slice(lastIndex, match.index));
+    lastIndex = (match.index ?? 0) + match[0].length;
+
+    const rawTagName = match[1].toUpperCase();
+    if (!ALLOWED_TAGS.has(rawTagName)) {
+      continue;
+    }
+
+    const isClosingTag = match[0].startsWith("</");
+    if (rawTagName === "BR") {
+      if (!isClosingTag) {
+        sanitized += "<br>";
+      }
+      continue;
+    }
+
+    const tagName =
+      rawTagName === "B" || rawTagName === "STRONG"
+        ? "strong"
+        : rawTagName === "I" || rawTagName === "EM"
+          ? "em"
+          : rawTagName === "DIV"
+            ? "p"
+            : rawTagName.toLowerCase();
+
+    sanitized += isClosingTag ? `</${tagName}>` : `<${tagName}>`;
   }
 
-  const parser = new DOMParser();
-  const document = parser.parseFromString(`<div>${value}</div>`, "text/html");
+  sanitized += escapeHtml(value.slice(lastIndex));
 
-  function sanitizeNode(node: Node): string {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return escapeHtml(node.textContent ?? "");
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      return "";
-    }
-
-    const element = node as HTMLElement;
-    const children = Array.from(element.childNodes).map(sanitizeNode).join("");
-    const tagName = element.tagName.toUpperCase();
-
-    if (!ALLOWED_TAGS.has(tagName)) {
-      return children;
-    }
-
-    if (tagName === "B" || tagName === "STRONG") return `<strong>${children}</strong>`;
-    if (tagName === "I" || tagName === "EM") return `<em>${children}</em>`;
-    if (tagName === "U") return `<u>${children}</u>`;
-    if (tagName === "UL") return `<ul>${children}</ul>`;
-    if (tagName === "OL") return `<ol>${children}</ol>`;
-    if (tagName === "LI") return `<li>${children}</li>`;
-    if (tagName === "BR") return "<br>";
-    if (tagName === "P" || tagName === "DIV") return children.trim() ? `<p>${children}</p>` : "";
-
-    return children;
-  }
-
-  return Array.from(document.body.firstElementChild?.childNodes ?? [])
-    .map(sanitizeNode)
-    .join("")
-    .replace(/<p><br><\/p>/g, "")
-    .trim();
+  return sanitized.replace(/<p>\s*(?:<br>)?\s*<\/p>/g, "").trim();
 }
 
 function normalizeStoredValue(value: string | null | undefined) {
