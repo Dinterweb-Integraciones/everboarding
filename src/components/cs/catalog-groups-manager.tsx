@@ -24,6 +24,7 @@ import { RichTextDisplay, RichTextTextarea } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
 import type {
   CreditCatalogGroup,
+  CreditCatalogGroupBadgeType,
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
@@ -33,6 +34,7 @@ import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type CatalogGroupsManagerProps = {
   initialGroups: CreditCatalogGroup[];
+  initialBadgeTypes: CreditCatalogGroupBadgeType[];
   initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   initialItems: CreditCatalogItem[];
@@ -62,6 +64,7 @@ type CatalogGroupForm = {
   preview: string;
   completionOutcome: string;
   successMilestone: string;
+  displayBadge: string;
   modalCategoryIds: string[];
   priorityStatus: "normal" | "prioritario";
   credits: string;
@@ -76,6 +79,7 @@ const emptyForm: CatalogGroupForm = {
   preview: "",
   completionOutcome: "",
   successMilestone: "",
+  displayBadge: "",
   modalCategoryIds: [],
   priorityStatus: "normal",
   credits: "0",
@@ -122,12 +126,14 @@ function reorderIds(ids: string[], draggedId: string, targetId: string) {
 
 export function CatalogGroupsManager({
   initialGroups,
+  initialBadgeTypes,
   initialGroupCategories,
   initialGroupCategoryLinks,
   initialItems,
   initialMemberships,
 }: CatalogGroupsManagerProps) {
   const [groups, setGroups] = useState(initialGroups);
+  const [badgeTypes, setBadgeTypes] = useState(initialBadgeTypes);
   const [groupCategories] = useState(initialGroupCategories);
   const [groupCategoryLinks, setGroupCategoryLinks] = useState(initialGroupCategoryLinks);
   const [items] = useState(initialItems);
@@ -139,6 +145,9 @@ export function CatalogGroupsManager({
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
+  const [isBadgeTypeModalOpen, setIsBadgeTypeModalOpen] = useState(false);
+  const [newBadgeTypeLabel, setNewBadgeTypeLabel] = useState("");
+  const [isSavingBadgeType, setIsSavingBadgeType] = useState(false);
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupsPageSize, setGroupsPageSize] = useState(10);
   const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
@@ -167,6 +176,18 @@ export function CatalogGroupsManager({
           || left.name.localeCompare(right.name, "es"),
       ),
     [groupCategories],
+  );
+
+  const availableBadgeTypes = useMemo(
+    () =>
+      [...badgeTypes]
+        .filter((badgeType) => badgeType.is_active)
+        .sort(
+          (left, right) =>
+            safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+            || left.label.localeCompare(right.label, "es"),
+        ),
+    [badgeTypes],
   );
 
   const selectedCategorySummary = useMemo(() => {
@@ -368,6 +389,7 @@ export function CatalogGroupsManager({
         group.preview ?? "",
         group.completion_outcome ?? "",
         group.success_milestone ?? "",
+        group.display_badge ?? "",
         group.modalCategoryNames.join(" "),
         group.priorityStatus,
         group.priorityStatus === "prioritario" ? "prioritario" : "normal",
@@ -463,6 +485,7 @@ export function CatalogGroupsManager({
       preview: group.preview ?? "",
       completionOutcome: group.completion_outcome ?? "",
       successMilestone: group.success_milestone ?? "",
+      displayBadge: group.display_badge ?? "",
       modalCategoryIds: selectedCategoryIds.length
         ? selectedCategoryIds
         : group.modal_category_id
@@ -510,6 +533,47 @@ export function CatalogGroupsManager({
 
   function detachTaskFromDraft(taskId: string) {
     setSelectedTaskIds((current) => current.filter((currentId) => currentId !== taskId));
+  }
+
+  async function saveBadgeType() {
+    const label = newBadgeTypeLabel.trim();
+    if (!label) {
+      setFeedback({ tone: "error", message: "Escribe el nombre de la etiqueta." });
+      return;
+    }
+
+    setIsSavingBadgeType(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/cs/catalog-group-badge-types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label,
+          sortOrder: availableBadgeTypes.length,
+          isActive: true,
+        }),
+      });
+
+      const payload = (await response.json()) as CreditCatalogGroupBadgeType & { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos crear la etiqueta.");
+      }
+
+      setBadgeTypes((current) => [...current, payload]);
+      setForm((current) => ({ ...current, displayBadge: payload.label }));
+      setNewBadgeTypeLabel("");
+      setIsBadgeTypeModalOpen(false);
+      setFeedback({ tone: "success", message: "Etiqueta creada." });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos crear la etiqueta."),
+      });
+    } finally {
+      setIsSavingBadgeType(false);
+    }
   }
 
   function toggleModalCategory(categoryId: string) {
@@ -665,6 +729,7 @@ export function CatalogGroupsManager({
             preview: form.preview,
             completionOutcome: form.completionOutcome,
             successMilestone: form.successMilestone,
+            displayBadge: form.displayBadge,
             modalCategoryIds: form.modalCategoryIds,
             priorityStatus: form.priorityStatus,
             credits: manualCredits,
@@ -821,8 +886,8 @@ export function CatalogGroupsManager({
 
             {activeFormStep === 0 ? (
               <>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_220px]">
-              <div>
+            <div className="grid gap-5 xl:grid-cols-12 xl:items-start">
+              <div className="xl:col-span-5">
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Nombre del grupo
                 </label>
@@ -835,39 +900,78 @@ export function CatalogGroupsManager({
                 />
               </div>
 
-              <div>
+              <div className="xl:col-span-4">
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Creditos manuales
+                  Etiqueta de tarjeta
                 </label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={form.credits ?? "0"}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, credits: event.target.value }))
-                  }
-                />
+                <div className="relative">
+                  <Select
+                    value={form.displayBadge ?? ""}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, displayBadge: event.target.value }))
+                    }
+                    className="pr-14"
+                  >
+                    <option value="">Automatico</option>
+                    {form.displayBadge.trim() &&
+                    !availableBadgeTypes.some((badgeType) => badgeType.label === form.displayBadge.trim()) ? (
+                      <option value={form.displayBadge.trim()}>{form.displayBadge.trim()}</option>
+                    ) : null}
+                    {availableBadgeTypes.map((badgeType) => (
+                      <option key={badgeType.id} value={badgeType.label}>
+                        {badgeType.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <button
+                    type="button"
+                    onClick={() => setIsBadgeTypeModalOpen(true)}
+                    className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg border border-[var(--accent)] bg-white text-[var(--accent)] transition hover:bg-[color-mix(in_oklab,var(--accent)_10%,white)]"
+                    aria-label="Crear etiqueta de tarjeta"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  Usalos cuando el grupo no lleve tareas. Si agregas tareas, el total se calcula con ellas.
+                  Si queda vacia, no se muestra etiqueta secundaria en la tarjeta.
                 </p>
               </div>
 
-              <div>
-                <label className="flex items-center gap-3 rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 sm:mt-7">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(form.isActive)}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, isActive: event.target.checked }))
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]"
-                  />
-                  Grupo activo
-                </label>
+              <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-4 xl:col-span-3 xl:row-span-2">
+                <div className="grid gap-3">
+                  <div>
+                    <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                      Creditos manuales
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.credits ?? "0"}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, credits: event.target.value }))
+                      }
+                      className="bg-white"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.isActive)}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, isActive: event.target.checked }))
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]"
+                    />
+                    Grupo activo
+                  </label>
+                  <p className="text-xs leading-5 text-slate-500">
+                    Si agregas tareas, el total se calcula con ellas.
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
+
+              <div className="xl:col-span-5">
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Categoria visible en guía inteligente
                 </label>
@@ -944,7 +1048,7 @@ export function CatalogGroupsManager({
                 </p>
               </div>
 
-              <div>
+              <div className="xl:col-span-4">
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Estado de prioridad
                 </label>
@@ -1445,6 +1549,11 @@ export function CatalogGroupsManager({
                           <td className="px-4 py-4">
                             <div className="font-semibold text-slate-900">{group.name}</div>
                             <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
+                            {group.display_badge?.trim() ? (
+                              <div className="mt-1 text-xs font-semibold text-[var(--accent)]">
+                                {group.display_badge.trim()}
+                              </div>
+                            ) : null}
                             {group.tags.length ? (
                               <div className="mt-1.5 flex flex-wrap gap-1">
                                 {group.tags.map((tag) => (
@@ -1580,6 +1689,16 @@ export function CatalogGroupsManager({
                                         {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
                                       </span>
                                     </div>
+                                    {group.display_badge?.trim() ? (
+                                      <div className="mt-4">
+                                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                          Etiqueta de tarjeta
+                                        </p>
+                                        <span className="mt-2 inline-flex rounded-full bg-[color-mix(in_oklab,var(--accent)_10%,white)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
+                                          {group.display_badge.trim()}
+                                        </span>
+                                      </div>
+                                    ) : null}
                                     {group.tags.length ? (
                                       <div className="mt-4">
                                         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
@@ -1709,6 +1828,83 @@ export function CatalogGroupsManager({
           </div>
         </section>
       </div>
+
+      {isBadgeTypeModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
+          <div className="w-full max-w-md rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--accent)]">
+                  Nueva etiqueta
+                </p>
+                <h3 className="mt-1 text-lg font-bold text-slate-950">Etiqueta de tarjeta</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBadgeTypeModalOpen(false);
+                  setNewBadgeTypeLabel("");
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                aria-label="Cerrar modal de etiqueta"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5">
+              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                Nombre
+              </label>
+              <Input
+                value={newBadgeTypeLabel}
+                onChange={(event) => setNewBadgeTypeLabel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void saveBadgeType();
+                  }
+                }}
+                placeholder="Grupo manual"
+                autoFocus
+              />
+            </div>
+
+            {availableBadgeTypes.length ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {availableBadgeTypes.map((badgeType) => (
+                  <button
+                    key={badgeType.id}
+                    type="button"
+                    onClick={() => setNewBadgeTypeLabel(badgeType.label)}
+                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                  >
+                    {badgeType.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setIsBadgeTypeModalOpen(false);
+                  setNewBadgeTypeLabel("");
+                }}
+                disabled={isSavingBadgeType}
+              >
+                Cancelar
+              </Button>
+              <Button type="button" onClick={() => void saveBadgeType()} disabled={isSavingBadgeType}>
+                <Plus className="mr-2 h-4 w-4" />
+                {isSavingBadgeType ? "Guardando..." : "Agregar"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <FeedbackToast feedback={feedback} onClose={() => setFeedback(null)} />
     </>

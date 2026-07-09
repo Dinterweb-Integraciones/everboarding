@@ -764,6 +764,7 @@ export type Database = {
           preview: string | null;
           completion_outcome: string | null;
           success_milestone: string | null;
+          display_badge: string | null;
           modal_category: string | null;
           modal_category_id: string | null;
           credits: number;
@@ -782,6 +783,7 @@ export type Database = {
           preview?: string | null;
           completion_outcome?: string | null;
           success_milestone?: string | null;
+          display_badge?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
           credits?: number;
@@ -800,6 +802,7 @@ export type Database = {
           preview?: string | null;
           completion_outcome?: string | null;
           success_milestone?: string | null;
+          display_badge?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
           credits?: number;
@@ -807,6 +810,35 @@ export type Database = {
           sort_order?: number;
           is_active?: boolean;
           tags?: string[] | null;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      credit_catalog_group_badge_types: {
+        Row: {
+          id: string;
+          label: string;
+          sort_order: number;
+          is_active: boolean;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          label: string;
+          sort_order?: number;
+          is_active?: boolean;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          label?: string;
+          sort_order?: number;
+          is_active?: boolean;
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;

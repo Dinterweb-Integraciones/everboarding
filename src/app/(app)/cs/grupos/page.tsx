@@ -2,6 +2,7 @@ import { CatalogGroupsManager } from "@/components/cs/catalog-groups-manager";
 import { requireUser } from "@/lib/auth";
 import type {
   CreditCatalogGroup,
+  CreditCatalogGroupBadgeType,
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
@@ -13,12 +14,14 @@ export default async function CatalogGroupsPage() {
 
   const [
     { data: groupRows, error: groupsError },
+    { data: badgeTypeRows, error: badgeTypesError },
     { data: categoryRows, error: categoriesError },
     { data: categoryLinkRows, error: categoryLinksError },
     { data: itemRows, error: itemsError },
     { data: membershipRows, error: membershipsError },
   ] = await Promise.all([
     supabase.from("credit_catalog_groups").select("*").order("sort_order").order("name"),
+    supabase.from("credit_catalog_group_badge_types").select("*").eq("is_active", true).order("sort_order").order("label"),
     supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
     supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     supabase.from("credit_catalog_items").select("*").order("category").order("sort_order").order("label"),
@@ -31,6 +34,10 @@ export default async function CatalogGroupsPage() {
 
   if (itemsError) {
     throw new Error("No pudimos cargar el catalogo de tareas.");
+  }
+
+  if (badgeTypesError) {
+    console.warn("catalog_group_badge_types_load_failed", badgeTypesError);
   }
 
   if (categoriesError) {
@@ -48,6 +55,7 @@ export default async function CatalogGroupsPage() {
   return (
     <CatalogGroupsManager
       initialGroups={(groupRows ?? []) as CreditCatalogGroup[]}
+      initialBadgeTypes={(badgeTypesError ? [] : (badgeTypeRows ?? [])) as CreditCatalogGroupBadgeType[]}
       initialGroupCategories={(categoryRows ?? []) as CreditCatalogGroupCategory[]}
       initialGroupCategoryLinks={(categoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[]}
       initialItems={(itemRows ?? []) as CreditCatalogItem[]}

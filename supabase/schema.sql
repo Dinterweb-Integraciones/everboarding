@@ -173,9 +173,20 @@ create table if not exists public.credit_catalog_groups (
   preview text,
   completion_outcome text,
   success_milestone text,
+  display_badge text,
   modal_category text,
   credits integer not null default 0 check (credits >= 0),
   priority_status text not null default 'normal' check (priority_status in ('normal', 'prioritario')),
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.credit_catalog_group_badge_types (
+  id uuid primary key default gen_random_uuid(),
+  label text not null unique,
   sort_order integer not null default 0,
   is_active boolean not null default true,
   created_by_user_id uuid references auth.users(id) on delete set null,
@@ -531,6 +542,8 @@ create index if not exists sales_proposals_status_idx on public.sales_proposals 
 create index if not exists sales_proposals_assigned_csm_user_id_idx on public.sales_proposals (assigned_csm_user_id);
 create unique index if not exists sales_coupons_code_unique_idx on public.sales_coupons (lower(code));
 create index if not exists sales_coupons_active_idx on public.sales_coupons (is_active, starts_at, ends_at);
+create index if not exists credit_catalog_group_badge_types_sort_idx
+on public.credit_catalog_group_badge_types (sort_order, label);
 create index if not exists credit_catalog_group_categories_sort_idx
 on public.credit_catalog_group_categories (sort_order, name);
 create index if not exists credit_catalog_categories_sort_idx
@@ -598,6 +611,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_credit_catalog_group_categories_updated_at on public.credit_catalog_group_categories;
 create trigger set_credit_catalog_group_categories_updated_at
 before update on public.credit_catalog_group_categories
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_credit_catalog_group_badge_types_updated_at on public.credit_catalog_group_badge_types;
+create trigger set_credit_catalog_group_badge_types_updated_at
+before update on public.credit_catalog_group_badge_types
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_credit_catalog_categories_updated_at on public.credit_catalog_categories;
@@ -1894,6 +1912,7 @@ alter table public.clients enable row level security;
 alter table public.client_members enable row level security;
 alter table public.client_share_links enable row level security;
 alter table public.credit_catalog_groups enable row level security;
+alter table public.credit_catalog_group_badge_types enable row level security;
 alter table public.credit_catalog_group_categories enable row level security;
 alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
@@ -1922,6 +1941,8 @@ drop policy if exists "client_share_links_select_owner" on public.client_share_l
 drop policy if exists "client_share_links_manage_owner" on public.client_share_links;
 drop policy if exists "catalog_groups_read_authenticated" on public.credit_catalog_groups;
 drop policy if exists "catalog_groups_manage_authenticated" on public.credit_catalog_groups;
+drop policy if exists "catalog_group_badge_types_read_authenticated" on public.credit_catalog_group_badge_types;
+drop policy if exists "catalog_group_badge_types_manage_authenticated" on public.credit_catalog_group_badge_types;
 drop policy if exists "catalog_group_categories_read_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_group_categories_manage_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_categories_read_authenticated" on public.credit_catalog_categories;
@@ -2021,6 +2042,19 @@ using (true);
 
 create policy "catalog_groups_manage_authenticated"
 on public.credit_catalog_groups
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_badge_types_read_authenticated"
+on public.credit_catalog_group_badge_types
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_badge_types_manage_authenticated"
+on public.credit_catalog_group_badge_types
 for all
 to authenticated
 using (true)

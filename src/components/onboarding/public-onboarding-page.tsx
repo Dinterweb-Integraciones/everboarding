@@ -2550,13 +2550,15 @@ export function PublicOnboardingPage({
                               >
                                 {group.modalCategory}
                               </span>
-                              <span
-                                className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
-                                  alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
-                                }`}
-                              >
-                                {group.items.length ? `${group.items.length} tareas` : "Grupo manual"}
-                              </span>
+                              {group.displayBadge ? (
+                                <span
+                                  className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
+                                    alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
+                                  }`}
+                                >
+                                  {group.displayBadge}
+                                </span>
+                              ) : null}
                             </div>
                             <h4
                               className={`min-h-[44px] text-[14px] font-bold leading-snug ${

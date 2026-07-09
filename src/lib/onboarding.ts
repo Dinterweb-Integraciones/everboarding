@@ -78,6 +78,7 @@ export type AssignableUser = {
 };
 
 export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
+export type CreditCatalogGroupBadgeType = Tables<"credit_catalog_group_badge_types">;
 export type CreditCatalogGroupCategory = Tables<"credit_catalog_group_categories">;
 export type CreditCatalogGroupCategoryLink = Tables<"credit_catalog_group_category_links">;
 export type CreditCatalogCategory = Tables<"credit_catalog_categories">;
@@ -162,6 +163,7 @@ export type CatalogModalGroup = {
   preview: string;
   completionOutcome: string;
   successMilestone: string;
+  displayBadge: string;
   modalCategoryId: string | null;
   modalCategory: string;
   modalCategoryIds: string[];
@@ -545,6 +547,7 @@ export function buildCatalogModalGroups({
         preview: group.preview?.trim() || "",
         completionOutcome: group.completion_outcome?.trim() || "",
         successMilestone: group.success_milestone?.trim() || "",
+        displayBadge: group.display_badge?.trim() || "",
         modalCategoryId: resolvedCategoryId,
         modalCategory: resolvedCategoryName,
         modalCategoryIds: categoryIds,
