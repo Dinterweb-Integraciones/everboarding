@@ -1009,6 +1009,9 @@ export function OnboardingClientPage({
       "El Norte quedo definido y consensuado.",
     );
 
+    setIsNorthStarModalDismissed(false);
+    setIsNorthStarManualOpen(true);
+
     const latestHistoryId = northStarHistory[0]?.id;
     if (latestHistoryId) {
       await supabase

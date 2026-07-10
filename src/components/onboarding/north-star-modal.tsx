@@ -97,45 +97,45 @@ export function NorthStarModal({
   if (role === "cs" && (status === "pending" || status === "cs_preapproved")) {
     primaryAction = (
       <Button
-        className="h-16 w-full rounded-[6px] px-0"
+        className="h-16 w-full flex-col gap-1 rounded-[6px] px-2 text-[11px]"
         onClick={onCsPreapprove}
         disabled={isSaving || trimmedText.length < 12}
         aria-label="Enviar El Norte al cliente"
       >
-        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
-      </Button>
-    );
-  } else if (role === "cs" && !isBlocking) {
-    primaryAction = (
-      <Button
-        className="h-16 w-full rounded-[6px] px-0"
-        onClick={onCsSave}
-        disabled={isSaving || trimmedText.length < 12}
-        aria-label="Guardar El Norte"
-      >
-        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
-      </Button>
-    );
-  } else if (role === "client" && status === "cs_preapproved") {
-    primaryAction = (
-      <Button
-        className="h-16 w-full rounded-[6px] px-0"
-        onClick={onClientApprove}
-        disabled={isSaving || !trimmedText}
-        aria-label="Aprobar El Norte"
-      >
-        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
+        {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Check className="h-5 w-5" /><span>Enviar al cliente</span></>}
       </Button>
     );
   } else if (role === "cs" && status === "client_approved") {
     primaryAction = (
       <Button
-        className="h-16 w-full rounded-[6px] px-0"
+        className="h-16 w-full flex-col gap-1 rounded-[6px] px-2 text-[11px]"
         onClick={onCsComplete}
         disabled={isSaving || !trimmedText}
         aria-label="Aceptar definitivamente El Norte"
       >
-        {isSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7" />}
+        {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Check className="h-5 w-5" /><span>Aprobar por CS</span></>}
+      </Button>
+    );
+  } else if (role === "cs" && !isBlocking) {
+    primaryAction = (
+      <Button
+        className="h-16 w-full flex-col gap-1 rounded-[6px] px-2 text-[11px]"
+        onClick={onCsSave}
+        disabled={isSaving || trimmedText.length < 12}
+        aria-label="Guardar El Norte"
+      >
+        {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Check className="h-5 w-5" /><span>Guardar</span></>}
+      </Button>
+    );
+  } else if (role === "client" && status === "cs_preapproved") {
+    primaryAction = (
+      <Button
+        className="h-16 w-full flex-col gap-1 rounded-[6px] px-2 text-[11px]"
+        onClick={onClientApprove}
+        disabled={isSaving || !trimmedText}
+        aria-label="Aprobar El Norte"
+      >
+        {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Check className="h-5 w-5" /><span>Aprobar Norte</span></>}
       </Button>
     );
   }

@@ -24,6 +24,8 @@ type InitiativeReportRow = {
   type: string | null;
   labels: string[];
   status: "backlog" | "planned" | "executing" | "completed";
+  north_star_history_id: string | null;
+  created_at: string;
   updated_at: string;
   credits: number;
 };
@@ -183,7 +185,7 @@ export default async function ReportsPage() {
   const { data: initiativeRows, error: initiativesError } = clientIds.length
     ? await admin
         .from("onboarding_initiatives")
-        .select("id, client_id, title, type, labels, status, updated_at")
+        .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
         .in("client_id", clientIds)
     : { data: [] as InitiativeReportRow[], error: null };
 
@@ -198,9 +200,9 @@ export default async function ReportsPage() {
   const { data: initiativeSubitemRows, error: initiativeSubitemsError } = initiativeIds.length
     ? await admin
         .from("onboarding_initiative_subitems")
-        .select("initiative_id, unit_credits, quantity")
+        .select("id, initiative_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
         .in("initiative_id", initiativeIds)
-    : { data: [] as Array<{ initiative_id: string; unit_credits: number; quantity: number }>, error: null };
+    : { data: [] as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>, error: null };
 
   const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
     ? await admin
@@ -318,6 +320,7 @@ export default async function ReportsPage() {
     <ReportsPanel
       rows={rows}
       initiatives={initiatives}
+      operationalTasks={(initiativeSubitemRows ?? []) as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>}
       customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
       customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
       customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}

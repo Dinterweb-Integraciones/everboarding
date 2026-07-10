@@ -18,6 +18,8 @@ import {
 
 import { getEvaluationValidationLabel } from "@/lib/onboarding";
 import type { Views } from "@/types/database";
+import { OperationalDashboard, type OperationalTaskRow } from "./operational-dashboard";
+import { NorthFulfillmentReport } from "./north-fulfillment-report";
 
 type ClientHealthReportRow = Views<"client_health_report"> & {
   north_stars_count: number;
@@ -30,7 +32,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
-type PanelKey = "clients" | "customer_success" | "norths";
+type PanelKey = "clients" | "customer_success" | "operational" | "norths";
 type SortKey =
   | "client_name"
   | "health_color"
@@ -57,6 +59,8 @@ type InitiativeReportRow = {
   type: string | null;
   labels: string[];
   status: "backlog" | "planned" | "executing" | "completed";
+  north_star_history_id: string | null;
+  created_at: string;
   updated_at: string;
   credits: number;
 };
@@ -121,6 +125,12 @@ const panels: Array<{
     label: "Customer Success",
     title: "Customer Success",
     description: "Reportes del equipo de Customer Success.",
+  },
+  {
+    key: "operational",
+    label: "Operativo",
+    title: "Operativo",
+    description: "Producción, carga, cumplimiento y movimiento del equipo CS con los datos actuales.",
   },
   { key: "norths", label: "Nortes", title: "Nortes", description: "Auditoría, calidad y antigüedad de los Nortes." },
 ];
@@ -214,6 +224,7 @@ function sortRows(rows: ClientHealthReportRow[], sortKey: SortKey) {
 export function ReportsPanel({
   rows,
   initiatives,
+  operationalTasks,
   customerSuccessConfigs,
   customerSuccessCreditGrants,
   customerSuccessProfiles,
@@ -222,6 +233,7 @@ export function ReportsPanel({
 }: {
   rows: ClientHealthReportRow[];
   initiatives: InitiativeReportRow[];
+  operationalTasks: OperationalTaskRow[];
   customerSuccessConfigs: CustomerSuccessConfigRow[];
   customerSuccessCreditGrants: CustomerSuccessCreditGrantRow[];
   customerSuccessProfiles: CustomerSuccessProfileRow[];
@@ -279,7 +291,11 @@ export function ReportsPanel({
           </div>
 
           <div className="inline-flex rounded-[4px] border border-[#cbd6e2] bg-white p-1" aria-label="Paneles de informes">
-            {panels.map((panel) => (
+            {[...panels]
+              .sort((first, second) =>
+                first.key === "operational" ? 1 : second.key === "operational" ? -1 : 0,
+              )
+              .map((panel) => (
               <button
                 key={panel.key}
                 type="button"
@@ -292,7 +308,7 @@ export function ReportsPanel({
               >
                 {panel.label}
               </button>
-            ))}
+              ))}
           </div>
         </div>
 
@@ -656,8 +672,23 @@ export function ReportsPanel({
               customerSuccessCreditGrants={customerSuccessCreditGrants}
               customerSuccessOptions={customerSuccessOptions}
             />
+          ) : selectedPanelKey === "operational" ? (
+            <OperationalDashboard
+              rows={rows}
+              initiatives={initiatives}
+              tasks={operationalTasks}
+              customerSuccessOptions={customerSuccessOptions}
+            />
           ) : (
-            <NorthsDashboard rows={rows} initiatives={initiatives} northStarHistory={northStarHistory} initialAudits={northStarAudits as unknown as NorthAudit[]} customerSuccessOptions={customerSuccessOptions} />
+            <>
+              <NorthsDashboard rows={rows} initiatives={initiatives} northStarHistory={northStarHistory} initialAudits={northStarAudits as unknown as NorthAudit[]} customerSuccessOptions={customerSuccessOptions} />
+              <NorthFulfillmentReport
+                rows={rows}
+                initiatives={initiatives}
+                tasks={operationalTasks}
+                northStarHistory={northStarHistory}
+              />
+            </>
           )}
         </section>
       </div>
