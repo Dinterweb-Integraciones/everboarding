@@ -18,7 +18,11 @@ import {
 
 import { getEvaluationValidationLabel } from "@/lib/onboarding";
 import type { Views } from "@/types/database";
-import { OperationalDashboard, type OperationalTaskRow } from "./operational-dashboard";
+import {
+  OperationalDashboard,
+  type OperationalTaskRow,
+  type OperationalTransitionClientRow,
+} from "./operational-dashboard";
 import { NorthFulfillmentReport } from "./north-fulfillment-report";
 
 type ClientHealthReportRow = Views<"client_health_report"> & {
@@ -62,6 +66,8 @@ type InitiativeReportRow = {
   north_star_history_id: string | null;
   created_at: string;
   updated_at: string;
+  executing_at: string | null;
+  completed_at: string | null;
   credits: number;
 };
 
@@ -225,6 +231,7 @@ export function ReportsPanel({
   rows,
   initiatives,
   operationalTasks,
+  operationalTransitionClients,
   customerSuccessConfigs,
   customerSuccessCreditGrants,
   customerSuccessProfiles,
@@ -234,6 +241,7 @@ export function ReportsPanel({
   rows: ClientHealthReportRow[];
   initiatives: InitiativeReportRow[];
   operationalTasks: OperationalTaskRow[];
+  operationalTransitionClients: OperationalTransitionClientRow[];
   customerSuccessConfigs: CustomerSuccessConfigRow[];
   customerSuccessCreditGrants: CustomerSuccessCreditGrantRow[];
   customerSuccessProfiles: CustomerSuccessProfileRow[];
@@ -678,6 +686,7 @@ export function ReportsPanel({
               initiatives={initiatives}
               tasks={operationalTasks}
               customerSuccessOptions={customerSuccessOptions}
+              transitionClients={operationalTransitionClients}
             />
           ) : (
             <>

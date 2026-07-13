@@ -17,7 +17,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
 };
 
-type InitiativeReportRow = {
+type InitiativeSourceRow = {
   id: string;
   client_id: string;
   title: string;
@@ -27,7 +27,41 @@ type InitiativeReportRow = {
   north_star_history_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type InitiativeReportRow = InitiativeSourceRow & {
+  executing_at: string | null;
+  completed_at: string | null;
   credits: number;
+};
+
+type ActiveClientMilestoneRow = {
+  id: string;
+  created_at: string;
+};
+
+type PaidBillingCycleRow = {
+  client_id: string;
+  paid_at: string;
+};
+
+type UnassignedPaidProposalRow = {
+  id: string;
+  client_name: string;
+  client_company: string | null;
+  paid_at: string | null;
+};
+
+type ActivatedProposalRow = {
+  id: string;
+  activated_client_id: string | null;
+  activated_at: string | null;
+};
+
+type InitiativeActivityLogRow = {
+  initiative_id: string;
+  entry: string;
+  created_at: string;
 };
 
 type CustomerSuccessConfigRow = {
@@ -127,14 +161,18 @@ export default async function ReportsPage() {
 
   const { data: activeClientRows, error: activeClientsError } = await admin
     .from("clients")
-    .select("id")
+    .select("id, created_at")
     .eq("is_active", true);
 
   if (activeClientsError) {
     throw new Error("No pudimos cargar los clientes activos para informes.");
   }
 
-  const activeClientIds = ((activeClientRows ?? []) as Array<{ id: string }>).map((client) => client.id);
+  const activeClients = (activeClientRows ?? []) as ActiveClientMilestoneRow[];
+  const activeClientIds = activeClients.map((client) => client.id);
+  const clientCreatedAtByClientId = new Map(
+    activeClients.map((client) => [client.id, client.created_at]),
+  );
 
   const { data, error } = activeClientIds.length
     ? await admin
@@ -159,6 +197,45 @@ export default async function ReportsPage() {
         assignedCustomerSuccessIds.has(profile.id)),
   );
   const clientIds = clientRows.map((row) => row.client_id);
+  const { data: paidBillingCycleRows, error: paidBillingCyclesError } = clientIds.length
+    ? await admin
+        .from("client_billing_cycles")
+        .select("client_id, paid_at")
+        .in("client_id", clientIds)
+        .eq("status", "paid")
+        .not("paid_at", "is", null)
+        .order("paid_at", { ascending: true })
+    : { data: [] as PaidBillingCycleRow[], error: null };
+
+  if (paidBillingCyclesError) {
+    throw new Error("No pudimos cargar las fechas de pago para el informe operativo.");
+  }
+
+  const { data: activatedProposalRows, error: activatedProposalsError } = clientIds.length
+    ? await admin
+        .from("sales_proposals")
+        .select("id, activated_client_id, activated_at")
+        .in("activated_client_id", clientIds)
+        .not("activated_at", "is", null)
+        .order("activated_at", { ascending: true })
+    : { data: [] as ActivatedProposalRow[], error: null };
+
+  if (activatedProposalsError) {
+    throw new Error("No pudimos cargar las fechas de activación para el informe operativo.");
+  }
+
+  const { data: unassignedPaidProposalRows, error: unassignedPaidProposalsError } = await admin
+    .from("sales_proposals")
+    .select("id, client_name, client_company, paid_at")
+    .eq("status", "paid")
+    .is("activated_client_id", null)
+    .not("paid_at", "is", null)
+    .order("paid_at", { ascending: true });
+
+  if (unassignedPaidProposalsError) {
+    throw new Error("No pudimos cargar los clientes pagados pendientes de asignación.");
+  }
+
   const { data: northStarHistoryRows, error: northStarHistoryError } = clientIds.length
     ? await admin
         .from("onboarding_north_star_history")
@@ -187,7 +264,7 @@ export default async function ReportsPage() {
         .from("onboarding_initiatives")
         .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
         .in("client_id", clientIds)
-    : { data: [] as InitiativeReportRow[], error: null };
+    : { data: [] as InitiativeSourceRow[], error: null };
 
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
@@ -197,6 +274,14 @@ export default async function ReportsPage() {
     : { data: [] as CustomerSuccessConfigRow[], error: null };
 
   const initiativeIds = (initiativeRows ?? []).map((initiative) => initiative.id);
+  const { data: initiativeActivityLogRows, error: initiativeActivityLogsError } = initiativeIds.length
+    ? await admin
+        .from("onboarding_activity_logs")
+        .select("initiative_id, entry, created_at")
+        .in("initiative_id", initiativeIds)
+        .order("created_at", { ascending: true })
+    : { data: [] as InitiativeActivityLogRow[], error: null };
+
   const { data: initiativeSubitemRows, error: initiativeSubitemsError } = initiativeIds.length
     ? await admin
         .from("onboarding_initiative_subitems")
@@ -219,6 +304,10 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar los créditos de las iniciativas.");
   }
 
+  if (initiativeActivityLogsError) {
+    throw new Error("No pudimos cargar el historial de estados de las iniciativas.");
+  }
+
   if (customerSuccessConfigError) {
     throw new Error("No pudimos cargar la capacidad de Customer Success.");
   }
@@ -228,22 +317,63 @@ export default async function ReportsPage() {
   }
 
   const northStarCounts = new Map<string, number>();
+  const firstPaidDates = new Map<string, string>();
+  const assignedDates = new Map<string, string>();
   const kickoffCompletedDates = new Map<string, string>();
   const firstUseCaseCompletedDates = new Map<string, string>();
   const stagnantStageDays = new Map<string, number>();
   const evaluationCasesCounts = new Map<string, number>();
   const validatedEvaluationCasesCounts = new Map<string, number>();
   const creditsByInitiative = new Map<string, number>();
+  ((paidBillingCycleRows ?? []) as PaidBillingCycleRow[]).forEach((cycle) => {
+    if (!firstPaidDates.has(cycle.client_id)) {
+      firstPaidDates.set(cycle.client_id, cycle.paid_at);
+    }
+  });
+  ((activatedProposalRows ?? []) as ActivatedProposalRow[]).forEach((proposal) => {
+    if (
+      proposal.activated_client_id &&
+      proposal.activated_at &&
+      !assignedDates.has(proposal.activated_client_id)
+    ) {
+      assignedDates.set(proposal.activated_client_id, proposal.activated_at);
+    }
+  });
+
+  const activityLogsByInitiativeId = new Map<string, InitiativeActivityLogRow[]>();
+  ((initiativeActivityLogRows ?? []) as InitiativeActivityLogRow[]).forEach((log) => {
+    const currentLogs = activityLogsByInitiativeId.get(log.initiative_id) ?? [];
+    currentLogs.push(log);
+    activityLogsByInitiativeId.set(log.initiative_id, currentLogs);
+  });
   (initiativeSubitemRows ?? []).forEach((subitem) => {
     creditsByInitiative.set(
       subitem.initiative_id,
       (creditsByInitiative.get(subitem.initiative_id) ?? 0) + Number(subitem.unit_credits) * Number(subitem.quantity),
     );
   });
-  const initiatives = ((initiativeRows ?? []) as Omit<InitiativeReportRow, "credits">[]).map((initiative) => ({
-    ...initiative,
-    credits: creditsByInitiative.get(initiative.id) ?? 0,
-  }));
+  const initiatives = ((initiativeRows ?? []) as InitiativeSourceRow[]).map((initiative) => {
+    const activityLogs = activityLogsByInitiativeId.get(initiative.id) ?? [];
+    const executingLog = activityLogs.find((log) =>
+      normalizeInitiativeTitle(log.entry).includes("cambio a en ejecucion"),
+    );
+    const completedLog = activityLogs.find((log) =>
+      normalizeInitiativeTitle(log.entry).includes("cambio a completado"),
+    );
+
+    return {
+      ...initiative,
+      executing_at:
+        executingLog?.created_at ??
+        (initiative.status === "executing" || initiative.status === "completed"
+          ? initiative.created_at
+          : null),
+      completed_at:
+        completedLog?.created_at ??
+        (initiative.status === "completed" ? initiative.updated_at : null),
+      credits: creditsByInitiative.get(initiative.id) ?? 0,
+    };
+  }) satisfies InitiativeReportRow[];
   const completedInitiatives = initiatives.filter((initiative) => initiative.status === "completed");
 
   (northStarHistoryRows ?? []).forEach((row) => {
@@ -283,8 +413,11 @@ export default async function ReportsPage() {
     }
 
     const currentDate = kickoffCompletedDates.get(initiative.client_id);
-    if (!currentDate || new Date(initiative.updated_at) < new Date(currentDate)) {
-      kickoffCompletedDates.set(initiative.client_id, initiative.updated_at);
+    if (
+      initiative.completed_at &&
+      (!currentDate || new Date(initiative.completed_at) < new Date(currentDate))
+    ) {
+      kickoffCompletedDates.set(initiative.client_id, initiative.completed_at);
     }
   });
 
@@ -296,8 +429,11 @@ export default async function ReportsPage() {
     }
 
     const currentDate = firstUseCaseCompletedDates.get(initiative.client_id);
-    if (!currentDate || new Date(initiative.updated_at) < new Date(currentDate)) {
-      firstUseCaseCompletedDates.set(initiative.client_id, initiative.updated_at);
+    if (
+      initiative.completed_at &&
+      (!currentDate || new Date(initiative.completed_at) < new Date(currentDate))
+    ) {
+      firstUseCaseCompletedDates.set(initiative.client_id, initiative.completed_at);
     }
   });
 
@@ -321,6 +457,30 @@ export default async function ReportsPage() {
       rows={rows}
       initiatives={initiatives}
       operationalTasks={(initiativeSubitemRows ?? []) as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>}
+      operationalTransitionClients={[
+        ...rows.map((row) => ({
+          id: row.client_id,
+          client_id: row.client_id,
+          client_name: row.client_name,
+          customer_success_id: row.customer_success_id,
+          customer_success_name: row.customer_success_name,
+          paid_at: firstPaidDates.get(row.client_id) ?? null,
+          assigned_at:
+            assignedDates.get(row.client_id) ??
+            (row.customer_success_id ? clientCreatedAtByClientId.get(row.client_id) ?? null : null),
+        })),
+        ...((unassignedPaidProposalRows ?? []) as UnassignedPaidProposalRow[])
+          .filter((proposal): proposal is UnassignedPaidProposalRow & { paid_at: string } => Boolean(proposal.paid_at))
+          .map((proposal) => ({
+            id: `proposal-${proposal.id}`,
+            client_id: null,
+            client_name: proposal.client_company || proposal.client_name,
+            customer_success_id: null,
+            customer_success_name: null,
+            paid_at: proposal.paid_at,
+            assigned_at: null,
+          })),
+      ]}
       customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
       customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
       customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}
