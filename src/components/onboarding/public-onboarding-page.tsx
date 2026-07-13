@@ -1659,7 +1659,7 @@ export function PublicOnboardingPage({
                   <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
                     <div className="border-b border-[#dfe3eb] px-4 py-2">
                       <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
-                        Ampliar plan
+                        {isRecurringPlan ? "Ampliar plan" : "Ampliar paquete"}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-stretch">
@@ -1698,7 +1698,11 @@ export function PublicOnboardingPage({
                           className="inline-flex h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[4px] bg-[#ff7a59] px-5 text-[14px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           <span className="whitespace-nowrap">
-                            {isStartingPayment || isSyncingPayment ? "Confirmando pago..." : "Pagar"}
+                            {isStartingPayment || isSyncingPayment
+                              ? "Confirmando pago..."
+                              : isRecurringPlan
+                                ? "Pagar"
+                                : "Agregar paquete"}
                           </span>
                           <CreditCard className="h-3.5 w-3.5 shrink-0" />
                         </button>
@@ -3076,7 +3080,7 @@ export function PublicOnboardingPage({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a88f]">
-                  Ampliar plan
+                  {isRecurringPlan ? "Ampliar plan" : "Ampliar paquete"}
                 </p>
                 <h3 className="mt-2 text-[22px] font-extrabold tracking-[-0.02em] text-[#33475b]">
                   Agregar más créditos
@@ -3134,7 +3138,11 @@ export function PublicOnboardingPage({
                 className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-[4px] bg-[#ff7a59] px-4 text-[13px] font-bold text-white transition hover:bg-[#dc6548] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <CreditCard className="h-4 w-4" />
-                {isStartingPayment || isSyncingPayment ? "Confirmando pago..." : "Pagar"}
+                {isStartingPayment || isSyncingPayment
+                  ? "Confirmando pago..."
+                  : isRecurringPlan
+                    ? "Pagar"
+                    : "Agregar paquete"}
               </button>
             </div>
           </div>

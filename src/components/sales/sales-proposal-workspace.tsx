@@ -1466,6 +1466,41 @@ export function SalesProposalWorkspace({
     });
   }
 
+  function adjustHubspotPackage(direction: 1 | -1) {
+    if (hasAppliedCoupon) {
+      setFeedback({
+        tone: "error",
+        message: "Quita o cambia el cupon antes de reconfigurar el paquete.",
+      });
+      return;
+    }
+
+    if (isProposalCheckoutLocked) {
+      return;
+    }
+
+    const packageOption = packageOptions[0];
+    const nextPackageCount = Math.max(0, hubspotUpsellCount + direction);
+    const addedCredits = packageOption.credits * nextPackageCount;
+    const addedPrice = packageOption.price * nextPackageCount;
+
+    setUpsellPackageCredits(packageOption.credits);
+    setUpsellCartCount(nextPackageCount);
+    setProposal((current) =>
+      applyActiveCouponPricing({
+        ...clearProspectExtraPackages(current),
+        contractedCredits: SALES_PROPOSAL_BASE_CREDITS + addedCredits,
+        quotedPrice: SALES_PROPOSAL_BASE_PRICE + addedPrice,
+      }),
+    );
+    setFeedback({
+      tone: "success",
+      message: nextPackageCount
+        ? `Capacidad configurada en ${SALES_PROPOSAL_BASE_CREDITS + addedCredits} creditos.`
+        : "El plan volvio al paquete base sin creditos adicionales.",
+    });
+  }
+
   function addUpsellPackage() {
     setUpsellCartCount((current) => current + 1);
   }
@@ -2503,6 +2538,7 @@ function mergeRecommendedGroups(
   const upsellPackagePrice =
     packageOptions.find((option) => option.credits === upsellPackageCredits)?.price ??
     packageOptions[0].price;
+  const hubspotUpsellCount = getCurrentHubspotUpsellCount(proposal, packageOptions[0]);
   const upsellCreditsAdded = upsellPackageCredits * upsellCartCount;
   const upsellTotalPrice = SALES_PROPOSAL_BASE_PRICE + upsellPackagePrice * upsellCartCount;
   const hasHubspotUpsell =
@@ -2841,16 +2877,39 @@ function mergeRecommendedGroups(
                         <Plus className="h-2.5 w-2.5" />
                       </button>
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => adjustHubspotPackage(-1)}
+                        disabled={isUpsellDisabled || hubspotUpsellCount <= 0}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Quitar paquete de creditos"
+                        title="Quitar paquete de creditos"
+                      >
+                        <Minus className="h-2.5 w-2.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustHubspotPackage(1)}
+                        disabled={isUpsellDisabled}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Agregar paquete de creditos"
+                        title="Agregar paquete de creditos"
+                      >
+                        <Plus className="h-2.5 w-2.5" />
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={openUpsellModal}
                     disabled={isUpsellDisabled}
                     className="grid h-6 w-6 shrink-0 place-items-center rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] transition hover:border-[#ff7a59] hover:bg-[#ff7a59] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label={isDinterwebVariant ? "Configurar paquete" : "Agregar creditos extra"}
-                    title={isDinterwebVariant ? "Configurar paquete" : "Agregar creditos extra"}
+                    aria-label="Configurar paquete"
+                    title="Configurar paquete"
                   >
-                    {isDinterwebVariant ? <SlidersHorizontal className="h-2.5 w-2.5" /> : <Plus className="h-2.5 w-2.5" />}
+                    <SlidersHorizontal className="h-2.5 w-2.5" />
                   </button>
                 </div>
                 <div className="my-1 w-px bg-[#dfe3eb]" />
