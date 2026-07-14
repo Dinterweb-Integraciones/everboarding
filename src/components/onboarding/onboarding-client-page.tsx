@@ -900,8 +900,15 @@ export function OnboardingClientPage({
     return status === "planned" || status === "executing";
   }
 
-  function canUseReservedStage(status: InitiativeStatus) {
-    return !requiresPaidCycle(status) || hasPaidPlanAccess;
+  function canUseReservedStage(
+    status: InitiativeStatus,
+    currentStatus?: InitiativeStatus,
+  ) {
+    return (
+      !requiresPaidCycle(status) ||
+      hasPaidPlanAccess ||
+      (currentStatus !== undefined && requiresPaidCycle(currentStatus))
+    );
   }
 
   function showPaymentRequiredMessage() {
@@ -1935,7 +1942,7 @@ export function OnboardingClientPage({
 
     setFeedback(null);
 
-    if (statusChanged && !canUseReservedStage(targetStatus)) {
+    if (statusChanged && !canUseReservedStage(targetStatus, initiative.status)) {
       showPaymentRequiredMessage();
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
@@ -2176,7 +2183,10 @@ export function OnboardingClientPage({
 
     const existing = initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null;
 
-    if (!canUseReservedStage(draft.status) && (!existing || existing.status !== draft.status)) {
+    if (
+      (!existing || existing.status !== draft.status) &&
+      !canUseReservedStage(draft.status, existing?.status)
+    ) {
       showPaymentRequiredMessage();
       return;
     }
