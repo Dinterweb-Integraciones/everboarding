@@ -2518,15 +2518,17 @@ function mergeRecommendedGroups(
     }
   }, [initiativeDraft, persistProposal, proposal]);
 
-  const consumedWidth = Math.min((metrics.completed / Math.max(metrics.total, 1)) * 100, 100);
   const committedWidth = Math.min((metrics.committed / Math.max(metrics.total, 1)) * 100, 100);
   const availableWidth = Math.min((metrics.available / Math.max(metrics.total, 1)) * 100, 100);
   const hasPlanningItems =
     groupedInitiatives.backlog.length > 0 || groupedInitiatives.planned.length > 0;
   const hasBoardItems = boardStatuses.some((status) => groupedInitiatives[status].length > 0);
-  const isOverCapacity = metrics.committed + metrics.completed > metrics.total;
+  const isOverCapacity = metrics.committed > metrics.total;
   const currentPlanCredits = proposal.initiatives.reduce(
-    (sum, initiative) => sum + calculateSalesInitiativeCredits(initiative),
+    (sum, initiative) =>
+      initiative.status === "planned" || initiative.status === "executing"
+        ? sum + calculateSalesInitiativeCredits(initiative)
+        : sum,
     0,
   );
   const remainingRecommendationCredits = Math.max(0, proposal.contractedCredits - currentPlanCredits);
@@ -3036,7 +3038,6 @@ function mergeRecommendedGroups(
           </div>
 
           <div className="mt-5 flex h-1.5 w-full overflow-hidden rounded-full bg-[#eaf0f6]">
-            <div className="h-full bg-[#33475b]" style={{ width: `${consumedWidth}%` }} />
             <div className="h-full bg-[#6a78d1]" style={{ width: `${committedWidth}%` }} />
             <div className="h-full bg-[#00bda5]" style={{ width: `${availableWidth}%` }} />
           </div>

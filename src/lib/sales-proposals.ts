@@ -800,7 +800,7 @@ export function calculateSalesProposalMetrics(draft: SalesProposalDraft) {
     total: contracted,
     completed,
     committed,
-    available: Math.max(0, contracted - completed - committed),
+    available: Math.max(0, contracted - committed),
   };
 }
 
