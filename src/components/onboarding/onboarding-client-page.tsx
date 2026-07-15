@@ -61,6 +61,7 @@ import {
   getPlanBillingModeLabel,
   getPlanCadenceLabel,
   getPlanPeriodLabel,
+  isKickoffInitiative,
   shouldRequireNorthStarDraft,
   setEvaluationValidationLabel,
   suggestPlanPrice,
@@ -2171,17 +2172,18 @@ export function OnboardingClientPage({
 
     setFeedback(null);
 
+    const existing = initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null;
+    const isKickoff = isKickoffInitiative(existing ?? { title: draft.title });
+
     if (!draft.title.trim()) {
       showError("La iniciativa necesita un titulo.");
       return;
     }
 
-    if (!draft.subitems.length) {
+    if (!isKickoff && !draft.subitems.length) {
       showError("Agrega al menos una actividad.");
       return;
     }
-
-    const existing = initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null;
 
     if (
       (!existing || existing.status !== draft.status) &&
@@ -2310,21 +2312,23 @@ export function OnboardingClientPage({
 
       if (insertError) throw insertError;
 
-      const { data: insertedSubitems, error: subitemsError } = await supabase
-        .from("onboarding_initiative_subitems")
-        .insert(
-          sanitizedSubitems.map((subitem) => ({
-            initiative_id: insertedInitiative.id,
-            catalog_item_id: subitem.catalogItemId,
-            name: subitem.name,
-            status: subitem.status,
-            target_date: subitem.targetDate,
-            unit_credits: subitem.unitCredits,
-            quantity: subitem.quantity,
-            sort_order: subitem.sortOrder,
-          })),
-        )
-        .select("*");
+      const { data: insertedSubitems, error: subitemsError } = sanitizedSubitems.length
+        ? await supabase
+            .from("onboarding_initiative_subitems")
+            .insert(
+              sanitizedSubitems.map((subitem) => ({
+                initiative_id: insertedInitiative.id,
+                catalog_item_id: subitem.catalogItemId,
+                name: subitem.name,
+                status: subitem.status,
+                target_date: subitem.targetDate,
+                unit_credits: subitem.unitCredits,
+                quantity: subitem.quantity,
+                sort_order: subitem.sortOrder,
+              })),
+            )
+            .select("*")
+        : { data: [], error: null };
 
       if (subitemsError) throw subitemsError;
 
@@ -2389,21 +2393,23 @@ export function OnboardingClientPage({
       .eq("initiative_id", existing.id);
     if (deleteSubitemsError) throw deleteSubitemsError;
 
-    const { data: insertedSubitems, error: subitemsError } = await supabase
-      .from("onboarding_initiative_subitems")
-      .insert(
-        sanitizedSubitems.map((subitem) => ({
-          initiative_id: existing.id,
-          catalog_item_id: subitem.catalogItemId,
-          name: subitem.name,
-          status: subitem.status,
-          target_date: subitem.targetDate,
-          unit_credits: subitem.unitCredits,
-          quantity: subitem.quantity,
-          sort_order: subitem.sortOrder,
-        })),
-      )
-      .select("*");
+    const { data: insertedSubitems, error: subitemsError } = sanitizedSubitems.length
+      ? await supabase
+          .from("onboarding_initiative_subitems")
+          .insert(
+            sanitizedSubitems.map((subitem) => ({
+              initiative_id: existing.id,
+              catalog_item_id: subitem.catalogItemId,
+              name: subitem.name,
+              status: subitem.status,
+              target_date: subitem.targetDate,
+              unit_credits: subitem.unitCredits,
+              quantity: subitem.quantity,
+              sort_order: subitem.sortOrder,
+            })),
+          )
+          .select("*")
+      : { data: [], error: null };
     if (subitemsError) throw subitemsError;
 
     const logMessages = [
