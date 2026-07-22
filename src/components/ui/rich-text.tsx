@@ -15,9 +15,49 @@ type RichTextTextareaProps = {
 
 const ALLOWED_TAGS = new Set(["B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "P", "DIV", "BR"]);
 const HTML_TOKEN_PATTERN = /<\/?([a-z][a-z0-9]*)\b[^>]*>/gi;
+const HTML_ENTITY_PATTERN = /&(?:nbsp|amp|lt|gt|quot|apos|#0*39|#[0-9]+|#x[0-9a-f]+);/gi;
+
+function decodeHtmlEntities(value: string) {
+  let decoded = value;
+
+  // Older values may have been escaped again on every keystroke. Unwrap all
+  // of those layers before producing one canonical, safely escaped value.
+  for (let pass = 0; pass < 20; pass += 1) {
+    const next = decoded.replace(HTML_ENTITY_PATTERN, (entity) => {
+      const normalized = entity.toLowerCase();
+      const namedEntities: Record<string, string> = {
+        "&nbsp;": " ",
+        "&amp;": "&",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": '"',
+        "&apos;": "'",
+      };
+
+      if (namedEntities[normalized] !== undefined) {
+        return namedEntities[normalized];
+      }
+
+      const radix = normalized.startsWith("&#x") ? 16 : 10;
+      const numericValue = normalized.slice(radix === 16 ? 3 : 2, -1);
+      const codePoint = Number.parseInt(numericValue, radix);
+
+      try {
+        return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+      } catch {
+        return entity;
+      }
+    });
+
+    if (next === decoded) break;
+    decoded = next;
+  }
+
+  return decoded;
+}
 
 function escapeHtml(value: string) {
-  return value
+  return decodeHtmlEntities(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -117,16 +157,12 @@ export function richTextToPlainText(value: string | null | undefined) {
     return "";
   }
 
-  return raw
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<\/(p|div|li|h[1-6])>/gi, " ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#039;|&#39;|&apos;/gi, "'")
+  return decodeHtmlEntities(
+    raw
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<\/(p|div|li|h[1-6])>/gi, " ")
+      .replace(/<[^>]+>/g, ""),
+  )
     .replace(/\s+/g, " ")
     .trim();
 }
