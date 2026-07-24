@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { ReportsPanel } from "@/components/reports/reports-panel";
 import { requireUser } from "@/lib/auth";
+import { fetchUserMemberships } from "@/lib/membership-access";
 import { normalizeInitiativeTitle } from "@/lib/onboarding";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Views } from "@/types/database";
@@ -38,6 +39,7 @@ type InitiativeReportRow = InitiativeSourceRow & {
 type ActiveClientMilestoneRow = {
   id: string;
   created_at: string;
+  csm_user_id: string | null;
 };
 
 type PaidBillingCycleRow = {
@@ -141,12 +143,27 @@ function hasValidatedLabel(labels: string[] | null | undefined) {
 }
 
 export default async function ReportsPage() {
-  const { platformProfile } = await requireUser("/informes");
+  const { supabase, user, platformProfile } = await requireUser("/informes");
   const platformRole = platformProfile?.platform_role ?? null;
+  const isCsm = platformRole === "csm";
 
-  if (platformRole !== "admin" && platformRole !== "superadmin") {
+  if (platformRole !== "admin" && platformRole !== "superadmin" && !isCsm) {
     redirect("/dashboard");
   }
+
+  const { data: membershipRows, error: membershipError } = isCsm
+    ? await fetchUserMemberships(supabase, user.id)
+    : { data: [], error: null };
+
+  if (membershipError) {
+    console.error("informes_memberships_load_failed", membershipError);
+  }
+
+  const membershipRecords = ((membershipError ? [] : membershipRows) ?? []) as Array<{
+    client_id: string;
+    access_role: "viewer" | "editor" | "owner";
+    profile_role: "sales" | "csm" | "client" | "stakeholder";
+  }>;
 
   const admin = createSupabaseAdminClient();
   const { data: customerSuccessProfileRows, error: customerSuccessProfilesError } = await admin
@@ -161,14 +178,23 @@ export default async function ReportsPage() {
 
   const { data: activeClientRows, error: activeClientsError } = await admin
     .from("clients")
-    .select("id, created_at")
+    .select("id, created_at, csm_user_id")
     .eq("is_active", true);
 
   if (activeClientsError) {
     throw new Error("No pudimos cargar los clientes activos para informes.");
   }
 
-  const activeClients = (activeClientRows ?? []) as ActiveClientMilestoneRow[];
+  const allActiveClients = (activeClientRows ?? []) as ActiveClientMilestoneRow[];
+  const activeClients = isCsm
+    ? allActiveClients.filter(
+        (client) =>
+          client.csm_user_id === user.id ||
+          membershipRecords.some(
+            (membership) => membership.client_id === client.id && membership.profile_role === "csm",
+          ),
+      )
+    : allActiveClients;
   const activeClientIds = activeClients.map((client) => client.id);
   const clientCreatedAtByClientId = new Map(
     activeClients.map((client) => [client.id, client.created_at]),
@@ -190,12 +216,16 @@ export default async function ReportsPage() {
   const assignedCustomerSuccessIds = new Set(
     clientRows.flatMap((row) => (row.customer_success_id ? [row.customer_success_id] : [])),
   );
-  const customerSuccessProfiles = ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
-    (profile) =>
-      profile.platform_role === "csm" ||
-      ((profile.platform_role === "admin" || profile.platform_role === "superadmin") &&
-        assignedCustomerSuccessIds.has(profile.id)),
-  );
+  const customerSuccessProfiles = isCsm
+    ? ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
+        (profile) => profile.id === user.id,
+      )
+    : ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
+        (profile) =>
+          profile.platform_role === "csm" ||
+          ((profile.platform_role === "admin" || profile.platform_role === "superadmin") &&
+            assignedCustomerSuccessIds.has(profile.id)),
+      );
   const clientIds = clientRows.map((row) => row.client_id);
   const { data: paidBillingCycleRows, error: paidBillingCyclesError } = clientIds.length
     ? await admin
@@ -224,13 +254,21 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar las fechas de activación para el informe operativo.");
   }
 
-  const { data: unassignedPaidProposalRows, error: unassignedPaidProposalsError } = await admin
+  let unassignedPaidProposalsQuery = admin
     .from("sales_proposals")
     .select("id, client_name, client_company, paid_at")
     .eq("status", "paid")
     .is("activated_client_id", null)
-    .not("paid_at", "is", null)
-    .order("paid_at", { ascending: true });
+    .not("paid_at", "is", null);
+
+  if (isCsm) {
+    unassignedPaidProposalsQuery = unassignedPaidProposalsQuery.eq("assigned_csm_user_id", user.id);
+  }
+
+  const { data: unassignedPaidProposalRows, error: unassignedPaidProposalsError } = await unassignedPaidProposalsQuery.order(
+    "paid_at",
+    { ascending: true },
+  );
 
   if (unassignedPaidProposalsError) {
     throw new Error("No pudimos cargar los clientes pagados pendientes de asignación.");
@@ -454,6 +492,7 @@ export default async function ReportsPage() {
 
   return (
     <ReportsPanel
+      canAuditNorths={!isCsm}
       rows={rows}
       initiatives={initiatives}
       operationalTasks={(initiativeSubitemRows ?? []) as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>}

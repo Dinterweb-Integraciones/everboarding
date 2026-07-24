@@ -43,7 +43,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
   const canManageUsers = platformRole === "superadmin";
   const canSeeSales = platformRole === "superadmin";
   const canSeeFinance = platformRole === "finance" || platformRole === "superadmin";
-  const canSeeReports = platformRole === "admin" || platformRole === "superadmin";
+  const canSeeReports = platformRole === "admin" || platformRole === "superadmin" || platformRole === "csm";
   const catalogLinksToRender = canSeeCatalogs
     ? canManageUsers
       ? [...catalogLinks, { href: "/cs/usuarios", label: "Usuarios" }]
