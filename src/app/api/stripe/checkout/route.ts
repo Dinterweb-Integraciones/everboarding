@@ -200,6 +200,9 @@ export async function POST(request: Request) {
         },
       ],
       metadata,
+      consent_collection: {
+        terms_of_service: "required",
+      },
       success_url: `${checkoutUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}${
         purchaseKind === "extra_package" ? "&purchase=extra_capacity" : ""
       }`,

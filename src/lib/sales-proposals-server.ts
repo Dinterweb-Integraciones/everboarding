@@ -802,6 +802,9 @@ export async function createSalesProposalCheckout(
         },
       },
     ],
+    consent_collection: {
+      terms_of_service: "required",
+    },
     success_url:
       options.successUrl ||
       `${origin}${routeBase}/${proposal.slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
