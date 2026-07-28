@@ -312,7 +312,7 @@ export function OperationalDashboard({ rows, initiatives, tasks, customerSuccess
 
   return <div className="space-y-4 p-4">
     <div className="flex flex-wrap items-end justify-between gap-3 rounded-[6px] border border-[#dfe3eb] bg-white p-4">
-      <div><h3 className="font-black text-[#213343]">Operatividad del equipo</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Los tiempos representan días transcurridos entre creación y última actualización, no horas trabajadas.</p></div>
+      <div><h3 className="font-black text-[#213343]">Operatividad del equipo</h3><p className="mt-1 text-xs font-semibold text-[#516f90]">Los tiempos representan días transcurridos, no horas trabajadas. Los créditos operativos incluyen los bonificados a su valor de catálogo.</p></div>
       <div className="flex flex-wrap gap-2">
         <select value={customerSuccessId} onChange={(event) => { setCustomerSuccessId(event.target.value); setClientId("all"); }} className="h-10 rounded border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b]"><option value="all">Todo el equipo CS</option>{customerSuccessOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
         <select value={clientId} onChange={(event) => setClientId(event.target.value)} className="h-10 max-w-56 rounded border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b]"><option value="all">Todos los clientes</option>{availableClients.map((client) => <option key={client.client_id} value={client.client_id}>{client.client_name}</option>)}</select>

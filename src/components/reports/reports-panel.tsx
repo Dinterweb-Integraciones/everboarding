@@ -68,6 +68,7 @@ type InitiativeReportRow = {
   updated_at: string;
   executing_at: string | null;
   completed_at: string | null;
+  // Valor operativo del trabajo; incluye bonificados a su valor de catálogo.
   credits: number;
 };
 
@@ -927,7 +928,7 @@ function CustomerSuccessDashboard({
       </div>
 
       <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
-        <div className="border-b border-[#dfe3eb] p-4"><h3 className="flex items-center gap-1.5 text-base font-black text-[#213343]">Capacidad <InfoTooltip>Suma créditos de iniciativas actualizadas en los últimos 30 días. En evaluación solo considera las iniciativas validadas; los porcentajes usan una base de 1,000 créditos.</InfoTooltip></h3></div>
+        <div className="border-b border-[#dfe3eb] p-4"><h3 className="flex items-center gap-1.5 text-base font-black text-[#213343]">Capacidad <InfoTooltip>Suma créditos operativos de iniciativas actualizadas en los últimos 30 días. Los casos bonificados cuentan por su valor de catálogo. En evaluación solo considera las iniciativas validadas; los porcentajes usan una base de 1,000 créditos.</InfoTooltip></h3></div>
         <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left"><thead className="bg-[#f8fbfd]"><tr className="border-b border-[#dfe3eb]">{["CS", "Completado (%)", "Comprometido (%)", "En evaluación", "Planificado", "En ejecución", "Completado", "Total"].map((heading, index) => <th key={`${heading}-${index}`} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">{heading}</th>)}</tr></thead><tbody>{capacityRows.map((row) => { const committed = row.evaluation + row.planned + row.executing; const total = committed + row.completed; return <tr key={row.id} className="border-b border-[#edf1f5] last:border-0"><td className="px-4 py-3 text-sm font-black text-[#213343]">{row.name}</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((row.completed / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-black text-[#00a4bd]">{Math.round((committed / 1000) * 100)}%</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.evaluation)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.planned)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.executing)}</td><td className="px-4 py-3 text-sm font-bold text-[#33475b]">{formatNumber(row.completed)}</td><td className="px-4 py-3 text-sm font-black text-[#213343]">{formatNumber(total)}</td></tr>; })}</tbody></table></div>
       </article>
 
@@ -966,7 +967,7 @@ function CustomerSuccessDetailModal({ title, detail, cases, weakClients, clientB
         <div className="max-h-[65vh] overflow-y-auto">
           {detail === "weak" ? weakClients.map((row) => <a key={row.client_id} href={`/clients/${row.client_id}`} className="flex items-center justify-between border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><span className="text-sm font-black text-[#213343]">{row.client_name}</span><span className="text-xs font-bold text-[#7e22ce]">{formatNumber(row.validated_evaluation_cases_count)} validados</span></a>) : cases.map((item) => {
             const client = clientById.get(item.client_id);
-            return <a key={item.id} href={`/clients/${item.client_id}`} className="flex items-center justify-between gap-4 border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><div><p className="text-sm font-black text-[#213343]">{client?.client_name ?? "Cliente"}</p><p className="mt-0.5 text-xs font-semibold text-[#516f90]">{item.title}</p></div><div className="text-right"><p className="text-xs font-black capitalize text-[#00a4bd]">{item.status === "backlog" ? "En evaluación" : item.status === "planned" ? "Planificado" : item.status === "executing" ? "En ejecución" : "Completado"}</p>{detail === "stagnant" ? <p className="mt-1 text-[11px] font-bold text-[#c2410c]">{formatNumber(getElapsedDays(item.updated_at))} días sin avanzar</p> : null}</div></a>;
+            return <a key={item.id} href={`/clients/${item.client_id}`} className="flex items-center justify-between gap-4 border-b border-[#edf1f5] px-5 py-4 hover:bg-[#f8fbfd]"><div><p className="text-sm font-black text-[#213343]">{client?.client_name ?? "Cliente"}</p><p className="mt-0.5 text-xs font-semibold text-[#516f90]">{item.title}</p></div><div className="text-right"><p className="text-xs font-black capitalize text-[#00a4bd]">{item.status === "backlog" ? "En evaluación" : item.status === "planned" ? "Planificado" : item.status === "executing" ? "En ejecución" : "Completado"}</p><p className="mt-1 text-[11px] font-black text-emerald-700">{formatNumber(item.credits)} CR operativos</p>{detail === "stagnant" ? <p className="mt-1 text-[11px] font-bold text-[#c2410c]">{formatNumber(getElapsedDays(item.updated_at))} días sin avanzar</p> : null}</div></a>;
           })}
         </div>
       </div>

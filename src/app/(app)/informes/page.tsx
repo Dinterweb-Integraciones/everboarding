@@ -4,6 +4,7 @@ import { ReportsPanel } from "@/components/reports/reports-panel";
 import { requireUser } from "@/lib/auth";
 import { fetchUserMemberships } from "@/lib/membership-access";
 import { normalizeInitiativeTitle } from "@/lib/onboarding";
+import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Views } from "@/types/database";
 
@@ -36,6 +37,19 @@ type InitiativeReportRow = InitiativeSourceRow & {
   credits: number;
 };
 
+type InitiativeSubitemReportRow = {
+  id: string;
+  initiative_id: string;
+  catalog_item_id: string | null;
+  name: string;
+  status: "pending" | "in_progress" | "blocked" | "completed";
+  target_date: string | null;
+  unit_credits: number;
+  quantity: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type ActiveClientMilestoneRow = {
   id: string;
   created_at: string;
@@ -58,6 +72,11 @@ type ActivatedProposalRow = {
   id: string;
   activated_client_id: string | null;
   activated_at: string | null;
+};
+
+type ProposalSnapshotRow = {
+  proposal_id: string;
+  snapshot: unknown;
 };
 
 type InitiativeActivityLogRow = {
@@ -140,6 +159,21 @@ function isKickoffText(value: string | null | undefined) {
 
 function hasValidatedLabel(labels: string[] | null | undefined) {
   return (labels ?? []).some((label) => normalizeInitiativeTitle(label) === "validado");
+}
+
+function isCommerciallyWaivedLabel(labels: string[] | null | undefined) {
+  return (labels ?? []).some((label) => {
+    const normalized = normalizeInitiativeTitle(label);
+    return normalized === "bonificado comercialmente" || normalized === "obsequiado comercialmente";
+  });
+}
+
+function getInitiativeCreditKey(clientId: string, initiativeTitle: string) {
+  return `${clientId}:${normalizeInitiativeTitle(initiativeTitle)}`;
+}
+
+function getInitiativeTaskCreditKey(clientId: string, initiativeTitle: string, taskName: string) {
+  return `${getInitiativeCreditKey(clientId, initiativeTitle)}:${normalizeInitiativeTitle(taskName)}`;
 }
 
 export default async function ReportsPage() {
@@ -254,6 +288,18 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar las fechas de activación para el informe operativo.");
   }
 
+  const activatedProposalIds = (activatedProposalRows ?? []).map((proposal) => proposal.id);
+  const { data: proposalSnapshotRows, error: proposalSnapshotsError } = activatedProposalIds.length
+    ? await admin
+        .from("sales_proposal_snapshots")
+        .select("proposal_id, snapshot")
+        .in("proposal_id", activatedProposalIds)
+    : { data: [] as ProposalSnapshotRow[], error: null };
+
+  if (proposalSnapshotsError) {
+    throw new Error("No pudimos cargar los valores originales de las propuestas.");
+  }
+
   let unassignedPaidProposalsQuery = admin
     .from("sales_proposals")
     .select("id, client_name, client_company, paid_at")
@@ -304,6 +350,10 @@ export default async function ReportsPage() {
         .in("client_id", clientIds)
     : { data: [] as InitiativeSourceRow[], error: null };
 
+  const { data: catalogGroupRows, error: catalogGroupsError } = await admin
+    .from("credit_catalog_groups")
+    .select("name, credits");
+
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
         .from("onboarding_configs")
@@ -323,9 +373,16 @@ export default async function ReportsPage() {
   const { data: initiativeSubitemRows, error: initiativeSubitemsError } = initiativeIds.length
     ? await admin
         .from("onboarding_initiative_subitems")
-        .select("id, initiative_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
+        .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
         .in("initiative_id", initiativeIds)
-    : { data: [] as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>, error: null };
+    : { data: [] as InitiativeSubitemReportRow[], error: null };
+
+  const catalogItemIds = [
+    ...new Set((initiativeSubitemRows ?? []).map((subitem) => subitem.catalog_item_id).filter((id): id is string => Boolean(id))),
+  ];
+  const { data: catalogItemRows, error: catalogItemsError } = catalogItemIds.length
+    ? await admin.from("credit_catalog_items").select("id, credits").in("id", catalogItemIds)
+    : { data: [] as Array<{ id: string; credits: number }>, error: null };
 
   const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
     ? await admin
@@ -340,6 +397,14 @@ export default async function ReportsPage() {
 
   if (initiativeSubitemsError) {
     throw new Error("No pudimos cargar los créditos de las iniciativas.");
+  }
+
+  if (catalogItemsError) {
+    throw new Error("No pudimos cargar el catálogo de créditos.");
+  }
+
+  if (catalogGroupsError) {
+    throw new Error("No pudimos cargar el catálogo de casos de uso.");
   }
 
   if (initiativeActivityLogsError) {
@@ -384,10 +449,101 @@ export default async function ReportsPage() {
     currentLogs.push(log);
     activityLogsByInitiativeId.set(log.initiative_id, currentLogs);
   });
-  (initiativeSubitemRows ?? []).forEach((subitem) => {
+  const catalogCreditsById = new Map(
+    ((catalogItemRows ?? []) as Array<{ id: string; credits: number }>).map((item) => [item.id, item.credits]),
+  );
+  const catalogGroupCreditsByTitle = new Map(
+    ((catalogGroupRows ?? []) as Array<{ name: string; credits: number }>).map((group) => [
+      normalizeInitiativeTitle(group.name),
+      Number(group.credits),
+    ]),
+  );
+  const initiativeById = new Map(
+    ((initiativeRows ?? []) as InitiativeSourceRow[]).map((initiative) => [initiative.id, initiative]),
+  );
+  const activatedClientIdByProposalId = new Map(
+    ((activatedProposalRows ?? []) as ActivatedProposalRow[]).flatMap((proposal) =>
+      proposal.activated_client_id ? [[proposal.id, proposal.activated_client_id] as const] : [],
+    ),
+  );
+  const snapshotCreditsByInitiative = new Map<string, number>();
+  const snapshotUnitCreditsByTask = new Map<string, number>();
+  ((proposalSnapshotRows ?? []) as ProposalSnapshotRow[]).forEach((row) => {
+    const clientId = activatedClientIdByProposalId.get(row.proposal_id);
+    if (!clientId) return;
+
+    const proposal = normalizeSalesProposalDraft(row.snapshot as never);
+    proposal.initiatives.forEach((initiative) => {
+      const initiativeKey = getInitiativeCreditKey(clientId, initiative.title);
+      const initiativeCredits = initiative.subitems.reduce(
+        (sum, subitem) => sum + Number(subitem.unitCredits) * Number(subitem.quantity),
+        0,
+      );
+      snapshotCreditsByInitiative.set(
+        initiativeKey,
+        Math.max(snapshotCreditsByInitiative.get(initiativeKey) ?? 0, initiativeCredits),
+      );
+      initiative.subitems.forEach((subitem) => {
+        const taskKey = getInitiativeTaskCreditKey(clientId, initiative.title, subitem.name);
+        snapshotUnitCreditsByTask.set(
+          taskKey,
+          Math.max(snapshotUnitCreditsByTask.get(taskKey) ?? 0, Number(subitem.unitCredits)),
+        );
+      });
+    });
+  });
+  const commerciallyWaivedInitiativeIds = new Set(
+    ((initiativeRows ?? []) as InitiativeSourceRow[])
+      .filter((initiative) => isCommerciallyWaivedLabel(initiative.labels))
+      .map((initiative) => initiative.id),
+  );
+  const subitemCountsByInitiative = new Map<string, number>();
+  ((initiativeSubitemRows ?? []) as InitiativeSubitemReportRow[]).forEach((subitem) => {
+    subitemCountsByInitiative.set(
+      subitem.initiative_id,
+      (subitemCountsByInitiative.get(subitem.initiative_id) ?? 0) + 1,
+    );
+  });
+  const reportSubitems = ((initiativeSubitemRows ?? []) as InitiativeSubitemReportRow[]).map((subitem) => {
+    const initiative = initiativeById.get(subitem.initiative_id);
+    if (!initiative || !commerciallyWaivedInitiativeIds.has(subitem.initiative_id)) {
+      return subitem;
+    }
+
+    const historicalTaskCredits = snapshotUnitCreditsByTask.get(
+      getInitiativeTaskCreditKey(initiative.client_id, initiative.title, subitem.name),
+    );
+    const catalogGroupCredits = catalogGroupCreditsByTitle.get(normalizeInitiativeTitle(initiative.title));
+
+    return {
+      ...subitem,
+      // El 0 financiero permanece intacto. Informes usa primero el valor histórico
+      // de la propuesta y luego el catálogo actual como respaldo operativo.
+      unit_credits:
+        historicalTaskCredits
+        ?? catalogCreditsById.get(subitem.catalog_item_id ?? "")
+        ?? (subitemCountsByInitiative.get(subitem.initiative_id) === 1 ? catalogGroupCredits : undefined)
+        ?? subitem.unit_credits,
+    };
+  });
+  reportSubitems.forEach((subitem) => {
     creditsByInitiative.set(
       subitem.initiative_id,
       (creditsByInitiative.get(subitem.initiative_id) ?? 0) + Number(subitem.unit_credits) * Number(subitem.quantity),
+    );
+  });
+  commerciallyWaivedInitiativeIds.forEach((initiativeId) => {
+    if ((creditsByInitiative.get(initiativeId) ?? 0) > 0) return;
+
+    const initiative = initiativeById.get(initiativeId);
+    if (!initiative) return;
+
+    const initiativeKey = getInitiativeCreditKey(initiative.client_id, initiative.title);
+    creditsByInitiative.set(
+      initiativeId,
+      snapshotCreditsByInitiative.get(initiativeKey)
+      ?? catalogGroupCreditsByTitle.get(normalizeInitiativeTitle(initiative.title))
+      ?? 0,
     );
   });
   const initiatives = ((initiativeRows ?? []) as InitiativeSourceRow[]).map((initiative) => {
@@ -495,7 +651,7 @@ export default async function ReportsPage() {
       canAuditNorths={!isCsm}
       rows={rows}
       initiatives={initiatives}
-      operationalTasks={(initiativeSubitemRows ?? []) as Array<{ id: string; initiative_id: string; name: string; status: "pending" | "in_progress" | "blocked" | "completed"; target_date: string | null; unit_credits: number; quantity: number; created_at: string; updated_at: string }>}
+      operationalTasks={reportSubitems}
       operationalTransitionClients={[
         ...rows.map((row) => ({
           id: row.client_id,
