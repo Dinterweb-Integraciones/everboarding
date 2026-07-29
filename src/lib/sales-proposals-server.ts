@@ -776,6 +776,11 @@ export async function createSalesProposalCheckout(
     sales_workspace_variant: proposal.workspaceVariant || "hubspot",
   };
   const isRecurringProposal = proposal.billingMode === "subscription";
+  const checkoutClientName = proposal.clientCompany || proposal.clientName;
+  const checkoutProductName = isRecurringProposal
+    ? `Plan recurrente de ${proposal.contractedCredits} créditos`
+    : `Paquete de ${proposal.contractedCredits} créditos`;
+  const checkoutProductDescription = `Propuesta Comercial - ${checkoutClientName}`;
 
   const session = await stripe.checkout.sessions.create({
     mode: isRecurringProposal ? "subscription" : "payment",
@@ -796,8 +801,8 @@ export async function createSalesProposalCheckout(
               }
             : {}),
           product_data: {
-            name: `${proposal.clientCompany || proposal.clientName} · Activar plan`,
-            description: `${proposal.contractedCredits} CR · ${proposal.title}`,
+            name: checkoutProductName,
+            description: checkoutProductDescription,
           },
         },
       },
