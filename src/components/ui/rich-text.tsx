@@ -159,11 +159,13 @@ export function richTextToPlainText(value: string | null | undefined) {
 
   return decodeHtmlEntities(
     raw
-      .replace(/<br\s*\/?>/gi, " ")
-      .replace(/<\/(p|div|li|h[1-6])>/gi, " ")
+      .replace(/\r\n?/g, "\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
       .replace(/<[^>]+>/g, ""),
   )
-    .replace(/\s+/g, " ")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
     .trim();
 }
 
