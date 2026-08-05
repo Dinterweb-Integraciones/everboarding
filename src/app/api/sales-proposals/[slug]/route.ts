@@ -3,8 +3,15 @@ import { NextResponse } from "next/server";
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
-import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
-import { saveSalesProposal } from "@/lib/sales-proposals-server";
+import { resolveLiveSalesProposalRecord } from "@/lib/sales-proposal-live-view";
+import {
+  applySalesCommercialWaiverPolicy,
+  normalizeSalesProposalDraft,
+} from "@/lib/sales-proposals";
+import {
+  saveSalesProposal,
+  syncActivatedSalesProposalCommercialWaivers,
+} from "@/lib/sales-proposals-server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
 
@@ -27,6 +34,7 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
 
     const existingProposal = proposalAccess.proposal;
     const isDinterwebProposal = existingProposal.workspaceVariant === "dinterweb";
+    const isSuperadmin = proposalAccess.platformRole === "superadmin";
 
     if (isDinterwebProposal) {
       const supabase = await createSupabaseServerClient();
@@ -55,7 +63,26 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
       };
     }
 
-    const proposal = await saveSalesProposal(body, slug);
+    body = applySalesCommercialWaiverPolicy(body, {
+      existingProposal,
+      isSuperadmin,
+    });
+
+    let proposal = await saveSalesProposal(body, slug);
+
+    if (
+      isSuperadmin &&
+      proposalAccess.actorUserId &&
+      existingProposal.status === "board_activated" &&
+      existingProposal.activatedClientId
+    ) {
+      await syncActivatedSalesProposalCommercialWaivers({
+        previousProposal: existingProposal,
+        nextProposal: body,
+        actorUserId: proposalAccess.actorUserId,
+      });
+      proposal = await resolveLiveSalesProposalRecord(proposal);
+    }
 
     return NextResponse.json(proposal);
   } catch (caughtError) {

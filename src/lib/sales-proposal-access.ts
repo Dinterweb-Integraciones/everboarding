@@ -1,6 +1,6 @@
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
-import { canManagePlatformUsers } from "@/lib/platform-access";
+import { canManagePlatformUsers, type PlatformRole } from "@/lib/platform-access";
 import { mapSalesProposalRow, type SalesProposalRecord } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -21,6 +21,8 @@ type SalesProposalAccessSuccess = {
   ok: true;
   proposal: SalesProposalRecord;
   proposalRow: SalesProposalRow;
+  platformRole: PlatformRole | null;
+  actorUserId: string | null;
 };
 
 export type SalesProposalAccessResult = SalesProposalAccessError | SalesProposalAccessSuccess;
@@ -87,6 +89,8 @@ export async function getSalesProposalMutationAccess(slug: string): Promise<Sale
       ok: true,
       proposal: storedProposal.proposal,
       proposalRow: storedProposal.proposalRow,
+      platformRole: null,
+      actorUserId: null,
     };
   }
 
@@ -119,6 +123,8 @@ export async function getSalesProposalMutationAccess(slug: string): Promise<Sale
       ok: true,
       proposal: storedProposal.proposal,
       proposalRow: storedProposal.proposalRow,
+      platformRole: profileRow?.platform_role ?? null,
+      actorUserId: user.id,
     };
   }
 
@@ -134,5 +140,7 @@ export async function getSalesProposalMutationAccess(slug: string): Promise<Sale
     ok: true,
     proposal: storedProposal.proposal,
     proposalRow: storedProposal.proposalRow,
+    platformRole: profileRow?.platform_role ?? null,
+    actorUserId: user.id,
   };
 }

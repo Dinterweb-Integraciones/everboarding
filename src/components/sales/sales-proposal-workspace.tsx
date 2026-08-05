@@ -68,6 +68,7 @@ type SalesProposalWorkspaceProps = {
     email: string;
     company: string;
   } | null;
+  canWaiveAnyInitiative?: boolean;
 };
 
 function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
@@ -506,8 +507,14 @@ function isFundamentalInitiative(initiative: Pick<SalesProposalInitiativeDraft, 
   return normalizeCatalogText(initiative.type) === normalizeCatalogText("Fundamentales");
 }
 
-function canToggleCommercialWaiver(initiative: Pick<SalesProposalInitiativeDraft, "status" | "type">) {
-  return initiative.status === "planned" && isFundamentalInitiative(initiative);
+function canToggleCommercialWaiver(
+  initiative: Pick<SalesProposalInitiativeDraft, "status" | "type">,
+  canWaiveAnyInitiative: boolean,
+) {
+  return (
+    initiative.status === "planned" &&
+    (canWaiveAnyInitiative || isFundamentalInitiative(initiative))
+  );
 }
 
 function calculateSalesInitiativeOriginalCredits(initiative: SalesProposalInitiativeDraft) {
@@ -767,6 +774,7 @@ export function SalesProposalWorkspace({
   variant = "hubspot",
   routeBase = "/sales/proposals",
   sellerPreset = null,
+  canWaiveAnyInitiative = false,
 }: SalesProposalWorkspaceProps) {
   const wizardChallenges: Record<
     string,
@@ -1310,7 +1318,14 @@ export function SalesProposalWorkspace({
   }
 
   function toggleInitiativeDraftCommercialWaiver() {
-    if (!initiativeDraft || !canToggleCommercialWaiver(initiativeDraft)) {
+    const canChangeWaiverAtCurrentProposalStage =
+      proposal.status === "draft" || canWaiveAnyInitiative;
+
+    if (
+      !initiativeDraft ||
+      !canChangeWaiverAtCurrentProposalStage ||
+      !canToggleCommercialWaiver(initiativeDraft, canWaiveAnyInitiative)
+    ) {
       return;
     }
 
@@ -1320,7 +1335,7 @@ export function SalesProposalWorkspace({
     });
   }
 
-  function saveInitiativeDraft() {
+  async function saveInitiativeDraft() {
     if (!initiativeDraft) return;
 
     if (!initiativeDraft.title.trim()) {
@@ -1350,27 +1365,49 @@ export function SalesProposalWorkspace({
       return;
     }
 
-    setProposal((current) => {
-      const exists = current.initiatives.some((initiative) => initiative.id === initiativeDraft.id);
-      const nextInitiatives = exists
-        ? current.initiatives.map((initiative) =>
-            initiative.id === initiativeDraft.id ? createEditorDraft(initiativeDraft) : initiative,
-          )
-        : [...current.initiatives, createEditorDraft(initiativeDraft)];
+    const exists = proposal.initiatives.some((initiative) => initiative.id === initiativeDraft.id);
+    const nextInitiatives = exists
+      ? proposal.initiatives.map((initiative) =>
+          initiative.id === initiativeDraft.id ? createEditorDraft(initiativeDraft) : initiative,
+        )
+      : [...proposal.initiatives, createEditorDraft(initiativeDraft)];
 
-      const scheduledInitiatives = scheduleRecommendedInitiatives(
-        nextInitiatives,
-        [initiativeDraft.id],
-        current.startDate,
-        stageSchedulingOptions,
-      );
+    const scheduledInitiatives = scheduleRecommendedInitiatives(
+      nextInitiatives,
+      [initiativeDraft.id],
+      proposal.startDate,
+      stageSchedulingOptions,
+    );
+    const nextProposal = {
+      ...proposal,
+      initiatives: normalizeBoardSortOrders(scheduledInitiatives),
+    };
+    const commercialWaiverChanged =
+      existingInitiative !== undefined &&
+      existingInitiative.commerciallyWaived !== initiativeDraft.commerciallyWaived;
 
-      return {
-        ...current,
-        initiatives: normalizeBoardSortOrders(scheduledInitiatives),
-      };
-    });
+    setProposal(nextProposal);
     closeInitiativeEditor();
+
+    if (commercialWaiverChanged && proposal.status !== "draft" && canWaiveAnyInitiative) {
+      try {
+        await persistProposal(nextProposal, { mergeWithCurrent: true });
+        setFeedback({
+          tone: "success",
+          message: initiativeDraft.commerciallyWaived
+            ? "Caso de uso bonificado correctamente."
+            : "Bonificacion retirada correctamente.",
+        });
+      } catch (caughtError) {
+        setProposal(proposal);
+        setFeedback({
+          tone: "error",
+          message: formatUserError(caughtError, "No pudimos actualizar la bonificacion."),
+        });
+      }
+      return;
+    }
+
     setFeedback({ tone: "success", message: "Iniciativa actualizada en la propuesta." });
   }
 
@@ -4875,7 +4912,9 @@ function mergeRecommendedGroups(
           const draftCredits = calculateSalesInitiativeCredits(initiativeDraft);
           const draftOriginalCredits = calculateSalesInitiativeOriginalCredits(initiativeDraft);
           const canUseCommercialAgreement =
-            isDinterwebVariant && canToggleCommercialWaiver(initiativeDraft);
+            isDinterwebVariant &&
+            (proposal.status === "draft" || canWaiveAnyInitiative) &&
+            canToggleCommercialWaiver(initiativeDraft, canWaiveAnyInitiative);
           const catalogGroupForDraft = findCatalogGroupForInitiative(initiativeDraft, catalogGroups);
 
           return (

@@ -2,14 +2,20 @@ import { NextResponse } from "next/server";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
-import { generateSalesProposalSlug, normalizeSalesProposalDraft } from "@/lib/sales-proposals";
+import {
+  applySalesCommercialWaiverPolicy,
+  generateSalesProposalSlug,
+  normalizeSalesProposalDraft,
+} from "@/lib/sales-proposals";
 import { saveSalesProposal } from "@/lib/sales-proposals-server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
 
 export async function POST(request: Request) {
   try {
     let body = normalizeSalesProposalDraft(await request.json());
+    let isSuperadmin = false;
 
     if (body.workspaceVariant === "dinterweb") {
       const supabase = await createSupabaseServerClient();
@@ -25,6 +31,19 @@ export async function POST(request: Request) {
       }
 
       const seller = getDinterwebSellerIdentity(user);
+      const admin = createSupabaseAdminClient();
+      const { data: profile, error: profileError } = await admin
+        .from("profiles")
+        .select("platform_role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const typedProfile = profile as { platform_role: string | null } | null;
+      isSuperadmin = typedProfile?.platform_role === "superadmin";
       body = {
         ...body,
         sellerName: seller.name,
@@ -32,6 +51,8 @@ export async function POST(request: Request) {
         sellerCompany: seller.company,
       };
     }
+
+    body = applySalesCommercialWaiverPolicy(body, { isSuperadmin });
 
     const slug = body.slug || generateSalesProposalSlug(body);
     const proposal = await saveSalesProposal(body, slug);

@@ -23,7 +23,7 @@ type NewDinterwebSalesProposalPageProps = {
 export default async function NewDinterwebSalesProposalPage({
   searchParams,
 }: NewDinterwebSalesProposalPageProps) {
-  const { user } = await requireUser("/sales/dinterweb");
+  const { user, platformProfile } = await requireUser("/sales/dinterweb");
   const seller = getDinterwebSellerIdentity(user);
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const duplicateFromSlug = resolvedSearchParams?.duplicateFrom?.trim() || "";
@@ -125,6 +125,7 @@ export default async function NewDinterwebSalesProposalPage({
       variant="dinterweb"
       routeBase="/sales/dinterweb/proposals"
       sellerPreset={seller}
+      canWaiveAnyInitiative={platformProfile?.platform_role === "superadmin"}
     />
   );
 }

@@ -133,6 +133,7 @@ export default async function DinterwebSalesProposalPage({
       variant="dinterweb"
       routeBase="/sales/dinterweb/proposals"
       sellerPreset={seller}
+      canWaiveAnyInitiative={platformProfile?.platform_role === "superadmin"}
     />
   );
 }

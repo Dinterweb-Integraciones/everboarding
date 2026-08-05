@@ -410,11 +410,73 @@ function normalizeSalesCatalogText(value: string | null | undefined) {
     .trim();
 }
 
-function canApplyCommercialWaiver(
-  workspaceVariant: SalesProposalDraft["workspaceVariant"],
+function isFundamentalSalesInitiative(
   initiative: Pick<SalesProposalInitiativeDraft, "type">,
 ) {
-  return workspaceVariant === "dinterweb" && normalizeSalesCatalogText(initiative.type) === "fundamentales";
+  return normalizeSalesCatalogText(initiative.type) === "fundamentales";
+}
+
+function findMatchingSalesInitiative(
+  initiative: Pick<SalesProposalInitiativeDraft, "id" | "title" | "type">,
+  candidates: SalesProposalInitiativeDraft[],
+) {
+  return (
+    candidates.find((candidate) => candidate.id === initiative.id) ??
+    candidates.find(
+      (candidate) =>
+        normalizeSalesCatalogText(candidate.title) === normalizeSalesCatalogText(initiative.title) &&
+        normalizeSalesCatalogText(candidate.type) === normalizeSalesCatalogText(initiative.type),
+    ) ??
+    null
+  );
+}
+
+export function applySalesCommercialWaiverPolicy(
+  proposal: SalesProposalDraft,
+  options: {
+    existingProposal?: SalesProposalDraft | null;
+    isSuperadmin: boolean;
+  },
+) {
+  const existingProposal = options.existingProposal ?? null;
+
+  return {
+    ...proposal,
+    initiatives: proposal.initiatives.map((initiative) => {
+      const existingInitiative = existingProposal
+        ? findMatchingSalesInitiative(initiative, existingProposal.initiatives)
+        : null;
+      const existingWaiver = existingInitiative?.commerciallyWaived ?? false;
+      const requestedWaiver = initiative.commerciallyWaived;
+
+      if (proposal.workspaceVariant !== "dinterweb") {
+        return { ...initiative, commerciallyWaived: false };
+      }
+
+      if (options.isSuperadmin) {
+        return initiative;
+      }
+
+      if (existingProposal && existingProposal.status !== "draft" && requestedWaiver !== existingWaiver) {
+        return { ...initiative, commerciallyWaived: existingWaiver };
+      }
+
+      if (requestedWaiver && !isFundamentalSalesInitiative(initiative)) {
+        const preservesExistingSuperadminWaiver =
+          existingWaiver &&
+          existingInitiative !== null &&
+          !isFundamentalSalesInitiative(existingInitiative) &&
+          normalizeSalesCatalogText(existingInitiative.type) ===
+            normalizeSalesCatalogText(initiative.type);
+
+        if (!preservesExistingSuperadminWaiver) {
+          return { ...initiative, commerciallyWaived: false };
+        }
+      }
+
+      return initiative;
+    }),
+  } satisfies SalesProposalDraft;
 }
 
 export function createEmptySalesInitiative(status: InitiativeStatus): SalesProposalInitiativeDraft {
@@ -530,16 +592,9 @@ export function normalizeSalesProposalDraft(
 
   const workspaceVariant =
     input.workspaceVariant === "dinterweb" || input.w === "dinterweb" ? "dinterweb" : "hubspot";
-  const initiatives = rawInitiatives.map((initiative, initiativeIndex) => {
-    const normalizedInitiative = normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex);
-
-    return {
-      ...normalizedInitiative,
-      commerciallyWaived:
-        normalizedInitiative.commerciallyWaived &&
-        canApplyCommercialWaiver(workspaceVariant, normalizedInitiative),
-    };
-  });
+  const initiatives = rawInitiatives.map((initiative, initiativeIndex) =>
+    normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex),
+  );
 
   return {
     ...base,

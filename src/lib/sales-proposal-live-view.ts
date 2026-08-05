@@ -7,6 +7,18 @@ type OnboardingConfigRow = Database["public"]["Tables"]["onboarding_configs"]["R
 type OnboardingInitiativeRow = Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
 type OnboardingInitiativeSubitemRow = Database["public"]["Tables"]["onboarding_initiative_subitems"]["Row"];
 
+const SUPABASE_IN_FILTER_BATCH_SIZE = 50;
+
+function chunkValues<T>(values: T[], batchSize = SUPABASE_IN_FILTER_BATCH_SIZE) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += batchSize) {
+    chunks.push(values.slice(index, index + batchSize));
+  }
+
+  return chunks;
+}
+
 function normalizePeriodMonths(
   value: number | null | undefined,
   fallback: SalesProposalRecord["periodMonths"],
@@ -42,39 +54,47 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
   }
 
   const admin = createSupabaseAdminClient();
-  const clientIds = targetProposals
-    .map((proposal) => proposal.activatedClientId)
-    .filter((clientId): clientId is string => Boolean(clientId));
+  const clientIds = [
+    ...new Set(
+      targetProposals
+        .map((proposal) => proposal.activatedClientId)
+        .filter((clientId): clientId is string => Boolean(clientId)),
+    ),
+  ];
+  const typedConfigs: OnboardingConfigRow[] = [];
+  const typedInitiatives: OnboardingInitiativeRow[] = [];
 
-  const { data: configRows, error: configError } = await admin
-    .from("onboarding_configs")
-    .select("*")
-    .in("client_id", clientIds);
+  for (const clientIdBatch of chunkValues(clientIds)) {
+    const [configResult, initiativesResult] = await Promise.all([
+      admin.from("onboarding_configs").select("*").in("client_id", clientIdBatch),
+      admin
+        .from("onboarding_initiatives")
+        .select("*")
+        .in("client_id", clientIdBatch)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+    ]);
 
-  if (configError) {
-    throw configError;
+    if (configResult.error) {
+      throw configResult.error;
+    }
+
+    if (initiativesResult.error) {
+      throw initiativesResult.error;
+    }
+
+    typedConfigs.push(...((configResult.data ?? []) as OnboardingConfigRow[]));
+    typedInitiatives.push(...((initiativesResult.data ?? []) as OnboardingInitiativeRow[]));
   }
 
-  const { data: initiativeRows, error: initiativesError } = await admin
-    .from("onboarding_initiatives")
-    .select("*")
-    .in("client_id", clientIds)
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
+  const initiativeIds = [...new Set(typedInitiatives.map((initiative) => initiative.id))];
+  const typedSubitems: OnboardingInitiativeSubitemRow[] = [];
 
-  if (initiativesError) {
-    throw initiativesError;
-  }
-
-  const typedInitiatives = (initiativeRows ?? []) as OnboardingInitiativeRow[];
-  const initiativeIds = typedInitiatives.map((initiative) => initiative.id);
-  let typedSubitems: OnboardingInitiativeSubitemRow[] = [];
-
-  if (initiativeIds.length) {
+  for (const initiativeIdBatch of chunkValues(initiativeIds)) {
     const { data: subitemRows, error: subitemsError } = await admin
       .from("onboarding_initiative_subitems")
       .select("*")
-      .in("initiative_id", initiativeIds)
+      .in("initiative_id", initiativeIdBatch)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
 
@@ -82,11 +102,11 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
       throw subitemsError;
     }
 
-    typedSubitems = (subitemRows ?? []) as OnboardingInitiativeSubitemRow[];
+    typedSubitems.push(...((subitemRows ?? []) as OnboardingInitiativeSubitemRow[]));
   }
 
   const configByClientId = new Map(
-    ((configRows ?? []) as OnboardingConfigRow[]).map((config) => [config.client_id, config] as const),
+    typedConfigs.map((config) => [config.client_id, config] as const),
   );
   const initiativesByClientId = new Map<string, OnboardingInitiativeRow[]>();
   const subitemsByInitiativeId = new Map<string, OnboardingInitiativeSubitemRow[]>();
@@ -110,8 +130,8 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
 
     const config = configByClientId.get(proposal.activatedClientId) ?? null;
     const initiativesForClient = initiativesByClientId.get(proposal.activatedClientId) ?? [];
-    const subitemsForClient = typedSubitems.filter((subitem) =>
-      initiativesForClient.some((initiative) => initiative.id === subitem.initiative_id),
+    const subitemsForClient = initiativesForClient.flatMap(
+      (initiative) => subitemsByInitiativeId.get(initiative.id) ?? [],
     );
     const liveInitiatives: SalesProposalRecord["initiatives"] = initiativesForClient.map((initiative) => ({
       id: initiative.id,

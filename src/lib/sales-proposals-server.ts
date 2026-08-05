@@ -33,6 +33,9 @@ type SalesProposalSnapshotRow = Database["public"]["Tables"]["sales_proposal_sna
 type SalesCouponRow = Database["public"]["Tables"]["sales_coupons"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type OnboardingInitiativeRow = Database["public"]["Tables"]["onboarding_initiatives"]["Row"];
+type OnboardingInitiativeSubitemRow =
+  Database["public"]["Tables"]["onboarding_initiative_subitems"]["Row"];
+type CreditCatalogItemRow = Database["public"]["Tables"]["credit_catalog_items"]["Row"];
 
 type SalesProposalActivationResult =
   | {
@@ -64,6 +67,35 @@ type SalesProposalPaymentContext = {
 const LEGACY_SALES_COUPON_GRANTED_CREDITS = 40;
 const LEGACY_SALES_COUPON_PRICE = 0;
 const MANAGUA_UTC_OFFSET = "-06:00";
+const COMMERCIAL_WAIVER_LABELS = new Set([
+  "Bonificado comercialmente",
+  "Obsequiado comercialmente",
+]);
+
+function normalizeSalesInitiativeMatchText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function findProposalInitiativeForLiveRow(
+  row: Pick<OnboardingInitiativeRow, "id" | "title" | "type">,
+  proposal: SalesProposalDraft,
+) {
+  return (
+    proposal.initiatives.find((initiative) => initiative.id === row.id) ??
+    proposal.initiatives.find(
+      (initiative) =>
+        normalizeSalesInitiativeMatchText(initiative.title) ===
+          normalizeSalesInitiativeMatchText(row.title) &&
+        normalizeSalesInitiativeMatchText(initiative.type) ===
+          normalizeSalesInitiativeMatchText(row.type),
+    ) ??
+    null
+  );
+}
 
 async function loadSalesProposalSnapshot(proposalId: string) {
   const admin = createSupabaseAdminClient();
@@ -479,6 +511,187 @@ export async function saveSalesProposal(input: SalesProposalDraft, proposalSlug:
   }
 
   return mapSalesProposalRow(attachSalesProposalSnapshot(typedRow, fullSnapshot));
+}
+
+export async function syncActivatedSalesProposalCommercialWaivers(input: {
+  previousProposal: SalesProposalDraft;
+  nextProposal: SalesProposalDraft;
+  actorUserId: string;
+}) {
+  const clientId = input.previousProposal.activatedClientId;
+
+  if (!clientId || input.previousProposal.status !== "board_activated") {
+    return;
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: initiativeRows, error: initiativesError } = await admin
+    .from("onboarding_initiatives")
+    .select("*")
+    .eq("client_id", clientId);
+
+  if (initiativesError) {
+    throw initiativesError;
+  }
+
+  const liveInitiatives = (initiativeRows ?? []) as OnboardingInitiativeRow[];
+
+  for (const liveInitiative of liveInitiatives) {
+    const requestedInitiative = findProposalInitiativeForLiveRow(
+      liveInitiative,
+      input.nextProposal,
+    );
+
+    if (!requestedInitiative) {
+      continue;
+    }
+
+    const isCurrentlyWaived = (liveInitiative.labels ?? []).some((label) =>
+      COMMERCIAL_WAIVER_LABELS.has(label),
+    );
+    const shouldBeWaived = requestedInitiative.commerciallyWaived;
+
+    if (isCurrentlyWaived === shouldBeWaived) {
+      continue;
+    }
+
+    const { data: subitemRows, error: subitemsError } = await admin
+      .from("onboarding_initiative_subitems")
+      .select("*")
+      .eq("initiative_id", liveInitiative.id)
+      .order("sort_order", { ascending: true });
+
+    if (subitemsError) {
+      throw subitemsError;
+    }
+
+    const liveSubitems = (subitemRows ?? []) as OnboardingInitiativeSubitemRow[];
+
+    if (shouldBeWaived) {
+      const { error: zeroCreditsError } = await admin
+        .from("onboarding_initiative_subitems")
+        .update(({ unit_credits: 0 }) as never)
+        .eq("initiative_id", liveInitiative.id);
+
+      if (zeroCreditsError) {
+        throw zeroCreditsError;
+      }
+    } else if (liveSubitems.length) {
+      const catalogItemIds = liveSubitems
+        .map((subitem) => subitem.catalog_item_id)
+        .filter((catalogItemId): catalogItemId is string => Boolean(catalogItemId));
+      let catalogCreditsById = new Map<string, number>();
+
+      if (catalogItemIds.length) {
+        const { data: catalogRows, error: catalogError } = await admin
+          .from("credit_catalog_items")
+          .select("id, credits")
+          .in("id", catalogItemIds);
+
+        if (catalogError) {
+          throw catalogError;
+        }
+
+        catalogCreditsById = new Map(
+          ((catalogRows ?? []) as Pick<CreditCatalogItemRow, "id" | "credits">[]).map((item) => [
+            item.id,
+            item.credits,
+          ]),
+        );
+      }
+
+      const previousInitiative = findProposalInitiativeForLiveRow(
+        liveInitiative,
+        input.previousProposal,
+      );
+
+      for (const [subitemIndex, liveSubitem] of liveSubitems.entries()) {
+        const requestedSubitem =
+          requestedInitiative.subitems.find((subitem) => subitem.id === liveSubitem.id) ??
+          requestedInitiative.subitems.find(
+            (subitem) =>
+              Boolean(subitem.catalogItemId) && subitem.catalogItemId === liveSubitem.catalog_item_id,
+          ) ??
+          requestedInitiative.subitems.find(
+            (subitem) =>
+              normalizeSalesInitiativeMatchText(subitem.name) ===
+              normalizeSalesInitiativeMatchText(liveSubitem.name),
+          ) ??
+          requestedInitiative.subitems[subitemIndex];
+        const previousSubitem =
+          previousInitiative?.subitems.find(
+            (subitem) =>
+              Boolean(subitem.catalogItemId) && subitem.catalogItemId === liveSubitem.catalog_item_id,
+          ) ??
+          previousInitiative?.subitems.find(
+            (subitem) =>
+              normalizeSalesInitiativeMatchText(subitem.name) ===
+              normalizeSalesInitiativeMatchText(liveSubitem.name),
+          ) ??
+          previousInitiative?.subitems[subitemIndex];
+        const catalogCredits = liveSubitem.catalog_item_id
+          ? catalogCreditsById.get(liveSubitem.catalog_item_id)
+          : undefined;
+        const requestedCredits = safeParseNumber(requestedSubitem?.unitCredits);
+        const previousCredits = safeParseNumber(previousSubitem?.unitCredits);
+        const restoredCredits = Math.max(
+          0,
+          safeParseNumber(
+            catalogCredits ??
+              (requestedCredits > 0
+                ? requestedCredits
+                : previousCredits > 0
+                  ? previousCredits
+                  : liveSubitem.unit_credits),
+          ),
+        );
+        const { error: restoreCreditsError } = await admin
+          .from("onboarding_initiative_subitems")
+          .update(({ unit_credits: restoredCredits }) as never)
+          .eq("id", liveSubitem.id)
+          .eq("initiative_id", liveInitiative.id);
+
+        if (restoreCreditsError) {
+          throw restoreCreditsError;
+        }
+      }
+    }
+
+    const labelsWithoutCommercialWaiver = (liveInitiative.labels ?? []).filter(
+      (label) => !COMMERCIAL_WAIVER_LABELS.has(label),
+    );
+    const nextLabels = shouldBeWaived
+      ? [...labelsWithoutCommercialWaiver, "Bonificado comercialmente"]
+      : labelsWithoutCommercialWaiver;
+    const { error: initiativeUpdateError } = await admin
+      .from("onboarding_initiatives")
+      .update(({
+        labels: nextLabels,
+        last_activity: toIsoDate(),
+        updated_by_user_id: input.actorUserId,
+      }) as never)
+      .eq("id", liveInitiative.id)
+      .eq("client_id", clientId);
+
+    if (initiativeUpdateError) {
+      throw initiativeUpdateError;
+    }
+
+    const { error: logError } = await admin.from("onboarding_activity_logs").insert(({
+      initiative_id: liveInitiative.id,
+      entry: shouldBeWaived
+        ? "Caso de uso bonificado comercialmente por un superadmin sin consumo de creditos."
+        : "Bonificacion comercial retirada por un superadmin; se restauraron los creditos del caso de uso.",
+      created_by_user_id: input.actorUserId,
+    }) as never);
+
+    if (logError) {
+      console.error("sales_commercial_waiver_activity_log_failed", {
+        initiativeId: liveInitiative.id,
+        error: logError,
+      });
+    }
+  }
 }
 
 export async function applySalesCouponToProposal(proposalSlug: string, couponCode: string) {
