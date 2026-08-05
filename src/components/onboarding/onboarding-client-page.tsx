@@ -905,11 +905,13 @@ export function OnboardingClientPage({
   function canUseReservedStage(
     status: InitiativeStatus,
     currentStatus?: InitiativeStatus,
+    initiativeCredits?: number,
   ) {
     return (
       !requiresPaidCycle(status) ||
       hasPaidPlanAccess ||
-      (currentStatus !== undefined && requiresPaidCycle(currentStatus))
+      (currentStatus !== undefined && requiresPaidCycle(currentStatus)) ||
+      (initiativeCredits !== undefined && Math.max(0, safeParseNumber(initiativeCredits)) === 0)
     );
   }
 
@@ -1944,7 +1946,10 @@ export function OnboardingClientPage({
 
     setFeedback(null);
 
-    if (statusChanged && !canUseReservedStage(targetStatus, initiative.status)) {
+    if (
+      statusChanged &&
+      !canUseReservedStage(targetStatus, initiative.status, initiative.credits)
+    ) {
       showPaymentRequiredMessage();
       setDraggedInitiativeId(null);
       setDropTargetStatus(null);
@@ -2186,9 +2191,20 @@ export function OnboardingClientPage({
       return;
     }
 
+    const draftCredits = calculateCredits(
+      draft.subitems.map((subitem) => ({
+        unit_credits: subitem.unitCredits,
+        quantity: subitem.quantity,
+      })),
+    );
+
     if (
       (!existing || existing.status !== draft.status) &&
-      !canUseReservedStage(draft.status, existing?.status)
+      !canUseReservedStage(
+        draft.status,
+        existing?.status,
+        existing ? draftCredits : undefined,
+      )
     ) {
       showPaymentRequiredMessage();
       return;
@@ -2213,12 +2229,6 @@ export function OnboardingClientPage({
       return;
     }
 
-    const draftCredits = calculateCredits(
-      draft.subitems.map((subitem) => ({
-        unit_credits: subitem.unitCredits,
-        quantity: subitem.quantity,
-      })),
-    );
     const currentReserved = existing && isReservedStatus(existing.status) ? existing.credits : 0;
     const nextReserved = isReservedStatus(draft.status) ? draftCredits : 0;
     const capacityNeeded = nextReserved - currentReserved;
