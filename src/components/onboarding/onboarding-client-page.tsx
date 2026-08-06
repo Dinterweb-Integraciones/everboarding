@@ -83,6 +83,7 @@ type OnboardingClientPageProps = {
   initialData: OnboardingSnapshot;
   initialStage?: ProjectStage;
   userId: string;
+  canSharePublicLinks: boolean;
 };
 
 function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
@@ -443,6 +444,7 @@ export function OnboardingClientPage({
   initialData,
   initialStage = "cs",
   userId,
+  canSharePublicLinks,
 }: OnboardingClientPageProps) {
   const supabase = createSupabaseBrowserClient();
   const [client, setClient] = useState(initialData.client);
@@ -527,7 +529,6 @@ export function OnboardingClientPage({
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
 
   const writable = canEdit(initialData.accessRole);
-  const ownerCanShare = initialData.accessRole === "owner";
   const stageMeta = STAGE_META[activeStage];
   const requiresNorthStar = shouldRequireNorthStarDraft(client, config, initiatives);
   const shouldShowNorthStarModal =
@@ -1358,7 +1359,7 @@ export function OnboardingClientPage({
   }
 
   function copyPublicOnboardingLink(audience: "client" | "prospect") {
-    if (!ownerCanShare) return;
+    if (!canSharePublicLinks) return;
 
     navigator.clipboard.writeText(buildPublicOnboardingUrl(audience)).then(() => {
       showSuccess(
@@ -2789,7 +2790,7 @@ export function OnboardingClientPage({
               activeStage === "cs" ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold text-[#516f90]">
                   <div className="flex items-center gap-3">
-                    {ownerCanShare ? (
+                    {canSharePublicLinks ? (
                       <Button
                         variant="secondary"
                         className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
@@ -2812,7 +2813,7 @@ export function OnboardingClientPage({
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
-                  {ownerCanShare ? (
+                  {canSharePublicLinks ? (
                     <>
                       <Button
                         variant="secondary"

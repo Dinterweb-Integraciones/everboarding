@@ -271,6 +271,7 @@ export default async function ClientDetailPage({
       }}
       initialStage={initialStage}
       userId={user.id}
+      canSharePublicLinks={accessRole === "owner" || platformRole === "superadmin"}
     />
   );
 }
