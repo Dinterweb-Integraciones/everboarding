@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
-import { EXTRA_CREDIT_PACKAGE_PURCHASE_KIND } from "@/lib/constants";
+import {
+  EXTRA_CREDIT_PACKAGE_PURCHASE_KIND,
+  resolveClientExpansionPackage,
+} from "@/lib/constants";
 import {
   getPlanPeriodLabel,
   suggestPlanPrice,
@@ -129,12 +132,10 @@ export async function POST(request: Request) {
       0,
       Math.round(Number(data.config.custom_plan_credits ?? data.config.base_capacity)),
     );
-    const contractedPrice = Number(
-      data.config.custom_plan_price ?? suggestPlanPrice(contractedCredits),
-    );
+    const expansionPackage = resolveClientExpansionPackage(contractedCredits);
     const amount =
       purchaseKind === "extra_package"
-        ? contractedPrice
+        ? expansionPackage.price
         : Number(
             data.config.custom_plan_price ??
               suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
@@ -151,7 +152,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (purchaseKind === "extra_package" && contractedCredits <= 0) {
+    if (purchaseKind === "extra_package" && expansionPackage.credits <= 0) {
       return NextResponse.json(
         { message: "Este onboarding no tiene un paquete valido para ampliar." },
         { status: 400 },
@@ -173,12 +174,12 @@ export async function POST(request: Request) {
       period_months: String(periodMonths),
       extra_capacity_credits:
         purchaseKind === "extra_package"
-          ? String(contractedCredits)
+          ? String(expansionPackage.credits)
           : "0",
     };
     const productName =
       purchaseKind === "extra_package"
-        ? `Paquete extra de ${contractedCredits} creditos - ${data.client.name}`
+        ? `Paquete extra de ${expansionPackage.credits} creditos - ${data.client.name}`
         : usesSubscription
           ? `Membresia Onboarding ${getPlanPeriodLabel(periodMonths)} - ${data.client.name}`
           : `Onboarding - ${data.client.name}`;

@@ -17,6 +17,28 @@ export const SALES_PROPOSAL_UPSELL_OPTIONS = [
 export const PUBLIC_EXTRA_CREDIT_PACKAGE = SALES_PROPOSAL_UPSELL_OPTIONS[0];
 export const EXTRA_CREDIT_PACKAGE_PURCHASE_KIND = "extra_capacity_package";
 
+export function resolveClientExpansionPackage(contractedCredits: number) {
+  const normalizedCredits = Number.isFinite(contractedCredits)
+    ? Math.max(0, Math.round(contractedCredits))
+    : 0;
+
+  if (normalizedCredits === SALES_PROPOSAL_BASE_CREDITS) {
+    return {
+      credits: SALES_PROPOSAL_BASE_CREDITS,
+      price: SALES_PROPOSAL_BASE_PRICE,
+    };
+  }
+
+  if (normalizedCredits >= PUBLIC_EXTRA_CREDIT_PACKAGE.credits) {
+    return PUBLIC_EXTRA_CREDIT_PACKAGE;
+  }
+
+  return {
+    credits: normalizedCredits,
+    price: Math.round(normalizedCredits * PLAN_PRICE_FACTOR),
+  };
+}
+
 export const PLAN_TIER_OPTIONS = [60, 80, 100] as const;
 
 export const STATUS_META: Record<

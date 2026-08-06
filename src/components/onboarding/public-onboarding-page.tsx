@@ -16,7 +16,12 @@ import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { Textarea } from "@/components/ui/textarea";
-import { PUBLIC_EXTRA_CREDIT_PACKAGE, STATUS_META, STAGE_META } from "@/lib/constants";
+import {
+  PUBLIC_EXTRA_CREDIT_PACKAGE,
+  STATUS_META,
+  STAGE_META,
+  resolveClientExpansionPackage,
+} from "@/lib/constants";
 import {
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
@@ -519,10 +524,7 @@ export function PublicOnboardingPage({
       ? Math.max(0, Number(config.custom_plan_price))
       : getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
-  const clientExpansionPackage = {
-    credits: contractedPlanCredits,
-    price: paymentAmount,
-  };
+  const clientExpansionPackage = resolveClientExpansionPackage(contractedPlanCredits);
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =
     prospectExtraPackageQuantity - persistedProspectExtraPackageQuantity;
