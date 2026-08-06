@@ -70,6 +70,7 @@ type CatalogGroupForm = {
   credits: string;
   sortOrder: string;
   isActive: boolean;
+  isPublic: boolean;
   tags: AvailableTag[];
 };
 
@@ -85,6 +86,7 @@ const emptyForm: CatalogGroupForm = {
   credits: "0",
   sortOrder: "0",
   isActive: true,
+  isPublic: true,
   tags: [],
 };
 
@@ -394,6 +396,7 @@ export function CatalogGroupsManager({
         group.priorityStatus,
         group.priorityStatus === "prioritario" ? "prioritario" : "normal",
         group.is_active ? "activo" : "inactivo",
+        group.is_public ? "publico" : "privado",
         `${group.totalCredits} cr`,
         `${group.taskCount} tareas`,
         group.taskNames.join(" "),
@@ -495,6 +498,7 @@ export function CatalogGroupsManager({
       credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
+      isPublic: group.is_public,
       tags: Array.isArray(group.tags)
         ? (group.tags.filter((tag): tag is AvailableTag => (AVAILABLE_TAGS as readonly string[]).includes(tag)))
         : [],
@@ -735,6 +739,7 @@ export function CatalogGroupsManager({
             credits: manualCredits,
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
+            isPublic: form.isPublic,
             taskIds: selectedTaskIds,
             tags: form.tags.length ? form.tags : null,
           }),
@@ -965,8 +970,38 @@ export function CatalogGroupsManager({
                     />
                     Grupo activo
                   </label>
+                  <div className="flex items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-700">Visibilidad</p>
+                      <p
+                        className={`text-xs font-bold ${
+                          form.isPublic ? "text-emerald-700" : "text-violet-700"
+                        }`}
+                      >
+                        {form.isPublic ? "Publico" : "Privado"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.isPublic}
+                      aria-label={`Cambiar visibilidad a ${form.isPublic ? "privado" : "publico"}`}
+                      onClick={() =>
+                        setForm((current) => ({ ...current, isPublic: !current.isPublic }))
+                      }
+                      className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 ${
+                        form.isPublic ? "bg-emerald-500" : "bg-violet-500"
+                      }`}
+                    >
+                      <span
+                        className={`h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                          form.isPublic ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
                   <p className="text-xs leading-5 text-slate-500">
-                    Si agregas tareas, el total se calcula con ellas.
+                    Los casos privados solo aparecen para vendedores y CS. Si agregas tareas, el total se calcula con ellas.
                   </p>
                 </div>
               </div>
@@ -1536,6 +1571,9 @@ export function CatalogGroupsManager({
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Estado
                     </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Visibilidad
+                    </th>
                     <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Acciones
                     </th>
@@ -1607,6 +1645,17 @@ export function CatalogGroupsManager({
                             </span>
                           </td>
                           <td className="px-4 py-4">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                group.is_public
+                                  ? "bg-sky-50 text-sky-700"
+                                  : "bg-violet-50 text-violet-700"
+                              }`}
+                            >
+                              {group.is_public ? "Publico" : "Privado"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
                             <div className="flex justify-end gap-2">
                               <Button
                                 type="button"
@@ -1633,7 +1682,7 @@ export function CatalogGroupsManager({
                         </tr>
                         {openDescriptionGroupId === group.id ? (
                           <tr className="bg-slate-50/80">
-                            <td colSpan={6} className="px-4 py-4">
+                            <td colSpan={7} className="px-4 py-4">
                               <div className="rounded-[12px] border border-slate-200 bg-white p-4">
                                 <div className="grid gap-4 lg:grid-cols-3">
                                   <div className="lg:col-span-1">
@@ -1786,7 +1835,7 @@ export function CatalogGroupsManager({
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                         {groupsTableRows.length
                           ? "No encontramos grupos con ese criterio de busqueda."
                           : "Aun no hay grupos registrados."}

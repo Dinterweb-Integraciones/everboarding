@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { OnboardingClientPage } from "@/components/onboarding/onboarding-client-page";
 import { requireUser } from "@/lib/auth";
 import { fetchClientMembership } from "@/lib/membership-access";
+import { canViewPrivateCatalogGroups } from "@/lib/platform-access";
 import {
   createDefaultConfig,
   createDefaultBillingStatus,
@@ -34,6 +35,7 @@ export default async function ClientDetailPage({
   const { supabase, user, platformProfile } = await requireUser();
   const admin = createSupabaseAdminClient();
   const platformRole = platformProfile?.platform_role ?? null;
+  const canViewPrivateCatalog = canViewPrivateCatalogGroups(platformRole);
   const canBypassClientMembership = platformRole === "admin" || platformRole === "superadmin";
   const clientReader = canBypassClientMembership ? admin : supabase;
 
@@ -179,6 +181,17 @@ export default async function ClientDetailPage({
     ),
   );
 
+  const visibleCatalogGroupRows = ((catalogGroupRows ?? []) as Tables<"credit_catalog_groups">[]).filter(
+    (group) => canViewPrivateCatalog || group.is_public,
+  );
+  const visibleCatalogGroupIds = new Set(visibleCatalogGroupRows.map((group) => group.id));
+  const visibleCatalogGroupCategoryLinkRows = (
+    (catalogGroupCategoryLinkRows ?? []) as Tables<"credit_catalog_group_category_links">[]
+  ).filter((link) => visibleCatalogGroupIds.has(link.group_id));
+  const visibleCatalogGroupMembershipRows = (
+    (catalogGroupMembershipRows ?? []) as Tables<"credit_catalog_group_items">[]
+  ).filter((membership) => visibleCatalogGroupIds.has(membership.group_id));
+
   let members: ClientMemberRecord[] = [];
   let shareLinks: ShareLinkRecord[] = [];
 
@@ -248,10 +261,10 @@ export default async function ClientDetailPage({
         billing: billingRow ?? createDefaultBillingStatus(configRecord),
         initiatives,
         catalog: catalogRows ?? [],
-        catalogGroups: catalogGroupRows ?? [],
+        catalogGroups: visibleCatalogGroupRows,
         catalogGroupCategories: catalogGroupCategoryRows ?? [],
-        catalogGroupCategoryLinks: catalogGroupCategoryLinkRows ?? [],
-        catalogGroupMemberships: catalogGroupMembershipRows ?? [],
+        catalogGroupCategoryLinks: visibleCatalogGroupCategoryLinkRows,
+        catalogGroupMemberships: visibleCatalogGroupMembershipRows,
         shareLinks,
         members,
         northStarHistory: northStarHistoryRows ?? [],

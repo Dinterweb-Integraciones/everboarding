@@ -179,6 +179,7 @@ create table if not exists public.credit_catalog_groups (
   priority_status text not null default 'normal' check (priority_status in ('normal', 'prioritario')),
   sort_order integer not null default 0,
   is_active boolean not null default true,
+  is_public boolean not null default true,
   created_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
@@ -235,7 +236,8 @@ create table if not exists public.credit_catalog_group_items (
 );
 
 alter table public.credit_catalog_groups
-add column if not exists modal_category_id uuid references public.credit_catalog_group_categories(id) on delete set null;
+add column if not exists modal_category_id uuid references public.credit_catalog_group_categories(id) on delete set null,
+add column if not exists is_public boolean not null default true;
 
 create table if not exists public.credit_catalog_group_category_links (
   id uuid primary key default gen_random_uuid(),
@@ -542,6 +544,8 @@ create index if not exists sales_proposals_status_idx on public.sales_proposals 
 create index if not exists sales_proposals_assigned_csm_user_id_idx on public.sales_proposals (assigned_csm_user_id);
 create unique index if not exists sales_coupons_code_unique_idx on public.sales_coupons (lower(code));
 create index if not exists sales_coupons_active_idx on public.sales_coupons (is_active, starts_at, ends_at);
+create index if not exists credit_catalog_groups_public_active_sort_idx
+on public.credit_catalog_groups (is_public, is_active, sort_order, name);
 create index if not exists credit_catalog_group_badge_types_sort_idx
 on public.credit_catalog_group_badge_types (sort_order, label);
 create index if not exists credit_catalog_group_categories_sort_idx

@@ -66,6 +66,10 @@ export function canAccessHubspotSales(role: PlatformRole | null | undefined) {
   return role === "superadmin";
 }
 
+export function canViewPrivateCatalogGroups(role: PlatformRole | null | undefined) {
+  return role === "sales" || role === "csm" || role === "admin" || role === "superadmin";
+}
+
 export function getPlatformDefaultPath(role: PlatformRole | null | undefined) {
   if (role === "sales") {
     return "/sales/dinterweb";

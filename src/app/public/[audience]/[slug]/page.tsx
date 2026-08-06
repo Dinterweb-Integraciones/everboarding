@@ -101,6 +101,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       .from("credit_catalog_groups")
       .select("*")
       .eq("is_active", true)
+      .eq("is_public", true)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
     admin
@@ -149,12 +150,17 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
   const typedCatalogRows = (catalogRows ?? []) as CreditCatalogItem[];
   const typedCatalogCategoryRows = (catalogCategoryRows ?? []) as CreditCatalogCategory[];
   const typedCatalogGroupRows = (catalogGroupRows ?? []) as CreditCatalogGroup[];
+  const publicCatalogGroupIds = new Set(typedCatalogGroupRows.map((group) => group.id));
   const typedCatalogGroupCategoryRows =
     (catalogGroupCategoryRows ?? []) as CreditCatalogGroupCategory[];
   const typedCatalogGroupCategoryLinkRows =
-    (catalogGroupCategoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[];
+    ((catalogGroupCategoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[]).filter((link) =>
+      publicCatalogGroupIds.has(link.group_id),
+    );
   const typedCatalogGroupMembershipRows =
-    (catalogGroupMembershipRows ?? []) as CreditCatalogGroupItem[];
+    ((catalogGroupMembershipRows ?? []) as CreditCatalogGroupItem[]).filter((membership) =>
+      publicCatalogGroupIds.has(membership.group_id),
+    );
 
   if (prospectProposal) {
     const baseSnapshot = buildPublicProspectSnapshotBase(prospectProposal);

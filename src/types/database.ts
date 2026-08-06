@@ -771,6 +771,7 @@ export type Database = {
           priority_status: string;
           sort_order: number;
           is_active: boolean;
+          is_public: boolean;
           tags: string[] | null;
           created_by_user_id: string | null;
           created_at: string;
@@ -790,6 +791,7 @@ export type Database = {
           priority_status?: string;
           sort_order?: number;
           is_active?: boolean;
+          is_public?: boolean;
           tags?: string[] | null;
           created_by_user_id?: string | null;
           created_at?: string;
@@ -809,6 +811,7 @@ export type Database = {
           priority_status?: string;
           sort_order?: number;
           is_active?: boolean;
+          is_public?: boolean;
           tags?: string[] | null;
           created_by_user_id?: string | null;
           created_at?: string;

@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
+import { canAccessAdminCatalogs } from "@/lib/platform-access";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 export async function POST(request: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { supabase, user, platformProfile } = await requireUser();
+    if (!canAccessAdminCatalogs(platformProfile?.platform_role)) {
+      return NextResponse.json({ message: "No tienes permisos para administrar el catalogo." }, { status: 403 });
+    }
+
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
@@ -20,6 +25,7 @@ export async function POST(request: Request) {
       priorityStatus?: string | null;
       sortOrder?: number;
       isActive?: boolean;
+      isPublic?: boolean;
       taskIds?: string[];
       tags?: string[] | null;
     };
@@ -39,6 +45,7 @@ export async function POST(request: Request) {
     const priorityStatus = body.priorityStatus === "prioritario" ? "prioritario" : "normal";
     const sortOrder = Number.isFinite(body.sortOrder) ? Number(body.sortOrder) : 0;
     const isActive = body.isActive ?? true;
+    const isPublic = body.isPublic ?? true;
     const taskIds = Array.isArray(body.taskIds)
       ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
       : [];
@@ -111,6 +118,7 @@ export async function POST(request: Request) {
         priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
+        is_public: isPublic,
         tags: tags?.length ? tags : null,
         created_by_user_id: user.id,
       })

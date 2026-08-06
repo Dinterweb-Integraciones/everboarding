@@ -313,6 +313,7 @@ export async function POST(request: Request, context: RouteContext) {
         .select("id, name, description, credits")
         .eq("id", body.groupId.trim())
         .eq("is_active", true)
+        .eq("is_public", true)
         .maybeSingle();
       const groupRecord = group as GroupRecord | null;
 

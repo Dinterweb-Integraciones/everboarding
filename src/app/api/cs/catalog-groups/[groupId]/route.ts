@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
+import { canAccessAdminCatalogs } from "@/lib/platform-access";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type GroupRouteProps = {
@@ -10,7 +11,11 @@ type GroupRouteProps = {
 export async function PUT(request: Request, { params }: GroupRouteProps) {
   try {
     const { groupId } = await params;
-    const { supabase } = await requireUser();
+    const { supabase, platformProfile } = await requireUser();
+    if (!canAccessAdminCatalogs(platformProfile?.platform_role)) {
+      return NextResponse.json({ message: "No tienes permisos para administrar el catalogo." }, { status: 403 });
+    }
+
     const body = (await request.json()) as {
       name?: string;
       description?: string | null;
@@ -25,6 +30,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       priorityStatus?: string | null;
       sortOrder?: number;
       isActive?: boolean;
+      isPublic?: boolean;
       taskIds?: string[];
       tags?: string[] | null;
     };
@@ -126,6 +132,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
+        is_public: body.isPublic ?? currentGroup.is_public,
         tags: tags?.length ? tags : null,
       })
       .eq("id", groupId)
@@ -237,7 +244,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 export async function DELETE(_: Request, { params }: GroupRouteProps) {
   try {
     const { groupId } = await params;
-    const { supabase } = await requireUser();
+    const { supabase, platformProfile } = await requireUser();
+    if (!canAccessAdminCatalogs(platformProfile?.platform_role)) {
+      return NextResponse.json({ message: "No tienes permisos para administrar el catalogo." }, { status: 403 });
+    }
 
     const { error: detachCategoryLinksError } = await supabase
       .from("credit_catalog_group_category_links")
