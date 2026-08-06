@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
-import { EXTRA_CREDIT_PACKAGE_PURCHASE_KIND, PUBLIC_EXTRA_CREDIT_PACKAGE } from "@/lib/constants";
+import { EXTRA_CREDIT_PACKAGE_PURCHASE_KIND } from "@/lib/constants";
 import {
   getPlanPeriodLabel,
   suggestPlanPrice,
@@ -125,9 +125,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const contractedCredits = Math.max(
+      0,
+      Math.round(Number(data.config.custom_plan_credits ?? data.config.base_capacity)),
+    );
+    const contractedPrice = Number(
+      data.config.custom_plan_price ?? suggestPlanPrice(contractedCredits),
+    );
     const amount =
       purchaseKind === "extra_package"
-        ? PUBLIC_EXTRA_CREDIT_PACKAGE.price
+        ? contractedPrice
         : Number(
             data.config.custom_plan_price ??
               suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
@@ -140,6 +147,13 @@ export async function POST(request: Request) {
     if (!Number.isFinite(amountInCents) || amountInCents <= 0) {
       return NextResponse.json(
         { message: "Este onboarding no tiene un monto valido para pagar." },
+        { status: 400 },
+      );
+    }
+
+    if (purchaseKind === "extra_package" && contractedCredits <= 0) {
+      return NextResponse.json(
+        { message: "Este onboarding no tiene un paquete valido para ampliar." },
         { status: 400 },
       );
     }
@@ -159,12 +173,12 @@ export async function POST(request: Request) {
       period_months: String(periodMonths),
       extra_capacity_credits:
         purchaseKind === "extra_package"
-          ? String(PUBLIC_EXTRA_CREDIT_PACKAGE.credits)
+          ? String(contractedCredits)
           : "0",
     };
     const productName =
       purchaseKind === "extra_package"
-        ? `Paquete extra de ${PUBLIC_EXTRA_CREDIT_PACKAGE.credits} creditos - ${data.client.name}`
+        ? `Paquete extra de ${contractedCredits} creditos - ${data.client.name}`
         : usesSubscription
           ? `Membresia Onboarding ${getPlanPeriodLabel(periodMonths)} - ${data.client.name}`
           : `Onboarding - ${data.client.name}`;

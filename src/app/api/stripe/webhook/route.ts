@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
 import {
+  getExtraCreditPackageCredits,
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
@@ -134,6 +135,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       paymentIntentId: getObjectId(session.payment_intent),
       amountCents: session.amount_total ?? 0,
       currency: session.currency ?? "usd",
+      grantedCredits: getExtraCreditPackageCredits(session.metadata),
     });
 
     return NextResponse.json({ received: true });

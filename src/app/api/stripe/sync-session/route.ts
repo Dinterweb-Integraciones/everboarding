@@ -3,6 +3,7 @@ import Stripe from "stripe";
 
 import {
   fetchClientBillingStatus,
+  getExtraCreditPackageCredits,
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
@@ -109,6 +110,10 @@ export async function POST(request: Request) {
     const purchaseKind = isExtraCreditPackagePurchase(session.metadata)
       ? "extra_capacity_package"
       : "plan";
+    const grantedCredits =
+      purchaseKind === "extra_capacity_package"
+        ? getExtraCreditPackageCredits(session.metadata)
+        : 0;
 
     if (purchaseKind === "extra_capacity_package") {
       await recordExtraCreditPackagePayment({
@@ -117,6 +122,7 @@ export async function POST(request: Request) {
         paymentIntentId: paymentIntentId || null,
         amountCents: session.amount_total ?? 0,
         currency: session.currency ?? "usd",
+        grantedCredits,
       });
     } else {
       const supabase = createSupabaseAdminClient();
@@ -146,7 +152,7 @@ export async function POST(request: Request) {
     }
 
     const billing = await fetchClientBillingStatus(clientId);
-    return NextResponse.json({ billing, purchaseKind });
+    return NextResponse.json({ billing, purchaseKind, grantedCredits });
   } catch (caughtError) {
     return NextResponse.json(
       {

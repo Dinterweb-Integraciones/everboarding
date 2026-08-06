@@ -20,6 +20,16 @@ export function isExtraCreditPackagePurchase(
   return metadata?.purchase_kind === EXTRA_CREDIT_PACKAGE_PURCHASE_KIND;
 }
 
+export function getExtraCreditPackageCredits(
+  metadata: Record<string, string | undefined> | null | undefined,
+) {
+  const credits = Number(metadata?.extra_capacity_credits);
+
+  return Number.isFinite(credits) && credits > 0
+    ? Math.round(credits)
+    : PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+}
+
 export async function recordExtraCreditPackagePayment(
   input: ExtraCreditPackagePaymentInput,
 ) {

@@ -515,10 +515,14 @@ export function PublicOnboardingPage({
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const paymentAmount =
-    audience === "prospect" && config.custom_plan_price !== null
+    config.custom_plan_price !== null
       ? Math.max(0, Number(config.custom_plan_price))
       : getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
+  const clientExpansionPackage = {
+    credits: contractedPlanCredits,
+    price: paymentAmount,
+  };
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =
     prospectExtraPackageQuantity - persistedProspectExtraPackageQuantity;
@@ -556,7 +560,7 @@ export function PublicOnboardingPage({
           prospectPercentageOff,
         )
       : paymentAmount + prospectExtraPackageDraftPrice;
-  const extraPackageResultingCredits = metrics.total + PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+  const extraPackageResultingCredits = metrics.total + clientExpansionPackage.credits;
   const isRecurringPlan = config.custom_plan_billing_mode !== "one_time";
   const paymentAmountLabel = isRecurringPlan
     ? `Inversión ${getPlanCadenceLabel(config.custom_plan_period_months)}`
@@ -867,6 +871,7 @@ export function PublicOnboardingPage({
       const payload = (await response.json()) as {
         billing?: ClientBillingStatus;
         purchaseKind?: "plan" | "extra_capacity_package";
+        grantedCredits?: number;
         message?: string;
       };
 
@@ -881,7 +886,7 @@ export function PublicOnboardingPage({
           tone: "success",
           message:
             payload.purchaseKind === "extra_capacity_package"
-              ? `Pago confirmado. Ya habilitamos ${PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos extra.`
+              ? `Pago confirmado. Ya habilitamos ${payload.grantedCredits ?? 0} créditos extra.`
               : "Pago confirmado. El ciclo quedo activo.",
         });
         params.delete("payment");
@@ -1669,13 +1674,13 @@ export function PublicOnboardingPage({
                           Inversión total
                         </p>
                         <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
-                          {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}
+                          {formatCurrency(clientExpansionPackage.price)}
                         </p>
                       </div>
                       <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
                       <div className="flex shrink-0 items-center px-4 py-3">
                         <span className="inline-flex h-11 min-w-[96px] items-center justify-center whitespace-nowrap rounded-[2px] border border-[#9fe7dc] bg-[#ecfffb] px-4 text-[16px] font-bold text-[#00bda5] [font-variant-numeric:tabular-nums]">
-                          {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR
+                          {clientExpansionPackage.credits} CR
                         </span>
                       </div>
                       <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
@@ -3087,7 +3092,7 @@ export function PublicOnboardingPage({
                   Agregar más créditos
                 </h3>
                 <p className="mt-2 text-[13px] text-[#516f90]">
-                  Este paquete añade {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos a tu capacidad actual.
+                  Este paquete añade {clientExpansionPackage.credits} créditos a tu capacidad actual.
                 </p>
               </div>
               <button
@@ -3111,9 +3116,9 @@ export function PublicOnboardingPage({
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-bold">
-                    Paquete adicional {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR:
+                    Paquete adicional {clientExpansionPackage.credits} CR:
                   </span>
-                  <span className="font-bold">{formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}</span>
+                  <span className="font-bold">{formatCurrency(clientExpansionPackage.price)}</span>
                 </div>
                 <div className="border-t border-[#99f6e4] pt-3">
                   <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">
