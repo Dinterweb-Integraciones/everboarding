@@ -38,10 +38,14 @@ export async function DELETE(_: Request, { params }: BadgeTypeRouteProps) {
 
     if (usageError) throw usageError;
     if ((usageRows ?? []).length > 0) {
-      return NextResponse.json(
-        { message: "No puedes eliminar una keyword que está asignada a un caso de uso." },
-        { status: 409 },
-      );
+      const { error: archiveError } = await supabase
+        .from("credit_catalog_group_badge_types")
+        .update({ is_active: false, is_legacy: true })
+        .eq("id", badgeTypeId);
+
+      if (archiveError) throw archiveError;
+
+      return NextResponse.json({ success: true, disposition: "archived" });
     }
 
     const { error } = await supabase
@@ -51,7 +55,7 @@ export async function DELETE(_: Request, { params }: BadgeTypeRouteProps) {
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, disposition: "deleted" });
   } catch (caughtError) {
     return NextResponse.json(
       { message: formatUserError(caughtError, "No pudimos eliminar la keyword.") },

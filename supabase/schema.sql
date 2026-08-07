@@ -195,6 +195,7 @@ create table if not exists public.credit_catalog_group_badge_types (
   label text not null unique,
   sort_order integer not null default 0,
   is_active boolean not null default true,
+  is_legacy boolean not null default false,
   created_by_user_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
@@ -579,6 +580,8 @@ create index if not exists credit_catalog_groups_public_active_sort_idx
 on public.credit_catalog_groups (is_public, is_active, sort_order, name);
 create index if not exists credit_catalog_group_badge_types_sort_idx
 on public.credit_catalog_group_badge_types (sort_order, label);
+create index if not exists credit_catalog_group_badge_types_available_idx
+on public.credit_catalog_group_badge_types (is_legacy, is_active, sort_order, label);
 create index if not exists credit_catalog_group_categories_sort_idx
 on public.credit_catalog_group_categories (sort_order, name);
 create index if not exists credit_catalog_use_case_categories_name_idx

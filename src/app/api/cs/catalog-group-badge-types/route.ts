@@ -27,16 +27,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "El nombre de la keyword es requerido." }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    const { data: existingKeyword, error: existingKeywordError } = await supabase
       .from("credit_catalog_group_badge_types")
-      .insert({
-        label,
-        sort_order: sortOrder,
-        is_active: isActive,
-        created_by_user_id: user.id,
-      })
-      .select("*")
-      .single();
+      .select("id")
+      .ilike("label", label)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingKeywordError) throw existingKeywordError;
+
+    const keywordMutation = existingKeyword
+      ? supabase
+          .from("credit_catalog_group_badge_types")
+          .update({
+            label,
+            sort_order: sortOrder,
+            is_active: isActive,
+            is_legacy: false,
+          })
+          .eq("id", existingKeyword.id)
+      : supabase
+          .from("credit_catalog_group_badge_types")
+          .insert({
+            label,
+            sort_order: sortOrder,
+            is_active: isActive,
+            is_legacy: false,
+            created_by_user_id: user.id,
+          });
+
+    const { data, error } = await keywordMutation.select("*").single();
 
     if (error) throw error;
 

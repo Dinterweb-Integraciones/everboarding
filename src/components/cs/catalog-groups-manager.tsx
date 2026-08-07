@@ -256,7 +256,7 @@ export function CatalogGroupsManager({
   const availableBadgeTypes = useMemo(
     () =>
       [...badgeTypes]
-        .filter((badgeType) => badgeType.is_active)
+        .filter((badgeType) => badgeType.is_active && !badgeType.is_legacy)
         .sort(
           (left, right) =>
             safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
@@ -690,15 +690,11 @@ export function CatalogGroupsManager({
 
   async function deleteBadgeType(badgeType: CreditCatalogGroupBadgeType) {
     const usageCount = badgeTypeUsageCounts.get(badgeType.label) ?? 0;
-    if (usageCount > 0) {
-      setFeedback({
-        tone: "error",
-        message: `No puedes eliminar "${badgeType.label}" porque está asignada a ${usageCount} caso${usageCount === 1 ? "" : "s"} de uso.`,
-      });
-      return;
-    }
-
-    const confirmed = window.confirm(`¿Eliminar la keyword "${badgeType.label}"?`);
+    const confirmed = window.confirm(
+      usageCount > 0
+        ? `¿Retirar la keyword "${badgeType.label}" del catálogo? Seguirá guardada en los ${usageCount} casos de uso que ya la tienen asignada.`
+        : `¿Eliminar la keyword "${badgeType.label}"?`,
+    );
     if (!confirmed) return;
 
     setDeletingBadgeTypeId(badgeType.id);
@@ -708,7 +704,10 @@ export function CatalogGroupsManager({
       const response = await fetch(`/api/cs/catalog-group-badge-types/${badgeType.id}`, {
         method: "DELETE",
       });
-      const payload = (await response.json()) as { message?: string };
+      const payload = (await response.json()) as {
+        message?: string;
+        disposition?: "archived" | "deleted";
+      };
       if (!response.ok) {
         throw new Error(payload.message || "No pudimos eliminar la keyword.");
       }
@@ -717,7 +716,13 @@ export function CatalogGroupsManager({
       setForm((current) =>
         current.displayBadge === badgeType.label ? { ...current, displayBadge: "" } : current,
       );
-      setFeedback({ tone: "success", message: "Keyword eliminada." });
+      setFeedback({
+        tone: "success",
+        message:
+          payload.disposition === "archived"
+            ? "Keyword archivada. Ya no aparece en el catálogo."
+            : "Keyword eliminada.",
+      });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
@@ -2201,7 +2206,7 @@ export function CatalogGroupsManager({
                 </div>
 
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Las keywords asignadas a casos de uso no se pueden eliminar hasta que dejen de estar en uso.
+                  Si una keyword está en uso, se archivará y dejará de aparecer aquí sin afectar los casos existentes.
                 </p>
 
                 <div className="mt-5 space-y-2">
@@ -2244,10 +2249,10 @@ export function CatalogGroupsManager({
                           <button
                             type="button"
                             onClick={() => void deleteBadgeType(badgeType)}
-                            disabled={usageCount > 0 || isDeleting}
+                            disabled={isDeleting}
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
-                            aria-label={`Eliminar keyword ${badgeType.label}`}
-                            title={usageCount > 0 ? "No se puede eliminar porque está en uso" : "Eliminar keyword"}
+                            aria-label={`${usageCount > 0 ? "Archivar" : "Eliminar"} keyword ${badgeType.label}`}
+                            title={usageCount > 0 ? "Archivar keyword" : "Eliminar keyword"}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

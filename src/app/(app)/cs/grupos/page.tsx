@@ -23,7 +23,13 @@ export default async function CatalogGroupsPage() {
     { data: membershipRows, error: membershipsError },
   ] = await Promise.all([
     supabase.from("credit_catalog_groups").select("*").order("sort_order").order("name"),
-    supabase.from("credit_catalog_group_badge_types").select("*").eq("is_active", true).order("sort_order").order("label"),
+    supabase
+      .from("credit_catalog_group_badge_types")
+      .select("*")
+      .eq("is_active", true)
+      .eq("is_legacy", false)
+      .order("sort_order")
+      .order("label"),
     supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
     supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     supabase.from("credit_catalog_use_case_categories").select("*").order("name"),

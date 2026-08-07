@@ -842,6 +842,7 @@ export type Database = {
           label: string;
           sort_order: number;
           is_active: boolean;
+          is_legacy: boolean;
           created_by_user_id: string | null;
           created_at: string;
           updated_at: string;
@@ -851,6 +852,7 @@ export type Database = {
           label: string;
           sort_order?: number;
           is_active?: boolean;
+          is_legacy?: boolean;
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -860,6 +862,7 @@ export type Database = {
           label?: string;
           sort_order?: number;
           is_active?: boolean;
+          is_legacy?: boolean;
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
