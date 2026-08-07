@@ -9,7 +9,8 @@ import type { PlatformRole } from "@/lib/platform-access";
 
 const catalogLinks = [
   { href: "/cs/categorias", label: "Categorias" },
-  { href: "/cs/categorias-grupos", label: "Categorias de casos de uso" },
+  { href: "/cs/categorias-grupos", label: "Categorías de Guía Inteligente" },
+  { href: "/cs/categorias-casos-uso", label: "Categorías de Casos de Uso" },
   { href: "/cs/tareas", label: "Actividades" },
   { href: "/cs/grupos", label: "Casos de Uso" },
   { href: "/cs/clientes", label: "Clientes" },
@@ -56,7 +57,8 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
       ? [
           { href: "/cs/prompts", label: "Prompts", icon: MessageSquareText },
           { href: "/cs/categorias", label: "Categorias", icon: LayoutGrid },
-          { href: "/cs/categorias-grupos", label: "Cat. casos de uso", icon: LayoutGrid },
+          { href: "/cs/categorias-grupos", label: "Cat. Guía Inteligente", icon: LayoutGrid },
+          { href: "/cs/categorias-casos-uso", label: "Cat. Casos de Uso", icon: LayoutGrid },
           { href: "/cs/tareas", label: "Actividades", icon: LayoutGrid },
           { href: "/cs/grupos", label: "Casos de Uso", icon: LayoutGrid },
           { href: "/cs/clientes", label: "Clientes", icon: LayoutGrid },

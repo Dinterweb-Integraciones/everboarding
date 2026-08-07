@@ -1,6 +1,6 @@
 import { CatalogGroupCategoriesManager } from "@/components/cs/catalog-group-categories-manager";
 import { requireUser } from "@/lib/auth";
-import type { CreditCatalogGroupCategory, CreditCatalogGroupCategoryLink } from "@/lib/onboarding";
+import type { CreditCatalogGroupCategory } from "@/lib/onboarding";
 
 export default async function CatalogGroupCategoriesPage() {
   const { supabase } = await requireUser();
@@ -12,17 +12,26 @@ export default async function CatalogGroupCategoriesPage() {
     ]);
 
   if (categoriesError) {
-    throw new Error("No pudimos cargar las categorias de grupos.");
+    throw new Error("No pudimos cargar las categorías de Guía Inteligente.");
   }
 
   if (categoryLinksError) {
     throw new Error("No pudimos cargar los casos de uso para el conteo por categoria.");
   }
 
+  const usageCounts = (categoryLinkRows ?? []).reduce<Record<string, Set<string>>>((counts, link) => {
+    counts[link.category_id] ??= new Set<string>();
+    counts[link.category_id].add(link.group_id);
+    return counts;
+  }, {});
+
   return (
     <CatalogGroupCategoriesManager
       initialCategories={(categoryRows ?? []) as CreditCatalogGroupCategory[]}
-      initialCategoryLinks={(categoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[]}
+      initialUsageCounts={Object.fromEntries(
+        Object.entries(usageCounts).map(([categoryId, groupIds]) => [categoryId, groupIds.size]),
+      )}
+      catalogType="guide"
     />
   );
 }

@@ -765,8 +765,14 @@ export type Database = {
           completion_outcome: string | null;
           success_milestone: string | null;
           display_badge: string | null;
+          cluster: string | null;
+          use_case_code: string | null;
+          next_logical_use_cases: string | null;
+          previous_use_cases: string | null;
+          subsequent_use_cases: string | null;
           modal_category: string | null;
           modal_category_id: string | null;
+          use_case_category_id: string | null;
           credits: number;
           priority_status: string;
           sort_order: number;
@@ -785,8 +791,14 @@ export type Database = {
           completion_outcome?: string | null;
           success_milestone?: string | null;
           display_badge?: string | null;
+          cluster?: string | null;
+          use_case_code?: string | null;
+          next_logical_use_cases?: string | null;
+          previous_use_cases?: string | null;
+          subsequent_use_cases?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
+          use_case_category_id?: string | null;
           credits?: number;
           priority_status?: string;
           sort_order?: number;
@@ -805,8 +817,14 @@ export type Database = {
           completion_outcome?: string | null;
           success_milestone?: string | null;
           display_badge?: string | null;
+          cluster?: string | null;
+          use_case_code?: string | null;
+          next_logical_use_cases?: string | null;
+          previous_use_cases?: string | null;
+          subsequent_use_cases?: string | null;
           modal_category?: string | null;
           modal_category_id?: string | null;
+          use_case_category_id?: string | null;
           credits?: number;
           priority_status?: string;
           sort_order?: number;
@@ -871,6 +889,32 @@ export type Database = {
           name?: string;
           description?: string | null;
           sort_order?: number;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      credit_catalog_use_case_categories: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;

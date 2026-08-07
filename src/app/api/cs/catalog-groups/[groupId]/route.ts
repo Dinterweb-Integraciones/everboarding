@@ -23,11 +23,16 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       completionOutcome?: string | null;
       successMilestone?: string | null;
       displayBadge?: string | null;
+      cluster?: string | null;
+      useCaseCode?: string | null;
+      nextLogicalUseCases?: string | null;
+      previousUseCases?: string | null;
+      subsequentUseCases?: string | null;
       modalCategoryIds?: string[] | null;
       modalCategoryId?: string | null;
       modalCategory?: string | null;
+      useCaseCategoryId?: string | null;
       credits?: number;
-      priorityStatus?: string | null;
       sortOrder?: number;
       isActive?: boolean;
       isPublic?: boolean;
@@ -41,13 +46,18 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const completionOutcome = body.completionOutcome?.trim() || null;
     const successMilestone = body.successMilestone?.trim() || null;
     const displayBadge = body.displayBadge?.trim() || null;
+    const cluster = body.cluster?.trim() || null;
+    const useCaseCode = body.useCaseCode?.trim() || null;
+    const nextLogicalUseCases = body.nextLogicalUseCases?.trim() || null;
+    const previousUseCases = body.previousUseCases?.trim() || null;
+    const subsequentUseCases = body.subsequentUseCases?.trim() || null;
     const requestedModalCategoryIds = Array.isArray(body.modalCategoryIds)
       ? [...new Set(body.modalCategoryIds.map((categoryId) => categoryId.trim()).filter(Boolean))]
       : [];
     const requestedModalCategoryId = body.modalCategoryId?.trim() || null;
     const requestedModalCategoryName = body.modalCategory?.trim() || null;
+    const requestedUseCaseCategoryId = body.useCaseCategoryId?.trim() || null;
     const credits = Math.max(0, safeParseNumber(body.credits));
-    const priorityStatus = body.priorityStatus === "prioritario" ? "prioritario" : "normal";
     const sortOrder = Number.isFinite(body.sortOrder) ? Number(body.sortOrder) : 0;
     const isActive = body.isActive ?? true;
     const taskIds = Array.isArray(body.taskIds)
@@ -60,6 +70,10 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     if (!name) {
       return NextResponse.json({ message: "El nombre del grupo es requerido." }, { status: 400 });
+    }
+
+    if (!useCaseCode) {
+      return NextResponse.json({ message: "El código #CU es requerido." }, { status: 400 });
     }
 
     if (!taskIds.length && credits <= 0) {
@@ -107,6 +121,22 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
 
     const primaryCategory = selectedCategories[0] ?? null;
 
+    if (requestedUseCaseCategoryId) {
+      const { data: useCaseCategory, error: useCaseCategoryError } = await supabase
+        .from("credit_catalog_use_case_categories")
+        .select("id")
+        .eq("id", requestedUseCaseCategoryId)
+        .maybeSingle();
+
+      if (useCaseCategoryError) throw useCaseCategoryError;
+      if (!useCaseCategory) {
+        return NextResponse.json(
+          { message: "La categoría de casos de uso seleccionada ya no existe." },
+          { status: 400 },
+        );
+      }
+    }
+
     const { data: currentGroup, error: currentError } = await supabase
       .from("credit_catalog_groups")
       .select("*")
@@ -126,10 +156,15 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         completion_outcome: completionOutcome,
         success_milestone: successMilestone,
         display_badge: displayBadge,
+        cluster,
+        use_case_code: useCaseCode,
+        next_logical_use_cases: nextLogicalUseCases,
+        previous_use_cases: previousUseCases,
+        subsequent_use_cases: subsequentUseCases,
         modal_category: primaryCategory?.name ?? null,
         modal_category_id: primaryCategory?.id ?? null,
+        use_case_category_id: requestedUseCaseCategoryId,
         credits,
-        priority_status: priorityStatus,
         sort_order: sortOrder,
         is_active: isActive,
         is_public: body.isPublic ?? currentGroup.is_public,
@@ -139,6 +174,12 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       .select("*")
       .single();
 
+    if (error?.code === "23505" && error.message.includes("use_case_code")) {
+      return NextResponse.json(
+        { message: "El código #CU ya está asignado a otro caso de uso." },
+        { status: 409 },
+      );
+    }
     if (error || !data) throw error ?? new Error("No pudimos actualizar el grupo.");
     const { data: existingCategoryLinks, error: existingCategoryLinksError } = await supabase
       .from("credit_catalog_group_category_links")

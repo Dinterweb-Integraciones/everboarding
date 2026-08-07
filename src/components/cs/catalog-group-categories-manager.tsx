@@ -7,13 +7,43 @@ import { Button } from "@/components/ui/button";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { CreditCatalogGroupCategory, CreditCatalogGroupCategoryLink } from "@/lib/onboarding";
+import type {
+  CreditCatalogGroupCategory,
+  CreditCatalogUseCaseCategory,
+} from "@/lib/onboarding";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type CatalogGroupCategoriesManagerProps = {
-  initialCategories: CreditCatalogGroupCategory[];
-  initialCategoryLinks: CreditCatalogGroupCategoryLink[];
+  initialCategories: Array<CreditCatalogGroupCategory | CreditCatalogUseCaseCategory>;
+  initialUsageCounts: Record<string, number>;
+  catalogType: "guide" | "use-case";
 };
+
+type CatalogCategory = CreditCatalogGroupCategory | CreditCatalogUseCaseCategory;
+
+const catalogConfig = {
+  guide: {
+    title: "Categorías de Guía Inteligente",
+    description:
+      "Aquí administras las categorías que definen las pestañas visibles en la Guía Inteligente.",
+    apiPath: "/api/cs/catalog-group-categories",
+    hasSortOrder: true,
+    singular: "categoría de Guía Inteligente",
+    countLabel: "casos de uso",
+    emptyMessage: "Aún no hay categorías de Guía Inteligente registradas.",
+    deletePrompt: "del catálogo de categorías de Guía Inteligente",
+  },
+  "use-case": {
+    title: "Categorías de Casos de Uso",
+    description: "Aquí administras las categorías propias que puedes asignar a cada caso de uso.",
+    apiPath: "/api/cs/catalog-use-case-categories",
+    hasSortOrder: false,
+    singular: "categoría de casos de uso",
+    countLabel: "casos de uso",
+    emptyMessage: "Aún no hay categorías de casos de uso registradas.",
+    deletePrompt: "del catálogo de categorías de casos de uso",
+  },
+} as const;
 
 type CatalogGroupCategoryForm = {
   name: string;
@@ -29,12 +59,16 @@ const emptyForm: CatalogGroupCategoryForm = {
   isActive: true,
 };
 
+function getCategorySortOrder(category: CatalogCategory) {
+  return "sort_order" in category ? safeParseNumber(category.sort_order) : 0;
+}
+
 export function CatalogGroupCategoriesManager({
   initialCategories,
-  initialCategoryLinks,
+  initialUsageCounts,
+  catalogType,
 }: CatalogGroupCategoriesManagerProps) {
   const [categories, setCategories] = useState(initialCategories);
-  const [categoryLinks] = useState(initialCategoryLinks);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<CatalogGroupCategoryForm>(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
@@ -42,24 +76,21 @@ export function CatalogGroupCategoriesManager({
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const config = catalogConfig[catalogType];
 
   const rows = useMemo(
     () =>
       [...categories]
         .sort(
           (left, right) =>
-            safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+            (config.hasSortOrder ? getCategorySortOrder(left) - getCategorySortOrder(right) : 0)
             || left.name.localeCompare(right.name, "es"),
         )
         .map((category) => ({
           ...category,
-          groupCount: new Set(
-            categoryLinks
-              .filter((link) => link.category_id === category.id)
-              .map((link) => link.group_id),
-          ).size,
+          groupCount: initialUsageCounts[category.id] ?? 0,
         })),
-    [categories, categoryLinks],
+    [categories, config.hasSortOrder, initialUsageCounts],
   );
 
   function resetForm() {
@@ -67,12 +98,12 @@ export function CatalogGroupCategoriesManager({
     setForm(emptyForm);
   }
 
-  function startEdit(category: CreditCatalogGroupCategory) {
+  function startEdit(category: CatalogCategory) {
     setEditingId(category.id);
     setForm({
       name: category.name,
       description: category.description ?? "",
-      sortOrder: String(category.sort_order ?? 0),
+      sortOrder: String(getCategorySortOrder(category)),
       isActive: category.is_active,
     });
   }
@@ -84,69 +115,67 @@ export function CatalogGroupCategoriesManager({
 
     try {
       const response = await fetch(
-        editingId
-          ? `/api/cs/catalog-group-categories/${editingId}`
-          : "/api/cs/catalog-group-categories",
+        editingId ? `${config.apiPath}/${editingId}` : config.apiPath,
         {
           method: editingId ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: form.name,
             description: form.description,
-            sortOrder: safeParseNumber(form.sortOrder),
+            ...(config.hasSortOrder ? { sortOrder: safeParseNumber(form.sortOrder) } : {}),
             isActive: form.isActive,
           }),
         },
       );
 
-      const payload = (await response.json()) as CreditCatalogGroupCategory & { message?: string };
+      const payload = (await response.json()) as CatalogCategory & { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos guardar la categoria de grupo.");
+        throw new Error(payload.message || `No pudimos guardar la ${config.singular}.`);
       }
 
       if (editingId) {
         setCategories((current) =>
           current.map((category) => (category.id === editingId ? { ...category, ...payload } : category)),
         );
-        setFeedback({ tone: "success", message: "Categoria de grupo actualizada." });
+        setFeedback({ tone: "success", message: "Categoría actualizada." });
       } else {
         setCategories((current) => [...current, payload]);
-        setFeedback({ tone: "success", message: "Categoria de grupo creada." });
+        setFeedback({ tone: "success", message: "Categoría creada." });
       }
 
       resetForm();
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos guardar la categoria de grupo."),
+        message: formatUserError(caughtError, `No pudimos guardar la ${config.singular}.`),
       });
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleDelete(category: CreditCatalogGroupCategory) {
-    const confirmed = window.confirm(`Eliminar "${category.name}" del catalogo de categorias de grupos?`);
+  async function handleDelete(category: CatalogCategory) {
+    const confirmed = window.confirm(`¿Eliminar "${category.name}" ${config.deletePrompt}?`);
     if (!confirmed) return;
 
     try {
-      const response = await fetch(`/api/cs/catalog-group-categories/${category.id}`, {
+      const response = await fetch(`${config.apiPath}/${category.id}`, {
         method: "DELETE",
       });
       const payload = (await response.json()) as { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos eliminar la categoria de grupo.");
+        throw new Error(payload.message || `No pudimos eliminar la ${config.singular}.`);
       }
 
       setCategories((current) => current.filter((item) => item.id !== category.id));
       if (editingId === category.id) {
         resetForm();
       }
-      setFeedback({ tone: "success", message: "Categoria de grupo eliminada." });
+      setFeedback({ tone: "success", message: "Categoría eliminada." });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos eliminar la categoria de grupo."),
+        message: formatUserError(caughtError, `No pudimos eliminar la ${config.singular}.`),
       });
     }
   }
@@ -163,16 +192,16 @@ export function CatalogGroupCategoriesManager({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                 CRUD CS
               </p>
-              <h1 className="text-2xl font-black text-slate-900">Categorias de grupos</h1>
+              <h1 className="text-2xl font-black text-slate-900">{config.title}</h1>
             </div>
           </div>
 
           <p className="mt-4 text-sm text-slate-600">
-            Aqui administras las categorias visuales de los grupos y el orden en que deben mostrarse.
+            {config.description}
           </p>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px]">
+            <div className={config.hasSortOrder ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px]" : "grid gap-4"}>
               <div>
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                   Nombre de la categoria
@@ -184,17 +213,19 @@ export function CatalogGroupCategoriesManager({
                 />
               </div>
 
-              <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Orden visual
-                </label>
-                <Input
-                  type="number"
-                  value={form.sortOrder}
-                  onChange={(event) => setForm((current) => ({ ...current, sortOrder: event.target.value }))}
-                  placeholder="0"
-                />
-              </div>
+              {config.hasSortOrder ? (
+                <div>
+                  <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Orden visual
+                  </label>
+                  <Input
+                    type="number"
+                    value={form.sortOrder}
+                    onChange={(event) => setForm((current) => ({ ...current, sortOrder: event.target.value }))}
+                    placeholder="0"
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div>
@@ -254,11 +285,13 @@ export function CatalogGroupCategoriesManager({
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Descripcion
                   </th>
+                  {config.hasSortOrder ? (
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Orden
+                    </th>
+                  ) : null}
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Orden
-                  </th>
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Grupos
+                    Casos de uso
                   </th>
                   <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                     Estado
@@ -274,8 +307,12 @@ export function CatalogGroupCategoriesManager({
                     <tr key={category.id}>
                       <td className="px-4 py-4 font-semibold text-slate-900">{category.name}</td>
                       <td className="px-4 py-4 text-slate-600">{category.description || "Sin descripcion"}</td>
-                      <td className="px-4 py-4 text-slate-600">{safeParseNumber(category.sort_order)}</td>
-                      <td className="px-4 py-4 text-slate-600">{category.groupCount} grupos</td>
+                      {config.hasSortOrder ? (
+                        <td className="px-4 py-4 text-slate-600">{getCategorySortOrder(category)}</td>
+                      ) : null}
+                      <td className="px-4 py-4 text-slate-600">
+                        {category.groupCount} {config.countLabel}
+                      </td>
                       <td className="px-4 py-4">
                         <span
                           className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
@@ -303,8 +340,8 @@ export function CatalogGroupCategoriesManager({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Aun no hay categorias de grupos registradas.
+                    <td colSpan={config.hasSortOrder ? 6 : 5} className="px-4 py-8 text-center text-slate-500">
+                      {config.emptyMessage}
                     </td>
                   </tr>
                 )}

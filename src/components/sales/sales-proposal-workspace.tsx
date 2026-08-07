@@ -4033,14 +4033,14 @@ function mergeRecommendedGroups(
                           fallback: "Sin descripcion detallada.",
                         },
                         {
-                          label: "Al terminar el caso de uso",
+                          label: "Responsabilidades del cliente",
                           value: summaryCatalogGroup?.completionOutcome || "",
                           fallback: "Sin resultado definido.",
                         },
                         {
-                          label: "Hito de exito",
+                          label: "Criterio de Éxito",
                           value: summaryCatalogGroup?.successMilestone || "",
-                          fallback: "Sin hito definido.",
+                          fallback: "Sin criterio definido.",
                         },
                       ];
 
@@ -4580,7 +4580,7 @@ function mergeRecommendedGroups(
               {catalogPreviewGroup.completionOutcome ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Al terminar el caso de uso
+                    Responsabilidades del cliente
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay
@@ -4594,7 +4594,7 @@ function mergeRecommendedGroups(
               {catalogPreviewGroup.successMilestone ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Hito de exito
+                    Criterio de Éxito
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay
@@ -4997,7 +4997,7 @@ function mergeRecommendedGroups(
               {catalogGroupForDraft?.completionOutcome ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Al terminar el caso de uso
+                    Responsabilidades del cliente
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay
@@ -5011,7 +5011,7 @@ function mergeRecommendedGroups(
               {catalogGroupForDraft?.successMilestone ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Hito de exito
+                    Criterio de Éxito
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay

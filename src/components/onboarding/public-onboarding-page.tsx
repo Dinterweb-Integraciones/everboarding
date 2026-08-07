@@ -2713,7 +2713,7 @@ export function PublicOnboardingPage({
               {catalogPreviewGroup.completionOutcome ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Al terminar el caso de uso
+                    Responsabilidades del cliente
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay
@@ -2727,7 +2727,7 @@ export function PublicOnboardingPage({
               {catalogPreviewGroup.successMilestone ? (
                 <section>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Hito de exito
+                    Criterio de Éxito
                   </p>
                   <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
                     <RichTextDisplay

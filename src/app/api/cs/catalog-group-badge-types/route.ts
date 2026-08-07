@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
+import { canAccessAdminCatalogs } from "@/lib/platform-access";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 export async function POST(request: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { supabase, user, platformProfile } = await requireUser();
+    if (!canAccessAdminCatalogs(platformProfile?.platform_role)) {
+      return NextResponse.json(
+        { message: "No tienes permisos para administrar keywords." },
+        { status: 403 },
+      );
+    }
     const body = (await request.json()) as {
       label?: string;
       sortOrder?: number | string;
@@ -17,7 +24,7 @@ export async function POST(request: Request) {
     const isActive = body.isActive ?? true;
 
     if (!label) {
-      return NextResponse.json({ message: "El nombre de la etiqueta es requerido." }, { status: 400 });
+      return NextResponse.json({ message: "El nombre de la keyword es requerido." }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -36,7 +43,7 @@ export async function POST(request: Request) {
     return NextResponse.json(data);
   } catch (caughtError) {
     return NextResponse.json(
-      { message: formatUserError(caughtError, "No pudimos crear la etiqueta.") },
+      { message: formatUserError(caughtError, "No pudimos crear la keyword.") },
       { status: 400 },
     );
   }

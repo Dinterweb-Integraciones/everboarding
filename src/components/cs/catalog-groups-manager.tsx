@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Eye,
   GripVertical,
+  Info,
   Layers3,
   Pencil,
   Plus,
@@ -28,6 +29,7 @@ import type {
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
+  CreditCatalogUseCaseCategory,
   CreditCatalogItem,
 } from "@/lib/onboarding";
 import { formatUserError, safeParseNumber } from "@/lib/utils";
@@ -37,6 +39,7 @@ type CatalogGroupsManagerProps = {
   initialBadgeTypes: CreditCatalogGroupBadgeType[];
   initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
+  initialUseCaseCategories: CreditCatalogUseCaseCategory[];
   initialItems: CreditCatalogItem[];
   initialMemberships: CreditCatalogGroupItem[];
 };
@@ -46,7 +49,7 @@ type AvailableTag = (typeof AVAILABLE_TAGS)[number];
 const FORM_STEPS = [
   {
     title: "Datos basicos",
-    description: "Define identidad, categorias, prioridad y filtros.",
+    description: "Define identidad, categorías y filtros.",
   },
   {
     title: "Contenido",
@@ -65,8 +68,13 @@ type CatalogGroupForm = {
   completionOutcome: string;
   successMilestone: string;
   displayBadge: string;
+  cluster: string;
+  useCaseCode: string;
+  nextLogicalUseCases: string;
+  previousUseCases: string;
+  subsequentUseCases: string;
   modalCategoryIds: string[];
-  priorityStatus: "normal" | "prioritario";
+  useCaseCategoryId: string;
   credits: string;
   sortOrder: string;
   isActive: boolean;
@@ -81,8 +89,13 @@ const emptyForm: CatalogGroupForm = {
   completionOutcome: "",
   successMilestone: "",
   displayBadge: "",
+  cluster: "",
+  useCaseCode: "",
+  nextLogicalUseCases: "",
+  previousUseCases: "",
+  subsequentUseCases: "",
   modalCategoryIds: [],
-  priorityStatus: "normal",
+  useCaseCategoryId: "",
   credits: "0",
   sortOrder: "0",
   isActive: true,
@@ -126,11 +139,56 @@ function reorderIds(ids: string[], draggedId: string, targetId: string) {
   return nextIds;
 }
 
+type FieldLabelProps = {
+  children: React.ReactNode;
+  help?: string;
+};
+
+type InfoTooltipProps = {
+  label: string;
+  help: string;
+};
+
+function InfoTooltip({ label, help }: InfoTooltipProps) {
+  return (
+    <span className="group relative inline-flex shrink-0">
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-[var(--accent)] focus-visible:bg-slate-100 focus-visible:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        aria-label={`Información sobre ${label}`}
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute left-1/2 top-[calc(100%+8px)] z-40 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-[10px] bg-slate-900 px-3 py-2 text-left text-xs font-medium normal-case leading-5 tracking-normal text-white opacity-0 shadow-xl transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+      >
+        {help}
+      </span>
+    </span>
+  );
+}
+
+function FieldLabel({ children, help }: FieldLabelProps) {
+  return (
+    <div className="mb-2 flex min-w-0 items-center gap-1.5">
+      <label
+        className="min-w-0 truncate whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500"
+        title={typeof children === "string" ? children : undefined}
+      >
+        {children}
+      </label>
+      {help ? <InfoTooltip label={String(children)} help={help} /> : null}
+    </div>
+  );
+}
+
 export function CatalogGroupsManager({
   initialGroups,
   initialBadgeTypes,
   initialGroupCategories,
   initialGroupCategoryLinks,
+  initialUseCaseCategories,
   initialItems,
   initialMemberships,
 }: CatalogGroupsManagerProps) {
@@ -138,6 +196,7 @@ export function CatalogGroupsManager({
   const [badgeTypes, setBadgeTypes] = useState(initialBadgeTypes);
   const [groupCategories] = useState(initialGroupCategories);
   const [groupCategoryLinks, setGroupCategoryLinks] = useState(initialGroupCategoryLinks);
+  const [useCaseCategories] = useState(initialUseCaseCategories);
   const [items] = useState(initialItems);
   const [memberships, setMemberships] = useState(initialMemberships);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -150,6 +209,7 @@ export function CatalogGroupsManager({
   const [isBadgeTypeModalOpen, setIsBadgeTypeModalOpen] = useState(false);
   const [newBadgeTypeLabel, setNewBadgeTypeLabel] = useState("");
   const [isSavingBadgeType, setIsSavingBadgeType] = useState(false);
+  const [deletingBadgeTypeId, setDeletingBadgeTypeId] = useState<string | null>(null);
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupsPageSize, setGroupsPageSize] = useState(10);
   const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
@@ -180,6 +240,19 @@ export function CatalogGroupsManager({
     [groupCategories],
   );
 
+  const useCaseCategoriesById = useMemo(
+    () => new Map(useCaseCategories.map((category) => [category.id, category])),
+    [useCaseCategories],
+  );
+
+  const availableUseCaseCategories = useMemo(
+    () =>
+      [...useCaseCategories]
+        .filter((category) => category.is_active || category.id === form.useCaseCategoryId)
+        .sort((left, right) => left.name.localeCompare(right.name, "es")),
+    [form.useCaseCategoryId, useCaseCategories],
+  );
+
   const availableBadgeTypes = useMemo(
     () =>
       [...badgeTypes]
@@ -192,9 +265,20 @@ export function CatalogGroupsManager({
     [badgeTypes],
   );
 
+  const badgeTypeUsageCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    groups.forEach((group) => {
+      const keyword = group.display_badge?.trim();
+      if (keyword) {
+        counts.set(keyword, (counts.get(keyword) ?? 0) + 1);
+      }
+    });
+    return counts;
+  }, [groups]);
+
   const selectedCategorySummary = useMemo(() => {
     if (!form.modalCategoryIds.length) {
-      return "Selecciona una o varias categorias";
+      return "Selecciona categorías";
     }
 
     const selectedNames = form.modalCategoryIds
@@ -202,7 +286,7 @@ export function CatalogGroupsManager({
       .filter((categoryName): categoryName is string => Boolean(categoryName));
 
     if (!selectedNames.length) {
-      return "Selecciona una o varias categorias";
+      return "Selecciona categorías";
     }
 
     if (selectedNames.length <= 2) {
@@ -311,7 +395,6 @@ export function CatalogGroupsManager({
         const groupTasks = taskIds
           .map((taskId) => items.find((item) => item.id === taskId))
           .filter((item): item is CreditCatalogItem => Boolean(item));
-
         return {
           ...group,
           modalCategoryIds: uniqueSelectedCategoryIds.length
@@ -326,7 +409,14 @@ export function CatalogGroupsManager({
             : group.modal_category_id
               ? [groupCategoriesById.get(group.modal_category_id)?.name ?? group.modal_category ?? ""].filter(Boolean)
               : (group.modal_category ? [group.modal_category] : []),
-          priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
+          useCaseCategoryName: group.use_case_category_id
+            ? useCaseCategoriesById.get(group.use_case_category_id)?.name ?? "Categoría no disponible"
+            : "Sin categoría",
+          useCaseCode: group.use_case_code?.trim() || "Sin código",
+          clusterName: group.cluster?.trim() || "Sin clúster",
+          nextLogicalUseCases: group.next_logical_use_cases?.trim() || "Sin siguiente caso",
+          previousUseCases: group.previous_use_cases?.trim() || "Sin casos previos",
+          subsequentUseCases: group.subsequent_use_cases?.trim() || "Sin casos posteriores",
           taskCount: groupTasks.length,
           totalCredits: groupTasks.length
             ? groupTasks.reduce((sum, item) => sum + safeParseNumber(item.credits), 0)
@@ -336,7 +426,7 @@ export function CatalogGroupsManager({
           tags: Array.isArray(group.tags) ? group.tags : [],
         };
       }),
-    [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups],
+    [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups, useCaseCategoriesById],
   );
 
   const groupRowsById = useMemo(
@@ -393,8 +483,12 @@ export function CatalogGroupsManager({
         group.success_milestone ?? "",
         group.display_badge ?? "",
         group.modalCategoryNames.join(" "),
-        group.priorityStatus,
-        group.priorityStatus === "prioritario" ? "prioritario" : "normal",
+        group.useCaseCategoryName,
+        group.useCaseCode,
+        group.clusterName,
+        group.nextLogicalUseCases,
+        group.previousUseCases,
+        group.subsequentUseCases,
         group.is_active ? "activo" : "inactivo",
         group.is_public ? "publico" : "privado",
         `${group.totalCredits} cr`,
@@ -489,12 +583,17 @@ export function CatalogGroupsManager({
       completionOutcome: group.completion_outcome ?? "",
       successMilestone: group.success_milestone ?? "",
       displayBadge: group.display_badge ?? "",
+      cluster: group.cluster ?? "",
+      useCaseCode: group.use_case_code ?? "",
+      nextLogicalUseCases: group.next_logical_use_cases ?? "",
+      previousUseCases: group.previous_use_cases ?? "",
+      subsequentUseCases: group.subsequent_use_cases ?? "",
       modalCategoryIds: selectedCategoryIds.length
         ? selectedCategoryIds
         : group.modal_category_id
           ? [group.modal_category_id]
           : [],
-      priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
+      useCaseCategoryId: group.use_case_category_id ?? "",
       credits: String(group.credits ?? 0),
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
@@ -520,6 +619,11 @@ export function CatalogGroupsManager({
       return;
     }
 
+    if (activeFormStep === 0 && !form.useCaseCode.trim()) {
+      setFeedback({ tone: "error", message: "Escribe un código #CU único antes de continuar." });
+      return;
+    }
+
     setFeedback(null);
     setActiveFormStep((current) => Math.min(FORM_STEPS.length - 1, current + 1));
   }
@@ -542,7 +646,12 @@ export function CatalogGroupsManager({
   async function saveBadgeType() {
     const label = newBadgeTypeLabel.trim();
     if (!label) {
-      setFeedback({ tone: "error", message: "Escribe el nombre de la etiqueta." });
+      setFeedback({ tone: "error", message: "Escribe el nombre de la keyword." });
+      return;
+    }
+
+    if (availableBadgeTypes.some((badgeType) => badgeType.label.toLowerCase() === label.toLowerCase())) {
+      setFeedback({ tone: "error", message: "Esta keyword ya existe." });
       return;
     }
 
@@ -562,21 +671,60 @@ export function CatalogGroupsManager({
 
       const payload = (await response.json()) as CreditCatalogGroupBadgeType & { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos crear la etiqueta.");
+        throw new Error(payload.message || "No pudimos crear la keyword.");
       }
 
       setBadgeTypes((current) => [...current, payload]);
       setForm((current) => ({ ...current, displayBadge: payload.label }));
       setNewBadgeTypeLabel("");
-      setIsBadgeTypeModalOpen(false);
-      setFeedback({ tone: "success", message: "Etiqueta creada." });
+      setFeedback({ tone: "success", message: "Keyword creada y seleccionada." });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos crear la etiqueta."),
+        message: formatUserError(caughtError, "No pudimos crear la keyword."),
       });
     } finally {
       setIsSavingBadgeType(false);
+    }
+  }
+
+  async function deleteBadgeType(badgeType: CreditCatalogGroupBadgeType) {
+    const usageCount = badgeTypeUsageCounts.get(badgeType.label) ?? 0;
+    if (usageCount > 0) {
+      setFeedback({
+        tone: "error",
+        message: `No puedes eliminar "${badgeType.label}" porque está asignada a ${usageCount} caso${usageCount === 1 ? "" : "s"} de uso.`,
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(`¿Eliminar la keyword "${badgeType.label}"?`);
+    if (!confirmed) return;
+
+    setDeletingBadgeTypeId(badgeType.id);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/cs/catalog-group-badge-types/${badgeType.id}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos eliminar la keyword.");
+      }
+
+      setBadgeTypes((current) => current.filter((item) => item.id !== badgeType.id));
+      setForm((current) =>
+        current.displayBadge === badgeType.label ? { ...current, displayBadge: "" } : current,
+      );
+      setFeedback({ tone: "success", message: "Keyword eliminada." });
+    } catch (caughtError) {
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos eliminar la keyword."),
+      });
+    } finally {
+      setDeletingBadgeTypeId(null);
     }
   }
 
@@ -734,8 +882,13 @@ export function CatalogGroupsManager({
             completionOutcome: form.completionOutcome,
             successMilestone: form.successMilestone,
             displayBadge: form.displayBadge,
+            cluster: form.cluster,
+            useCaseCode: form.useCaseCode,
+            nextLogicalUseCases: form.nextLogicalUseCases,
+            previousUseCases: form.previousUseCases,
+            subsequentUseCases: form.subsequentUseCases,
             modalCategoryIds: form.modalCategoryIds,
-            priorityStatus: form.priorityStatus,
+            useCaseCategoryId: form.useCaseCategoryId || null,
             credits: manualCredits,
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
@@ -857,7 +1010,7 @@ export function CatalogGroupsManager({
                     key={step.title}
                     type="button"
                     onClick={() => {
-                      if (index <= activeFormStep || form.name.trim()) {
+                      if (index <= activeFormStep || (form.name.trim() && form.useCaseCode.trim())) {
                         setActiveFormStep(index);
                       }
                     }}
@@ -891,11 +1044,23 @@ export function CatalogGroupsManager({
 
             {activeFormStep === 0 ? (
               <>
-            <div className="grid gap-5 xl:grid-cols-12 xl:items-start">
-              <div className="xl:col-span-5">
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Nombre del grupo
-                </label>
+            <div className="grid gap-5 lg:grid-cols-12 lg:items-start">
+              <div className="order-1 lg:col-span-2 lg:col-start-1 lg:row-start-1">
+                <FieldLabel help="Código manual, obligatorio y único. No se genera automáticamente.">
+                  Código #CU
+                </FieldLabel>
+                <Input
+                  value={form.useCaseCode}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, useCaseCode: event.target.value }))
+                  }
+                  placeholder="Ej. CU-001"
+                  required
+                />
+              </div>
+
+              <div className="order-2 lg:col-span-7 lg:col-start-3 lg:row-start-1">
+                <FieldLabel>Nombre</FieldLabel>
                 <Input
                   value={form.name ?? ""}
                   onChange={(event) =>
@@ -905,10 +1070,10 @@ export function CatalogGroupsManager({
                 />
               </div>
 
-              <div className="xl:col-span-4">
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Etiqueta de tarjeta
-                </label>
+              <div className="order-5 lg:col-span-3 lg:col-start-7 lg:row-start-2">
+                <FieldLabel help="Selecciona la keyword que se mostrará en la tarjeta del caso de uso.">
+                  Keywords
+                </FieldLabel>
                 <div className="relative">
                   <Select
                     value={form.displayBadge ?? ""}
@@ -917,7 +1082,7 @@ export function CatalogGroupsManager({
                     }
                     className="pr-14"
                   >
-                    <option value="">Automatico</option>
+                    <option value="">Sin keyword</option>
                     {form.displayBadge.trim() &&
                     !availableBadgeTypes.some((badgeType) => badgeType.label === form.displayBadge.trim()) ? (
                       <option value={form.displayBadge.trim()}>{form.displayBadge.trim()}</option>
@@ -932,22 +1097,18 @@ export function CatalogGroupsManager({
                     type="button"
                     onClick={() => setIsBadgeTypeModalOpen(true)}
                     className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg border border-[var(--accent)] bg-white text-[var(--accent)] transition hover:bg-[color-mix(in_oklab,var(--accent)_10%,white)]"
-                    aria-label="Crear etiqueta de tarjeta"
+                    aria-label="Administrar keywords"
+                    title="Administrar keywords"
                   >
                     <Plus className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Si queda vacia, no se muestra etiqueta secundaria en la tarjeta.
-                </p>
               </div>
 
-              <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-4 xl:col-span-3 xl:row-span-2">
+              <div className="order-6 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4 lg:col-span-3 lg:col-start-10 lg:row-span-2 lg:row-start-1">
                 <div className="grid gap-3">
                   <div>
-                    <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                      Creditos manuales
-                    </label>
+                    <FieldLabel>Créditos manuales</FieldLabel>
                     <Input
                       type="number"
                       min={0}
@@ -972,7 +1133,13 @@ export function CatalogGroupsManager({
                   </label>
                   <div className="flex items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
                     <div>
-                      <p className="text-sm font-semibold text-slate-700">Visibilidad</p>
+                      <div className="flex items-center gap-1">
+                        <p className="text-sm font-semibold text-slate-700">Visibilidad</p>
+                        <InfoTooltip
+                          label="Visibilidad"
+                          help="Los casos privados solo aparecen para vendedores y CS. Si agregas tareas, el total se calcula con ellas."
+                        />
+                      </div>
                       <p
                         className={`text-xs font-bold ${
                           form.isPublic ? "text-emerald-700" : "text-violet-700"
@@ -1000,23 +1167,24 @@ export function CatalogGroupsManager({
                       />
                     </button>
                   </div>
-                  <p className="text-xs leading-5 text-slate-500">
-                    Los casos privados solo aparecen para vendedores y CS. Si agregas tareas, el total se calcula con ellas.
-                  </p>
                 </div>
               </div>
 
-              <div className="xl:col-span-5">
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Categoria visible en guía inteligente
-                </label>
+              <div className="order-4 lg:col-span-3 lg:col-start-4 lg:row-start-2">
+                <FieldLabel help="Define en qué pestaña del modal comercial aparecerá el caso de uso. Puedes seleccionar una o varias categorías.">
+                  Categoría visible en guía
+                </FieldLabel>
                 <div ref={categoryMenuRef} className="relative">
                   <button
                     type="button"
                     onClick={() => setIsCategoryMenuOpen((current) => !current)}
                     className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm leading-5 text-slate-900 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_oklab,var(--accent)_20%,white)]"
                   >
-                    <span className={form.modalCategoryIds.length ? "text-slate-900" : "text-slate-400"}>
+                    <span
+                      className={`min-w-0 flex-1 truncate whitespace-nowrap ${
+                        form.modalCategoryIds.length ? "text-slate-900" : "text-slate-400"
+                      }`}
+                    >
                       {selectedCategorySummary}
                     </span>
                     <ChevronDown
@@ -1064,44 +1232,94 @@ export function CatalogGroupsManager({
                     </div>
                   ) : null}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {form.modalCategoryIds.length ? (
-                    form.modalCategoryIds.map((categoryId) => (
+                {form.modalCategoryIds.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {form.modalCategoryIds.map((categoryId) => (
                       <span
                         key={categoryId}
                         className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700"
                       >
                         {groupCategoriesById.get(categoryId)?.name ?? categoryId}
                       </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-400">Sin categorias asignadas.</span>
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Esta categoria define en qué pestaña del modal comercial aparecerá el grupo.
-                </p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
-              <div className="xl:col-span-4">
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Estado de prioridad
-                </label>
+              <div className="order-3 lg:col-span-3 lg:col-start-1 lg:row-start-2">
+                <FieldLabel help="Clasifica este registro dentro del catálogo de casos de uso.">
+                  Categoría caso de uso
+                </FieldLabel>
                 <Select
-                  value={form.priorityStatus}
+                  value={form.useCaseCategoryId}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      priorityStatus: event.target.value === "prioritario" ? "prioritario" : "normal",
+                      useCaseCategoryId: event.target.value,
                     }))
                   }
                 >
-                  <option value="normal">Normal</option>
-                  <option value="prioritario">Prioritario</option>
+                  <option value="">Sin categoría</option>
+                  {availableUseCaseCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
                 </Select>
-                <p className="mt-2 text-xs text-slate-500">
-                  Los grupos prioritarios aparecen primero en su categoría dentro del modal comercial.
-                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <FieldLabel help="Agrupa casos de uso que pertenecen al mismo flujo o proceso.">
+                  Clúster
+                </FieldLabel>
+                <Input
+                  value={form.cluster}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, cluster: event.target.value }))
+                  }
+                  placeholder="Ej. Pipeline de leads"
+                />
+              </div>
+
+              <div>
+                <FieldLabel help="Acepta texto o números. Separa varios valores con punto y coma (;).">
+                  Siguiente CU lógico
+                </FieldLabel>
+                <Input
+                  value={form.nextLogicalUseCases}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, nextLogicalUseCases: event.target.value }))
+                  }
+                  placeholder="Ej: 1;2;3"
+                />
+              </div>
+
+              <div>
+                <FieldLabel help="Acepta texto o números. Separa varios valores con punto y coma (;).">
+                  CU previos
+                </FieldLabel>
+                <Input
+                  value={form.previousUseCases}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, previousUseCases: event.target.value }))
+                  }
+                  placeholder="Ej: 1;2;3"
+                />
+              </div>
+
+              <div>
+                <FieldLabel help="Acepta texto o números. Separa varios valores con punto y coma (;).">
+                  CU posteriores
+                </FieldLabel>
+                <Input
+                  value={form.subsequentUseCases}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, subsequentUseCases: event.target.value }))
+                  }
+                  placeholder="Ej: 1;2;3"
+                />
               </div>
             </div>
 
@@ -1111,9 +1329,7 @@ export function CatalogGroupsManager({
             {activeFormStep === 1 ? (
             <div className="grid gap-4 lg:grid-cols-2">
               <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Preview
-                </label>
+                <FieldLabel>Preview</FieldLabel>
                 <RichTextTextarea
                   rows={3}
                   value={form.preview}
@@ -1123,9 +1339,7 @@ export function CatalogGroupsManager({
               </div>
 
               <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Descripcion
-                </label>
+                <FieldLabel>Descripción</FieldLabel>
                 <RichTextTextarea
                   rows={3}
                   value={form.description}
@@ -1135,30 +1349,26 @@ export function CatalogGroupsManager({
               </div>
 
               <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Al terminar el caso de uso
-                </label>
+                <FieldLabel>Responsabilidades del cliente</FieldLabel>
                 <RichTextTextarea
                   rows={3}
                   value={form.completionOutcome}
                   onChange={(value) =>
                     setForm((current) => ({ ...current, completionOutcome: value }))
                   }
-                  placeholder="Describe que deberia quedar implementado al finalizar."
+                  placeholder="Describe las responsabilidades que corresponden al cliente."
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Hito de exito
-                </label>
+                <FieldLabel>Criterio de Éxito</FieldLabel>
                 <RichTextTextarea
                   rows={3}
                   value={form.successMilestone}
                   onChange={(value) =>
                     setForm((current) => ({ ...current, successMilestone: value }))
                   }
-                  placeholder="Define el indicador o resultado que confirma el exito."
+                  placeholder="Define el criterio o resultado que confirma el éxito."
                 />
               </div>
             </div>
@@ -1166,9 +1376,9 @@ export function CatalogGroupsManager({
 
             {activeFormStep === 0 ? (
             <div>
-              <label className="mb-3 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+              <FieldLabel help="Campo opcional. Permite filtrar los casos de uso por industria.">
                 Etiquetas de industria
-              </label>
+              </FieldLabel>
               <div className="flex flex-wrap gap-3">
                 {AVAILABLE_TAGS.map((tag) => {
                   const selected = form.tags.includes(tag);
@@ -1199,7 +1409,6 @@ export function CatalogGroupsManager({
                   );
                 })}
               </div>
-              <p className="mt-2 text-xs text-slate-400">Opcional. Permite filtrar grupos por industria.</p>
             </div>
             ) : null}
 
@@ -1224,9 +1433,7 @@ export function CatalogGroupsManager({
 
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[280px] flex-1">
-                  <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    Agregar tarea al grupo
-                  </label>
+                  <FieldLabel>Agregar tarea al grupo</FieldLabel>
                   <Select value={taskToAdd} onChange={(event) => setTaskToAdd(event.target.value)}>
                     <option value="">Selecciona una tarea</option>
                     {groupedOptions.map(([category, categoryItems]) => {
@@ -1349,7 +1556,7 @@ export function CatalogGroupsManager({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Orden por categoria
+                  Orden en Guía Inteligente
                 </p>
                 <h3 className="mt-1 text-lg font-black text-slate-900">Prioriza casos de uso dentro de cada categoria</h3>
                 <p className="mt-2 max-w-2xl text-sm text-slate-600">
@@ -1453,14 +1660,8 @@ export function CatalogGroupsManager({
                                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
                                     {group.totalCredits} CR
                                   </span>
-                                  <span
-                                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                      group.priorityStatus === "prioritario"
-                                        ? "bg-amber-50 text-amber-700"
-                                        : "bg-slate-100 text-slate-500"
-                                    }`}
-                                  >
-                                    {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                    {group.useCaseCategoryName}
                                   </span>
                                   {!group.is_active ? (
                                     <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
@@ -1505,7 +1706,7 @@ export function CatalogGroupsManager({
               </div>
             ) : (
               <div className="mt-4 rounded-[14px] border border-dashed border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
-                Aun no hay categorias con casos de uso asociados para ordenar.
+                Aún no hay categorías de Guía Inteligente con casos de uso asociados para ordenar.
               </div>
             )}
           </div>
@@ -1563,10 +1764,25 @@ export function CatalogGroupsManager({
                       Creditos
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Categorias visibles
+                      Categorías de Guía Inteligente
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Prioridad
+                      Categoría de casos de uso
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Código #CU
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Clúster
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Siguiente caso lógico
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Casos de uso previos
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Casos de uso posteriores
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Estado
@@ -1622,17 +1838,16 @@ export function CatalogGroupsManager({
                               )}
                             </div>
                           </td>
-                          <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                                group.priorityStatus === "prioritario"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-slate-100 text-slate-600"
-                              }`}
-                            >
-                              {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
-                            </span>
+                          <td className="px-4 py-4 text-slate-600">
+                            {group.useCaseCategoryName}
                           </td>
+                          <td className="whitespace-nowrap px-4 py-4 font-semibold text-slate-700">
+                            {group.useCaseCode}
+                          </td>
+                          <td className="px-4 py-4 text-slate-600">{group.clusterName}</td>
+                          <td className="min-w-52 px-4 py-4 text-slate-600">{group.nextLogicalUseCases}</td>
+                          <td className="min-w-56 px-4 py-4 text-slate-600">{group.previousUseCases}</td>
+                          <td className="min-w-56 px-4 py-4 text-slate-600">{group.subsequentUseCases}</td>
                           <td className="px-4 py-4">
                             <span
                               className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
@@ -1682,7 +1897,7 @@ export function CatalogGroupsManager({
                         </tr>
                         {openDescriptionGroupId === group.id ? (
                           <tr className="bg-slate-50/80">
-                            <td colSpan={7} className="px-4 py-4">
+                            <td colSpan={12} className="px-4 py-4">
                               <div className="rounded-[12px] border border-slate-200 bg-white p-4">
                                 <div className="grid gap-4 lg:grid-cols-3">
                                   <div className="lg:col-span-1">
@@ -1706,7 +1921,7 @@ export function CatalogGroupsManager({
                                     </div>
                                     <div className="mt-4">
                                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                        Al terminar el caso de uso
+                                        Responsabilidades del cliente
                                       </p>
                                       <RichTextDisplay
                                         value={group.completion_outcome}
@@ -1716,32 +1931,56 @@ export function CatalogGroupsManager({
                                     </div>
                                     <div className="mt-4">
                                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                        Hito de exito
+                                        Criterio de Éxito
                                       </p>
                                       <RichTextDisplay
                                         value={group.success_milestone}
-                                        fallback="Sin hito definido"
+                                        fallback="Sin criterio definido"
                                         className="mt-2"
                                       />
                                     </div>
                                     <div className="mt-4">
                                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                        Estado de prioridad
+                                        Categoría de casos de uso
                                       </p>
-                                      <span
-                                        className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                                          group.priorityStatus === "prioritario"
-                                            ? "bg-amber-50 text-amber-700"
-                                            : "bg-slate-100 text-slate-600"
-                                        }`}
-                                      >
-                                        {group.priorityStatus === "prioritario" ? "Prioritario" : "Normal"}
+                                      <span className="mt-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                                        {group.useCaseCategoryName}
                                       </span>
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Código #CU
+                                      </p>
+                                      <p className="mt-2 text-sm font-semibold text-slate-700">{group.useCaseCode}</p>
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Clúster
+                                      </p>
+                                      <p className="mt-2 text-sm text-slate-700">{group.clusterName}</p>
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Siguiente caso de uso lógico
+                                      </p>
+                                      <p className="mt-2 text-sm text-slate-700">{group.nextLogicalUseCases}</p>
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Casos de uso previos
+                                      </p>
+                                      <p className="mt-2 text-sm text-slate-700">{group.previousUseCases}</p>
+                                    </div>
+                                    <div className="mt-4">
+                                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                                        Casos de uso posteriores
+                                      </p>
+                                      <p className="mt-2 text-sm text-slate-700">{group.subsequentUseCases}</p>
                                     </div>
                                     {group.display_badge?.trim() ? (
                                       <div className="mt-4">
                                         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                          Etiqueta de tarjeta
+                                          Keyword
                                         </p>
                                         <span className="mt-2 inline-flex rounded-full bg-[color-mix(in_oklab,var(--accent)_10%,white)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
                                           {group.display_badge.trim()}
@@ -1769,7 +2008,7 @@ export function CatalogGroupsManager({
 
                                   <div>
                                     <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                      Categorias visibles
+                                      Categorías de Guía Inteligente
                                     </p>
                                     <div className="mt-2 flex flex-wrap gap-2">
                                       {group.modalCategoryNames.length ? (
@@ -1835,7 +2074,7 @@ export function CatalogGroupsManager({
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                      <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
                         {groupsTableRows.length
                           ? "No encontramos grupos con ese criterio de busqueda."
                           : "Aun no hay grupos registrados."}
@@ -1879,14 +2118,24 @@ export function CatalogGroupsManager({
       </div>
 
       {isBadgeTypeModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
-          <div className="w-full max-w-md rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
-            <div className="flex items-start justify-between gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keywords-modal-title"
+            className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_28px_90px_rgba(15,23,42,0.28)]"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5 sm:px-7">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--accent)]">
-                  Nueva etiqueta
+                  Catálogo del caso de uso
                 </p>
-                <h3 className="mt-1 text-lg font-bold text-slate-950">Etiqueta de tarjeta</h3>
+                <h3 id="keywords-modal-title" className="mt-1 text-2xl font-black text-slate-950">
+                  Administrar keywords
+                </h3>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  Crea keywords reutilizables, selecciona una para el caso de uso actual o elimina las que ya no necesitas.
+                </p>
               </div>
               <button
                 type="button"
@@ -1894,47 +2143,128 @@ export function CatalogGroupsManager({
                   setIsBadgeTypeModalOpen(false);
                   setNewBadgeTypeLabel("");
                 }}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                aria-label="Cerrar modal de etiqueta"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                aria-label="Cerrar administrador de keywords"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="mt-5">
-              <label className="mb-2 block text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                Nombre
-              </label>
-              <Input
-                value={newBadgeTypeLabel}
-                onChange={(event) => setNewBadgeTypeLabel(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void saveBadgeType();
-                  }
-                }}
-                placeholder="Grupo manual"
-                autoFocus
-              />
+            <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+              <section className="border-b border-slate-200 bg-slate-50/70 p-6 sm:p-7 lg:border-b-0 lg:border-r">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Agregar keyword
+                </p>
+                <h4 className="mt-2 text-lg font-bold text-slate-900">Crea una nueva opción</h4>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Usa un nombre corto y fácil de reconocer. Al crearla quedará seleccionada automáticamente.
+                </p>
+
+                <div className="mt-5">
+                  <FieldLabel>Nombre de la keyword</FieldLabel>
+                  <Input
+                    value={newBadgeTypeLabel}
+                    onChange={(event) => setNewBadgeTypeLabel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveBadgeType();
+                      }
+                    }}
+                    placeholder="Ej. Automatización"
+                    autoFocus
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={() => void saveBadgeType()}
+                  disabled={isSavingBadgeType || !newBadgeTypeLabel.trim()}
+                  className="mt-4 w-full justify-center"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  {isSavingBadgeType ? "Agregando..." : "Agregar keyword"}
+                </Button>
+              </section>
+
+              <section className="min-h-0 p-6 sm:p-7">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                      Keywords disponibles
+                    </p>
+                    <h4 className="mt-2 text-lg font-bold text-slate-900">Catálogo actual</h4>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                    {availableBadgeTypes.length} keywords
+                  </span>
+                </div>
+
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Las keywords asignadas a casos de uso no se pueden eliminar hasta que dejen de estar en uso.
+                </p>
+
+                <div className="mt-5 space-y-2">
+                  {availableBadgeTypes.length ? (
+                    availableBadgeTypes.map((badgeType) => {
+                      const usageCount = badgeTypeUsageCounts.get(badgeType.label) ?? 0;
+                      const isSelected = form.displayBadge === badgeType.label;
+                      const isDeleting = deletingBadgeTypeId === badgeType.id;
+
+                      return (
+                        <div
+                          key={badgeType.id}
+                          className={`flex items-center gap-3 rounded-[14px] border px-4 py-3 transition ${
+                            isSelected
+                              ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_7%,white)]"
+                              : "border-slate-200 bg-white"
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold text-slate-900">{badgeType.label}</p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {usageCount
+                                ? `Asignada a ${usageCount} caso${usageCount === 1 ? "" : "s"} de uso`
+                                : "Sin casos de uso asignados"}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setForm((current) => ({ ...current, displayBadge: badgeType.label }))}
+                            className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                              isSelected
+                                ? "bg-[var(--accent)] text-white"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                            }`}
+                          >
+                            {isSelected ? "Seleccionada" : "Seleccionar"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void deleteBadgeType(badgeType)}
+                            disabled={usageCount > 0 || isDeleting}
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+                            aria-label={`Eliminar keyword ${badgeType.label}`}
+                            title={usageCount > 0 ? "No se puede eliminar porque está en uso" : "Eliminar keyword"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[14px] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+                      <p className="font-semibold text-slate-700">Todavía no hay keywords</p>
+                      <p className="mt-1 text-sm text-slate-500">Agrega la primera desde el formulario.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
 
-            {availableBadgeTypes.length ? (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {availableBadgeTypes.map((badgeType) => (
-                  <button
-                    key={badgeType.id}
-                    type="button"
-                    onClick={() => setNewBadgeTypeLabel(badgeType.label)}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                  >
-                    {badgeType.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="flex justify-end border-t border-slate-200 bg-white px-6 py-4 sm:px-7">
               <Button
                 type="button"
                 variant="secondary"
@@ -1942,13 +2272,9 @@ export function CatalogGroupsManager({
                   setIsBadgeTypeModalOpen(false);
                   setNewBadgeTypeLabel("");
                 }}
-                disabled={isSavingBadgeType}
+                disabled={isSavingBadgeType || Boolean(deletingBadgeTypeId)}
               >
-                Cancelar
-              </Button>
-              <Button type="button" onClick={() => void saveBadgeType()} disabled={isSavingBadgeType}>
-                <Plus className="mr-2 h-4 w-4" />
-                {isSavingBadgeType ? "Guardando..." : "Agregar"}
+                Cerrar
               </Button>
             </div>
           </div>

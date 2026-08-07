@@ -6,6 +6,7 @@ import type {
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
   CreditCatalogGroupItem,
+  CreditCatalogUseCaseCategory,
   CreditCatalogItem,
 } from "@/lib/onboarding";
 
@@ -17,6 +18,7 @@ export default async function CatalogGroupsPage() {
     { data: badgeTypeRows, error: badgeTypesError },
     { data: categoryRows, error: categoriesError },
     { data: categoryLinkRows, error: categoryLinksError },
+    { data: useCaseCategoryRows, error: useCaseCategoriesError },
     { data: itemRows, error: itemsError },
     { data: membershipRows, error: membershipsError },
   ] = await Promise.all([
@@ -24,6 +26,7 @@ export default async function CatalogGroupsPage() {
     supabase.from("credit_catalog_group_badge_types").select("*").eq("is_active", true).order("sort_order").order("label"),
     supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
     supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
+    supabase.from("credit_catalog_use_case_categories").select("*").order("name"),
     supabase.from("credit_catalog_items").select("*").order("category").order("sort_order").order("label"),
     supabase.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
   ]);
@@ -48,6 +51,10 @@ export default async function CatalogGroupsPage() {
     throw new Error("No pudimos cargar la relacion entre casos de uso y categorias.");
   }
 
+  if (useCaseCategoriesError) {
+    throw new Error("No pudimos cargar las categorias de casos de uso.");
+  }
+
   if (membershipsError) {
     throw new Error("No pudimos cargar la composicion de los grupos.");
   }
@@ -58,6 +65,7 @@ export default async function CatalogGroupsPage() {
       initialBadgeTypes={(badgeTypesError ? [] : (badgeTypeRows ?? [])) as CreditCatalogGroupBadgeType[]}
       initialGroupCategories={(categoryRows ?? []) as CreditCatalogGroupCategory[]}
       initialGroupCategoryLinks={(categoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[]}
+      initialUseCaseCategories={(useCaseCategoryRows ?? []) as CreditCatalogUseCaseCategory[]}
       initialItems={(itemRows ?? []) as CreditCatalogItem[]}
       initialMemberships={(membershipRows ?? []) as CreditCatalogGroupItem[]}
     />

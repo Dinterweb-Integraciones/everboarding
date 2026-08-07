@@ -174,6 +174,11 @@ create table if not exists public.credit_catalog_groups (
   completion_outcome text,
   success_milestone text,
   display_badge text,
+  cluster text,
+  use_case_code text,
+  next_logical_use_cases text,
+  previous_use_cases text,
+  subsequent_use_cases text,
   modal_category text,
   credits integer not null default 0 check (credits >= 0),
   priority_status text not null default 'normal' check (priority_status in ('normal', 'prioritario')),
@@ -204,6 +209,18 @@ create table if not exists public.credit_catalog_group_categories (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+create table if not exists public.credit_catalog_use_case_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  description text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+alter table public.credit_catalog_use_case_categories
+drop column if exists sort_order;
 
 create table if not exists public.credit_catalog_categories (
   id uuid primary key default gen_random_uuid(),
@@ -237,7 +254,21 @@ create table if not exists public.credit_catalog_group_items (
 
 alter table public.credit_catalog_groups
 add column if not exists modal_category_id uuid references public.credit_catalog_group_categories(id) on delete set null,
+add column if not exists use_case_category_id uuid references public.credit_catalog_use_case_categories(id) on delete set null,
+add column if not exists cluster text,
+add column if not exists use_case_code text,
+add column if not exists next_logical_use_cases text,
+add column if not exists previous_use_cases text,
+add column if not exists subsequent_use_cases text,
 add column if not exists is_public boolean not null default true;
+
+drop table if exists public.credit_catalog_group_previous_cases;
+
+alter table public.credit_catalog_groups
+drop constraint if exists credit_catalog_groups_next_use_case_not_self;
+
+alter table public.credit_catalog_groups
+drop column if exists next_use_case_id;
 
 create table if not exists public.credit_catalog_group_category_links (
   id uuid primary key default gen_random_uuid(),
@@ -550,6 +581,15 @@ create index if not exists credit_catalog_group_badge_types_sort_idx
 on public.credit_catalog_group_badge_types (sort_order, label);
 create index if not exists credit_catalog_group_categories_sort_idx
 on public.credit_catalog_group_categories (sort_order, name);
+create index if not exists credit_catalog_use_case_categories_name_idx
+on public.credit_catalog_use_case_categories (name);
+create index if not exists credit_catalog_groups_use_case_category_idx
+on public.credit_catalog_groups (use_case_category_id);
+create index if not exists credit_catalog_groups_cluster_idx
+on public.credit_catalog_groups (cluster);
+create unique index if not exists credit_catalog_groups_use_case_code_unique_idx
+on public.credit_catalog_groups (lower(trim(use_case_code)))
+where nullif(trim(use_case_code), '') is not null;
 create index if not exists credit_catalog_categories_sort_idx
 on public.credit_catalog_categories (sort_order, name);
 create index if not exists credit_catalog_group_items_group_idx
@@ -615,6 +655,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_credit_catalog_group_categories_updated_at on public.credit_catalog_group_categories;
 create trigger set_credit_catalog_group_categories_updated_at
 before update on public.credit_catalog_group_categories
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_credit_catalog_use_case_categories_updated_at on public.credit_catalog_use_case_categories;
+create trigger set_credit_catalog_use_case_categories_updated_at
+before update on public.credit_catalog_use_case_categories
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_credit_catalog_group_badge_types_updated_at on public.credit_catalog_group_badge_types;
@@ -1927,6 +1972,7 @@ alter table public.client_share_links enable row level security;
 alter table public.credit_catalog_groups enable row level security;
 alter table public.credit_catalog_group_badge_types enable row level security;
 alter table public.credit_catalog_group_categories enable row level security;
+alter table public.credit_catalog_use_case_categories enable row level security;
 alter table public.credit_catalog_categories enable row level security;
 alter table public.credit_catalog_items enable row level security;
 alter table public.credit_catalog_group_items enable row level security;
@@ -1958,6 +2004,8 @@ drop policy if exists "catalog_group_badge_types_read_authenticated" on public.c
 drop policy if exists "catalog_group_badge_types_manage_authenticated" on public.credit_catalog_group_badge_types;
 drop policy if exists "catalog_group_categories_read_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_group_categories_manage_authenticated" on public.credit_catalog_group_categories;
+drop policy if exists "catalog_use_case_categories_read_authenticated" on public.credit_catalog_use_case_categories;
+drop policy if exists "catalog_use_case_categories_manage_authenticated" on public.credit_catalog_use_case_categories;
 drop policy if exists "catalog_categories_read_authenticated" on public.credit_catalog_categories;
 drop policy if exists "catalog_categories_manage_authenticated" on public.credit_catalog_categories;
 drop policy if exists "catalog_read_authenticated" on public.credit_catalog_items;
@@ -2081,6 +2129,19 @@ using (true);
 
 create policy "catalog_group_categories_manage_authenticated"
 on public.credit_catalog_group_categories
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_use_case_categories_read_authenticated"
+on public.credit_catalog_use_case_categories
+for select
+to authenticated
+using (true);
+
+create policy "catalog_use_case_categories_manage_authenticated"
+on public.credit_catalog_use_case_categories
 for all
 to authenticated
 using (true)
