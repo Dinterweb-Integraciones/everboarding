@@ -2,6 +2,8 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   CalendarDays,
   Copy,
   Download,
@@ -97,6 +99,8 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
     group.completionOutcome,
     group.successMilestone,
     group.modalCategory,
+    group.displayBadge,
+    ...group.tags,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
     .map((value) => normalizeCatalogText(richTextToPlainText(value)))
@@ -198,6 +202,72 @@ function normalizeCatalogText(value: string | null | undefined) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function splitUseCaseReferences(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/[;\n]+/)
+    .map((reference) => reference.trim())
+    .filter(Boolean);
+}
+
+function findCatalogGroupForInitiative(
+  initiative: InitiativeRecord,
+  groups: CatalogModalGroup[],
+) {
+  const normalizedTitle = normalizeCatalogText(initiative.title);
+  const titleMatch = groups.find((group) => normalizeCatalogText(group.name) === normalizedTitle);
+
+  if (titleMatch) return titleMatch;
+
+  const normalizedDescription = normalizeCatalogText(richTextToPlainText(initiative.description));
+  if (normalizedDescription.length < 80) return null;
+
+  return groups.find((group) => {
+    const groupDescription = normalizeCatalogText(richTextToPlainText(group.description));
+    if (groupDescription.length < 80) return false;
+
+    return (
+      groupDescription === normalizedDescription ||
+      groupDescription.slice(0, 180) === normalizedDescription.slice(0, 180)
+    );
+  }) ?? null;
+}
+
+function findClosestRelatedCatalogGroup(
+  referencesValue: string | null | undefined,
+  currentGroup: CatalogModalGroup | null,
+  groups: CatalogModalGroup[],
+) {
+  if (!currentGroup) return null;
+
+  const references = splitUseCaseReferences(referencesValue);
+  const candidates = references
+    .map((reference, referenceIndex) => {
+      const normalizedReference = normalizeCatalogText(reference);
+      const group = groups.find(
+        (candidate) =>
+          candidate.id !== currentGroup.id &&
+          (normalizeCatalogText(candidate.useCaseCode) === normalizedReference ||
+            normalizeCatalogText(candidate.name) === normalizedReference),
+      );
+
+      return group ? { group, referenceIndex } : null;
+    })
+    .filter((candidate): candidate is { group: CatalogModalGroup; referenceIndex: number } => Boolean(candidate));
+
+  const currentCode = Number(currentGroup.useCaseCode);
+  if (!Number.isFinite(currentCode)) return candidates[0]?.group ?? null;
+
+  return candidates
+    .sort((left, right) => {
+      const leftCode = Number(left.group.useCaseCode);
+      const rightCode = Number(right.group.useCaseCode);
+      const leftDistance = Number.isFinite(leftCode) ? Math.abs(leftCode - currentCode) : Number.POSITIVE_INFINITY;
+      const rightDistance = Number.isFinite(rightCode) ? Math.abs(rightCode - currentCode) : Number.POSITIVE_INFINITY;
+
+      return leftDistance - rightDistance || left.referenceIndex - right.referenceIndex;
+    })[0]?.group ?? null;
 }
 
 function getCustomerSuccessTimelineBarClass(status: InitiativeStatus) {
@@ -2000,7 +2070,7 @@ export function OnboardingClientPage({
       initiative.status !== "completed" &&
       initiative.status !== "backlog" &&
       targetStatus === "backlog"
-        ? Math.ceil(initiative.credits * 0.2)
+        ? calculateReductionPenalty(initiative.credits, 0)
         : 0;
 
     if (penalty > 0) {
@@ -2241,7 +2311,7 @@ export function OnboardingClientPage({
 
     let penalty = 0;
     if (existing && isReservedStatus(existing.status)) {
-      if (draft.status === "backlog") penalty = Math.ceil(existing.credits * 0.2);
+      if (draft.status === "backlog") penalty = calculateReductionPenalty(existing.credits, 0);
       else if (isReservedStatus(draft.status)) penalty = calculateReductionPenalty(existing.credits, draftCredits);
     }
 
@@ -2656,6 +2726,19 @@ export function OnboardingClientPage({
 
   const currentEditingInitiative =
     editingInitiativeId ? initiatives.find((initiative) => initiative.id === editingInitiativeId) ?? null : null;
+  const currentCatalogGroup = currentEditingInitiative
+    ? findCatalogGroupForInitiative(currentEditingInitiative, catalogGroups)
+    : null;
+  const previousUseCase = findClosestRelatedCatalogGroup(
+    currentCatalogGroup?.previousUseCases,
+    currentCatalogGroup,
+    catalogGroups,
+  );
+  const subsequentUseCase = findClosestRelatedCatalogGroup(
+    currentCatalogGroup?.subsequentUseCases,
+    currentCatalogGroup,
+    catalogGroups,
+  );
   const isDraftModified = draft
     ? editingInitiativeId
       ? JSON.stringify({
@@ -2777,9 +2860,13 @@ export function OnboardingClientPage({
                   </span>
                 </div>
                 <div className="min-w-0 whitespace-nowrap">
-                  <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Deducidos</span>
-                  <span className="ml-1.5 text-[14px] font-bold text-[#94a3b8] sm:text-[15px] xl:text-[16px]">
-                    {metrics.lost} créditos
+                  <span className="uppercase tracking-[0.14em] text-[#9cb1c6]">Próximos a vencer</span>
+                  <span
+                    className={`ml-1.5 text-[14px] font-bold sm:text-[15px] xl:text-[16px] ${
+                      billing.expiring_soon_credits > 0 ? "text-[#f59e0b]" : "text-[#94a3b8]"
+                    }`}
+                  >
+                    {billing.expiring_soon_credits} créditos
                   </span>
                 </div>
               </div>
@@ -4529,15 +4616,6 @@ export function OnboardingClientPage({
                             >
                               {group.modalCategory}
                             </span>
-                            {group.displayBadge ? (
-                              <span
-                                className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
-                                  alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
-                                }`}
-                              >
-                                {group.displayBadge}
-                              </span>
-                            ) : null}
                           </div>
                           <h4
                             className={`min-h-[44px] text-[14px] font-bold leading-snug ${
@@ -5274,6 +5352,76 @@ export function OnboardingClientPage({
                     </p>
                   </div>
                 </section>
+
+                {currentEditingInitiative ? (
+                  <section aria-label="Flujo del caso de uso" className="grid gap-3 sm:grid-cols-2">
+                    <article className="relative min-h-[132px] overflow-hidden rounded-[8px] border border-[#bfe9e3] bg-gradient-to-br from-[#f1fffc] to-white p-4 shadow-[0_8px_24px_rgba(0,189,165,0.08)]">
+                      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#00bda5]/[0.07]" aria-hidden="true" />
+                      <div className="relative flex items-start gap-3">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#dffaf5] text-[#008f7f]">
+                          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#008f7f]">
+                            Caso de uso anterior
+                          </p>
+                          {previousUseCase ? (
+                            <div className="mt-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <h4 className="text-[13px] font-black leading-5 text-[#33475b]">
+                                  {previousUseCase.name}
+                                </h4>
+                                <span className="shrink-0 rounded-full border border-[#99e5da] bg-white px-2 py-1 text-[9px] font-black text-[#008f7f]">
+                                  {previousUseCase.credits} CR
+                                </span>
+                              </div>
+                              <p className="mt-2 text-[11px] leading-5 text-[#60788f]">
+                                {getCatalogGroupPreview(previousUseCase, "Sin preview disponible.")}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="mt-3 text-[12px] leading-5 text-[#7c91a6]">
+                              Este caso no tiene un caso de uso anterior.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+
+                    <article className="relative min-h-[132px] overflow-hidden rounded-[8px] border border-[#d9def5] bg-gradient-to-br from-[#f6f7ff] to-white p-4 shadow-[0_8px_24px_rgba(106,120,209,0.08)]">
+                      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#6a78d1]/[0.07]" aria-hidden="true" />
+                      <div className="relative flex items-start gap-3">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#e9ecfb] text-[#5865c7]">
+                          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#5865c7]">
+                            Caso de uso posterior
+                          </p>
+                          {subsequentUseCase ? (
+                            <div className="mt-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <h4 className="text-[13px] font-black leading-5 text-[#33475b]">
+                                  {subsequentUseCase.name}
+                                </h4>
+                                <span className="shrink-0 rounded-full border border-[#cdd3f2] bg-white px-2 py-1 text-[9px] font-black text-[#5865c7]">
+                                  {subsequentUseCase.credits} CR
+                                </span>
+                              </div>
+                              <p className="mt-2 text-[11px] leading-5 text-[#60788f]">
+                                {getCatalogGroupPreview(subsequentUseCase, "Sin preview disponible.")}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="mt-3 text-[12px] leading-5 text-[#7c91a6]">
+                              Este caso no tiene un caso de uso posterior.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  </section>
+                ) : null}
 
                 <section className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                   <div className="grid grid-cols-2 gap-4">

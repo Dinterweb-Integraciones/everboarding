@@ -82,6 +82,8 @@ function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
     group.completionOutcome,
     group.successMilestone,
     group.modalCategory,
+    group.displayBadge,
+    ...group.tags,
     ...group.items.map((item) => `${item.label} ${item.category}`),
   ]
     .map((value) => normalizeCatalogText(richTextToPlainText(value)))
@@ -4441,15 +4443,6 @@ function mergeRecommendedGroups(
                             >
                               {group.modalCategory}
                             </span>
-                            {group.displayBadge ? (
-                              <span
-                                className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
-                                  alreadyAdded ? "bg-[#e7edf3] text-[#7c8da1]" : "bg-[#f5f8fa] text-[#516f90]"
-                                }`}
-                              >
-                                {group.displayBadge}
-                              </span>
-                            ) : null}
                           </div>
                           <h4
                             className={`min-h-[44px] text-[14px] font-bold leading-snug ${

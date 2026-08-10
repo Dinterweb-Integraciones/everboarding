@@ -109,6 +109,18 @@ type CustomerSuccessPlatformProfileRow = CustomerSuccessProfileRow & {
   platform_role: "superadmin" | "admin" | "sales" | "csm" | "finance" | null;
 };
 
+const REPORT_QUERY_BATCH_SIZE = 100;
+
+function splitIntoReportBatches<T>(values: T[]) {
+  const batches: T[][] = [];
+
+  for (let index = 0; index < values.length; index += REPORT_QUERY_BATCH_SIZE) {
+    batches.push(values.slice(index, index + REPORT_QUERY_BATCH_SIZE));
+  }
+
+  return batches;
+}
+
 function getElapsedCalendarDays(value: string | null) {
   if (!value) {
     return null;
@@ -362,27 +374,48 @@ export default async function ReportsPage() {
     : { data: [] as CustomerSuccessConfigRow[], error: null };
 
   const initiativeIds = (initiativeRows ?? []).map((initiative) => initiative.id);
-  const { data: initiativeActivityLogRows, error: initiativeActivityLogsError } = initiativeIds.length
-    ? await admin
+  const initiativeIdBatches = splitIntoReportBatches(initiativeIds);
+  const initiativeActivityLogResults = await Promise.all(
+    initiativeIdBatches.map((idBatch) =>
+      admin
         .from("onboarding_activity_logs")
         .select("initiative_id, entry, created_at")
-        .in("initiative_id", initiativeIds)
-        .order("created_at", { ascending: true })
-    : { data: [] as InitiativeActivityLogRow[], error: null };
+        .in("initiative_id", idBatch)
+        .order("created_at", { ascending: true }),
+    ),
+  );
+  const initiativeActivityLogsError =
+    initiativeActivityLogResults.find((result) => result.error)?.error ?? null;
+  const initiativeActivityLogRows = initiativeActivityLogResults
+    .flatMap((result) => (result.data ?? []) as InitiativeActivityLogRow[])
+    .sort((left, right) => left.created_at.localeCompare(right.created_at));
 
-  const { data: initiativeSubitemRows, error: initiativeSubitemsError } = initiativeIds.length
-    ? await admin
+  const initiativeSubitemResults = await Promise.all(
+    initiativeIdBatches.map((idBatch) =>
+      admin
         .from("onboarding_initiative_subitems")
         .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
-        .in("initiative_id", initiativeIds)
-    : { data: [] as InitiativeSubitemReportRow[], error: null };
+        .in("initiative_id", idBatch),
+    ),
+  );
+  const initiativeSubitemsError =
+    initiativeSubitemResults.find((result) => result.error)?.error ?? null;
+  const initiativeSubitemRows = initiativeSubitemResults.flatMap(
+    (result) => (result.data ?? []) as InitiativeSubitemReportRow[],
+  );
 
   const catalogItemIds = [
     ...new Set((initiativeSubitemRows ?? []).map((subitem) => subitem.catalog_item_id).filter((id): id is string => Boolean(id))),
   ];
-  const { data: catalogItemRows, error: catalogItemsError } = catalogItemIds.length
-    ? await admin.from("credit_catalog_items").select("id, credits").in("id", catalogItemIds)
-    : { data: [] as Array<{ id: string; credits: number }>, error: null };
+  const catalogItemResults = await Promise.all(
+    splitIntoReportBatches(catalogItemIds).map((idBatch) =>
+      admin.from("credit_catalog_items").select("id, credits").in("id", idBatch),
+    ),
+  );
+  const catalogItemsError = catalogItemResults.find((result) => result.error)?.error ?? null;
+  const catalogItemRows = catalogItemResults.flatMap(
+    (result) => (result.data ?? []) as Array<{ id: string; credits: number }>,
+  );
 
   const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
     ? await admin

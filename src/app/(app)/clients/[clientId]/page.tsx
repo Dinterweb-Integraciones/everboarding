@@ -16,6 +16,7 @@ import {
 } from "@/lib/onboarding";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database, Tables } from "@/types/database";
+import { toIsoDate } from "@/lib/utils";
 
 type ClientDetailPageProps = {
   params: Promise<{
@@ -249,6 +250,29 @@ export default async function ClientDetailPage({
     error: Error | null;
   };
 
+  const expiringWindowStart = new Date();
+  expiringWindowStart.setHours(0, 0, 0, 0);
+  const expiringWindowEnd = new Date(expiringWindowStart);
+  expiringWindowEnd.setDate(expiringWindowEnd.getDate() + 15);
+
+  const { data: expiringCreditGrantRows, error: expiringCreditGrantsError } = await clientReader
+    .from("client_credit_grants")
+    .select("granted_credits, used_credits, expired_credits")
+    .eq("client_id", clientRecord.id)
+    .gte("expires_at", toIsoDate(expiringWindowStart))
+    .lte("expires_at", toIsoDate(expiringWindowEnd));
+
+  if (expiringCreditGrantsError) {
+    throw new Error("No pudimos cargar los créditos próximos a vencer.");
+  }
+
+  const expiringSoonCredits = (expiringCreditGrantRows ?? []).reduce(
+    (total, grant) =>
+      total + Math.max(0, grant.granted_credits - grant.used_credits - grant.expired_credits),
+    0,
+  );
+  const billingStatus = billingRow ?? createDefaultBillingStatus(configRecord);
+
   return (
     <OnboardingClientPage
       initialData={{
@@ -258,7 +282,10 @@ export default async function ClientDetailPage({
         },
         accessRole,
         config: configRecord,
-        billing: billingRow ?? createDefaultBillingStatus(configRecord),
+        billing: {
+          ...billingStatus,
+          expiring_soon_credits: expiringSoonCredits,
+        },
         initiatives,
         catalog: catalogRows ?? [],
         catalogGroups: visibleCatalogGroupRows,

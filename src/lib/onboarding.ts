@@ -116,6 +116,7 @@ export type ClientBillingStatus = {
   current_cycle_end: string;
   active_credits: number;
   expired_unused_credits: number;
+  expiring_soon_credits: number;
   next_expiration_date: string | null;
   paid_at: string | null;
 };
@@ -160,6 +161,9 @@ export type PublicOnboardingSnapshot = {
 export type CatalogModalGroup = {
   id: string;
   name: string;
+  useCaseCode: string;
+  previousUseCases: string;
+  subsequentUseCases: string;
   description: string;
   preview: string;
   completionOutcome: string;
@@ -407,6 +411,7 @@ export function createDefaultBillingStatus(config: OnboardingConfig): ClientBill
     current_cycle_end: toIsoDate(cycleEnd),
     active_credits: 0,
     expired_unused_credits: 0,
+    expiring_soon_credits: 0,
     next_expiration_date: null,
     paid_at: null,
   };
@@ -544,6 +549,9 @@ export function buildCatalogModalGroups({
       return {
         id: group.id,
         name: group.name,
+        useCaseCode: group.use_case_code?.trim() || "",
+        previousUseCases: group.previous_use_cases?.trim() || "",
+        subsequentUseCases: group.subsequent_use_cases?.trim() || "",
         description: group.description?.trim() || "",
         preview: group.preview?.trim() || "",
         completionOutcome: group.completion_outcome?.trim() || "",
