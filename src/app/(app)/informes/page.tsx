@@ -17,6 +17,9 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   stagnant_stage_days: number | null;
   evaluation_cases_count: number;
   validated_evaluation_cases_count: number;
+  contracted_credits: number;
+  credit_renewal_at: string | null;
+  days_until_credit_renewal: number | null;
 };
 
 type InitiativeSourceRow = {
@@ -59,6 +62,7 @@ type ActiveClientMilestoneRow = {
 type PaidBillingCycleRow = {
   client_id: string;
   paid_at: string;
+  cycle_end_date: string;
 };
 
 type UnassignedPaidProposalRow = {
@@ -87,6 +91,9 @@ type InitiativeActivityLogRow = {
 
 type CustomerSuccessConfigRow = {
   client_id: string;
+  base_capacity: number;
+  custom_plan_credits: number | null;
+  custom_plan_period_months: number;
   north_star_text: string | null;
   north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
   north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
@@ -178,6 +185,34 @@ function isCommerciallyWaivedLabel(labels: string[] | null | undefined) {
     const normalized = normalizeInitiativeTitle(label);
     return normalized === "bonificado comercialmente" || normalized === "obsequiado comercialmente";
   });
+}
+
+function addDaysToIsoDate(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getCalendarDaysUntil(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const target = Date.UTC(year, month - 1, day);
+  if (Number.isNaN(target)) {
+    return null;
+  }
+
+  const today = new Date();
+  const todayStart = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((target - todayStart) / (1000 * 60 * 60 * 24));
 }
 
 function getInitiativeCreditKey(clientId: string, initiativeTitle: string) {
@@ -276,7 +311,7 @@ export default async function ReportsPage() {
   const { data: paidBillingCycleRows, error: paidBillingCyclesError } = clientIds.length
     ? await admin
         .from("client_billing_cycles")
-        .select("client_id, paid_at")
+        .select("client_id, paid_at, cycle_end_date")
         .in("client_id", clientIds)
         .eq("status", "paid")
         .not("paid_at", "is", null)
@@ -369,7 +404,7 @@ export default async function ReportsPage() {
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
         .from("onboarding_configs")
-        .select("client_id, north_star_text, north_star_status, north_star_lifecycle_status")
+        .select("client_id, base_capacity, custom_plan_credits, custom_plan_period_months, north_star_text, north_star_status, north_star_lifecycle_status")
         .in("client_id", clientIds)
     : { data: [] as CustomerSuccessConfigRow[], error: null };
 
@@ -454,6 +489,7 @@ export default async function ReportsPage() {
 
   const northStarCounts = new Map<string, number>();
   const firstPaidDates = new Map<string, string>();
+  const latestPaidCycleEnds = new Map<string, string>();
   const assignedDates = new Map<string, string>();
   const kickoffCompletedDates = new Map<string, string>();
   const firstUseCaseCompletedDates = new Map<string, string>();
@@ -464,6 +500,11 @@ export default async function ReportsPage() {
   ((paidBillingCycleRows ?? []) as PaidBillingCycleRow[]).forEach((cycle) => {
     if (!firstPaidDates.has(cycle.client_id)) {
       firstPaidDates.set(cycle.client_id, cycle.paid_at);
+    }
+
+    const currentCycleEnd = latestPaidCycleEnds.get(cycle.client_id);
+    if (!currentCycleEnd || cycle.cycle_end_date > currentCycleEnd) {
+      latestPaidCycleEnds.set(cycle.client_id, cycle.cycle_end_date);
     }
   });
   ((activatedProposalRows ?? []) as ActivatedProposalRow[]).forEach((proposal) => {
@@ -664,20 +705,38 @@ export default async function ReportsPage() {
     }
   });
 
-  const rows = clientRows.map((row) => ({
-    ...row,
-    north_stars_count: northStarCounts.get(row.client_id) ?? row.north_stars_completed,
-    kickoff_completed_at: kickoffCompletedDates.get(row.client_id) ?? null,
-    days_since_kickoff_completed: getElapsedCalendarDays(kickoffCompletedDates.get(row.client_id) ?? null),
-    first_use_case_completed_at: firstUseCaseCompletedDates.get(row.client_id) ?? null,
-    days_to_first_use_case: getCalendarDayDiff(
-      kickoffCompletedDates.get(row.client_id) ?? null,
-      firstUseCaseCompletedDates.get(row.client_id) ?? null,
-    ),
-    stagnant_stage_days: stagnantStageDays.get(row.client_id) ?? null,
-    evaluation_cases_count: evaluationCasesCounts.get(row.client_id) ?? 0,
-    validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
-  })) satisfies ClientHealthReportRow[];
+  const configByClientId = new Map(
+    ((customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]).map((config) => [
+      config.client_id,
+      config,
+    ]),
+  );
+  const rows = clientRows.map((row) => {
+    const config = configByClientId.get(row.client_id);
+    const periodMonths = config?.custom_plan_period_months ?? 1;
+    const contractedCredits =
+      config?.custom_plan_credits ?? (config?.base_capacity ?? 0) * periodMonths;
+    const latestPaidCycleEnd = latestPaidCycleEnds.get(row.client_id);
+    const renewalAt = latestPaidCycleEnd ? addDaysToIsoDate(latestPaidCycleEnd, 1) : null;
+
+    return {
+      ...row,
+      north_stars_count: northStarCounts.get(row.client_id) ?? row.north_stars_completed,
+      kickoff_completed_at: kickoffCompletedDates.get(row.client_id) ?? null,
+      days_since_kickoff_completed: getElapsedCalendarDays(kickoffCompletedDates.get(row.client_id) ?? null),
+      first_use_case_completed_at: firstUseCaseCompletedDates.get(row.client_id) ?? null,
+      days_to_first_use_case: getCalendarDayDiff(
+        kickoffCompletedDates.get(row.client_id) ?? null,
+        firstUseCaseCompletedDates.get(row.client_id) ?? null,
+      ),
+      stagnant_stage_days: stagnantStageDays.get(row.client_id) ?? null,
+      evaluation_cases_count: evaluationCasesCounts.get(row.client_id) ?? 0,
+      validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
+      contracted_credits: contractedCredits,
+      credit_renewal_at: renewalAt,
+      days_until_credit_renewal: getCalendarDaysUntil(renewalAt),
+    };
+  }) satisfies ClientHealthReportRow[];
 
   return (
     <ReportsPanel
