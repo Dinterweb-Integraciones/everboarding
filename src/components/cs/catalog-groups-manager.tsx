@@ -228,6 +228,9 @@ export function CatalogGroupsManager({
   } | null>(null);
   const deferredGroupSearchQuery = useDeferredValue(groupSearchQuery);
   const categoryMenuRef = useRef<HTMLDivElement | null>(null);
+  const groupsTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const groupsFloatingScrollRef = useRef<HTMLDivElement | null>(null);
+  const [groupsTableScrollWidth, setGroupsTableScrollWidth] = useState(0);
 
   const groupCategoriesById = useMemo(
     () => new Map(groupCategories.map((category) => [category.id, category])),
@@ -574,6 +577,42 @@ export function CatalogGroupsManager({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [isCategoryMenuOpen]);
+
+  useEffect(() => {
+    const scrollContainer = groupsTableScrollRef.current;
+    if (!scrollContainer) return undefined;
+
+    function syncTableWidth() {
+      setGroupsTableScrollWidth(scrollContainer?.scrollWidth ?? 0);
+    }
+
+    syncTableWidth();
+    const resizeObserver = new ResizeObserver(syncTableWidth);
+    resizeObserver.observe(scrollContainer);
+    if (scrollContainer.firstElementChild) {
+      resizeObserver.observe(scrollContainer.firstElementChild);
+    }
+    window.addEventListener("resize", syncTableWidth);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", syncTableWidth);
+    };
+  }, [filteredGroupsTableRows.length, groupsPageSize, openDescriptionGroupId, visibleGroupsPage]);
+
+  function syncGroupsHorizontalScroll(source: "table" | "floating") {
+    const table = groupsTableScrollRef.current;
+    const floating = groupsFloatingScrollRef.current;
+    if (!table || !floating) return;
+
+    if (source === "table" && floating.scrollLeft !== table.scrollLeft) {
+      floating.scrollLeft = table.scrollLeft;
+    }
+
+    if (source === "floating" && table.scrollLeft !== floating.scrollLeft) {
+      table.scrollLeft = floating.scrollLeft;
+    }
+  }
 
   const paginatedGroupsTableRows = useMemo(() => {
     const startIndex = (visibleGroupsPage - 1) * groupsPageSize;
@@ -1069,8 +1108,8 @@ export function CatalogGroupsManager({
 
   return (
     <>
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        <section className="rounded-[18px] border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+      <div className="mx-auto flex max-w-7xl flex-col px-4 py-8 sm:px-6">
+        <section className="order-1 rounded-[18px] border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-[var(--accent)]">
               <Layers3 className="h-5 w-5" />
@@ -1086,8 +1125,10 @@ export function CatalogGroupsManager({
           <p className="mt-4 text-sm text-slate-600">
             Administra grupos de tareas o casos de uso con creditos manuales.
           </p>
+        </section>
 
-          <form className="mt-6 space-y-5" onSubmit={(event) => event.preventDefault()}>
+        <section className="order-3 mt-6 rounded-[18px] border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+          <form className="space-y-5" onSubmit={(event) => event.preventDefault()}>
             <div className="grid gap-3 lg:grid-cols-3">
               {FORM_STEPS.map((step, index) => {
                 const isActive = activeFormStep === index;
@@ -1636,7 +1677,7 @@ export function CatalogGroupsManager({
           </form>
         </section>
 
-        <section className="mt-6 rounded-[18px] border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+        <section className="order-2 mt-6 rounded-[18px] border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
@@ -1649,165 +1690,6 @@ export function CatalogGroupsManager({
                 ? `${groupsTableRows.length} grupos`
                 : `${filteredGroupsTableRows.length} de ${groupsTableRows.length} grupos`}
             </span>
-          </div>
-
-          <div className="mt-6 rounded-[16px] border border-slate-200 bg-slate-50/80 p-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Orden en Guía Inteligente
-                </p>
-                <h3 className="mt-1 text-lg font-black text-slate-900">Prioriza casos de uso dentro de cada categoria</h3>
-                <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                  Arrastra las tarjetas o usa subir y bajar. Este orden se refleja en el catalogo visible para ventas y onboarding.
-                </p>
-              </div>
-              <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                {isSavingCategoryOrder ? "Guardando orden..." : "Orden manual activo"}
-              </div>
-            </div>
-
-            {categoryOrderingRows.length ? (
-              <div className="mt-4 grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-                <div className="flex flex-col gap-2">
-                  {categoryOrderingRows.map((category) => {
-                    const selected = activeOrderingCategory?.id === category.id;
-                    return (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() => setActiveOrderingCategoryId(category.id)}
-                        className={`rounded-[14px] border px-4 py-3 text-left transition ${
-                          selected
-                            ? "border-[var(--accent)] bg-white shadow-sm"
-                            : "border-slate-200 bg-white/70 hover:border-slate-300"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-semibold text-slate-900">{category.name}</span>
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
-                            {category.groups.length}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {category.description || "Sin descripcion"}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="rounded-[16px] border border-slate-200 bg-white p-4">
-                  {activeOrderingCategory ? (
-                    <>
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{activeOrderingCategory.name}</p>
-                          <p className="text-xs text-slate-500">
-                            {activeOrderingCategory.groups.length} casos de uso en esta categoria
-                          </p>
-                        </div>
-                        <p className="text-xs text-slate-400">El primero aparece primero en el catalogo</p>
-                      </div>
-
-                      <div className="mt-4 space-y-3">
-                        {activeOrderingCategory.groups.map((group, index) => (
-                          <div
-                            key={`${activeOrderingCategory.id}-${group.id}`}
-                            draggable={!isSavingCategoryOrder}
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("text/plain", group.id);
-                              setDraggedOrderingGroupId(group.id);
-                            }}
-                            onDragEnd={() => {
-                              setDraggedOrderingGroupId(null);
-                              setDropOrderingGroupId(null);
-                            }}
-                            onDragOver={(event) => {
-                              event.preventDefault();
-                              if (isSavingCategoryOrder) {
-                                return;
-                              }
-                              event.dataTransfer.dropEffect = "move";
-                              setDropOrderingGroupId(group.id);
-                            }}
-                            onDragLeave={() => {
-                              setDropOrderingGroupId((current) => (current === group.id ? null : current));
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              handleOrderingDrop(activeOrderingCategory.id, group.id);
-                            }}
-                            className={`rounded-[14px] border px-4 py-3 transition ${
-                              dropOrderingGroupId === group.id
-                                ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_8%,white)]"
-                                : "border-slate-200 bg-slate-50/60"
-                            } ${isSavingCategoryOrder ? "opacity-70" : "cursor-grab active:cursor-grabbing"}`}
-                          >
-                            <div className="flex items-start gap-3">
-                              <div className="flex items-center gap-3 pt-1">
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">
-                                  #{index + 1}
-                                </span>
-                                <GripVertical className="h-4 w-4 text-slate-400" />
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="font-semibold text-slate-900">{group.name}</p>
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
-                                    {group.totalCredits} CR
-                                  </span>
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
-                                    {group.useCaseCategoryName}
-                                  </span>
-                                  {!group.is_active ? (
-                                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
-                                      Inactivo
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <RichTextDisplay
-                                  value={group.preview || group.description}
-                                  fallback="Sin preview"
-                                  className="mt-1 text-sm text-slate-600"
-                                />
-                              </div>
-
-                              <div className="flex shrink-0 flex-col gap-2">
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "up")}
-                                  disabled={isSavingCategoryOrder || index === 0}
-                                >
-                                  <ArrowUp className="mr-2 h-4 w-4" />
-                                  Subir
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "down")}
-                                  disabled={isSavingCategoryOrder || index === activeOrderingCategory.groups.length - 1}
-                                >
-                                  <ArrowDown className="mr-2 h-4 w-4" />
-                                  Bajar
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 rounded-[14px] border border-dashed border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
-                Aún no hay categorías de Guía Inteligente con casos de uso asociados para ordenar.
-              </div>
-            )}
           </div>
 
           <div className="mt-5 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4">
@@ -1851,13 +1733,19 @@ export function CatalogGroupsManager({
             </div>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
-            <div className="overflow-x-auto">
+          <div
+            ref={groupsTableScrollRef}
+            className="static mt-5 overflow-x-auto rounded-[14px] border border-slate-200"
+            onScroll={() => syncGroupsHorizontalScroll("table")}
+          >
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Grupo
+                    </th>
+                    <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Acciones
                     </th>
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Creditos
@@ -1889,9 +1777,6 @@ export function CatalogGroupsManager({
                     <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
                       Visibilidad
                     </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Acciones
-                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -1900,7 +1785,7 @@ export function CatalogGroupsManager({
                       <Fragment key={group.id}>
                         <tr>
                           <td className="px-4 py-4">
-                            <div className="font-semibold text-slate-900">{group.name}</div>
+                            <div className="min-w-48 font-semibold text-slate-900">{group.name}</div>
                             <div className="text-xs text-slate-500">{group.taskCount} tareas</div>
                             {group.display_badge?.trim() ? (
                               <div className="mt-1 text-xs font-semibold text-[var(--accent)]">
@@ -1919,6 +1804,59 @@ export function CatalogGroupsManager({
                                 ))}
                               </div>
                             ) : null}
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex min-w-[290px] items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="px-3 py-2 text-sky-700"
+                                onClick={() =>
+                                  setOpenDescriptionGroupId((current) =>
+                                    current === group.id ? null : group.id,
+                                  )
+                                }
+                                aria-label={`${openDescriptionGroupId === group.id ? "Ocultar" : "Ver"} detalles de ${group.name}`}
+                                title={openDescriptionGroupId === group.id ? "Ocultar detalles" : "Ver detalles"}
+                              >
+                                <Eye
+                                  className="mr-2 h-5 w-5 shrink-0 text-sky-700"
+                                  strokeWidth={3}
+                                  aria-hidden="true"
+                                />
+                                {openDescriptionGroupId === group.id ? "Ocultar" : "Ver"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="px-3 py-2 text-amber-700"
+                                onClick={() => startEdit(group)}
+                                aria-label={`Editar ${group.name}`}
+                                title="Editar"
+                              >
+                                <Pencil
+                                  className="mr-2 h-5 w-5 shrink-0 text-amber-700"
+                                  strokeWidth={3}
+                                  aria-hidden="true"
+                                />
+                                Editar
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="danger"
+                                className="px-3 py-2 text-white"
+                                onClick={() => handleDelete(group)}
+                                aria-label={`Eliminar ${group.name}`}
+                                title="Eliminar"
+                              >
+                                <Trash2
+                                  className="mr-2 h-5 w-5 shrink-0 text-white"
+                                  strokeWidth={3}
+                                  aria-hidden="true"
+                                />
+                                Eliminar
+                              </Button>
+                            </div>
                           </td>
                           <td className="px-4 py-4 text-slate-600">{group.totalCredits} CR</td>
                           <td className="px-4 py-4 text-slate-600">
@@ -1968,30 +1906,6 @@ export function CatalogGroupsManager({
                             >
                               {group.is_public ? "Publico" : "Privado"}
                             </span>
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  setOpenDescriptionGroupId((current) =>
-                                    current === group.id ? null : group.id,
-                                  )
-                                }
-                              >
-                                <Eye className="mr-2 h-4 w-4" />
-                                {openDescriptionGroupId === group.id ? "Ocultar" : "Ver"}
-                              </Button>
-                              <Button type="button" variant="secondary" onClick={() => startEdit(group)}>
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Editar
-                              </Button>
-                              <Button type="button" variant="danger" onClick={() => handleDelete(group)}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Eliminar
-                              </Button>
-                            </div>
                           </td>
                         </tr>
                         {openDescriptionGroupId === group.id ? (
@@ -2182,8 +2096,19 @@ export function CatalogGroupsManager({
                   )}
                 </tbody>
               </table>
-            </div>
           </div>
+
+          {paginatedGroupsTableRows.length ? (
+            <div className="sticky bottom-0 z-20 -mt-px hidden border-x border-b border-slate-200 bg-white/95 px-3 py-2 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:block">
+              <div
+                ref={groupsFloatingScrollRef}
+                className="overflow-x-auto"
+                onScroll={() => syncGroupsHorizontalScroll("floating")}
+              >
+                <div style={{ width: groupsTableScrollWidth || 1600, height: 1 }} />
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
@@ -2213,6 +2138,165 @@ export function CatalogGroupsManager({
               </Button>
             </div>
           </div>
+        </section>
+
+        <section className="order-4 mt-6 rounded-[18px] border border-slate-200 bg-slate-50/80 p-6 shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                Orden en Guía Inteligente
+              </p>
+              <h3 className="mt-1 text-lg font-black text-slate-900">Prioriza casos de uso dentro de cada categoria</h3>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Arrastra las tarjetas o usa subir y bajar. Este orden se refleja en el catalogo visible para ventas y onboarding.
+              </p>
+            </div>
+            <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+              {isSavingCategoryOrder ? "Guardando orden..." : "Orden manual activo"}
+            </div>
+          </div>
+
+          {categoryOrderingRows.length ? (
+            <div className="mt-4 grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+              <div className="flex flex-col gap-2">
+                {categoryOrderingRows.map((category) => {
+                  const selected = activeOrderingCategory?.id === category.id;
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setActiveOrderingCategoryId(category.id)}
+                      className={`rounded-[14px] border px-4 py-3 text-left transition ${
+                        selected
+                          ? "border-[var(--accent)] bg-white shadow-sm"
+                          : "border-slate-200 bg-white/70 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-slate-900">{category.name}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                          {category.groups.length}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {category.description || "Sin descripcion"}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-[16px] border border-slate-200 bg-white p-4">
+                {activeOrderingCategory ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{activeOrderingCategory.name}</p>
+                        <p className="text-xs text-slate-500">
+                          {activeOrderingCategory.groups.length} casos de uso en esta categoria
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-400">El primero aparece primero en el catalogo</p>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {activeOrderingCategory.groups.map((group, index) => (
+                        <div
+                          key={`${activeOrderingCategory.id}-${group.id}`}
+                          draggable={!isSavingCategoryOrder}
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", group.id);
+                            setDraggedOrderingGroupId(group.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedOrderingGroupId(null);
+                            setDropOrderingGroupId(null);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            if (isSavingCategoryOrder) {
+                              return;
+                            }
+                            event.dataTransfer.dropEffect = "move";
+                            setDropOrderingGroupId(group.id);
+                          }}
+                          onDragLeave={() => {
+                            setDropOrderingGroupId((current) => (current === group.id ? null : current));
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            handleOrderingDrop(activeOrderingCategory.id, group.id);
+                          }}
+                          className={`rounded-[14px] border px-4 py-3 transition ${
+                            dropOrderingGroupId === group.id
+                              ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_8%,white)]"
+                              : "border-slate-200 bg-slate-50/60"
+                          } ${isSavingCategoryOrder ? "opacity-70" : "cursor-grab active:cursor-grabbing"}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex items-center gap-3 pt-1">
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">
+                                #{index + 1}
+                              </span>
+                              <GripVertical className="h-4 w-4 text-slate-400" />
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-semibold text-slate-900">{group.name}</p>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                  {group.totalCredits} CR
+                                </span>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                  {group.useCaseCategoryName}
+                                </span>
+                                {!group.is_active ? (
+                                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                    Inactivo
+                                  </span>
+                                ) : null}
+                              </div>
+                              <RichTextDisplay
+                                value={group.preview || group.description}
+                                fallback="Sin preview"
+                                className="mt-1 text-sm text-slate-600"
+                              />
+                            </div>
+
+                            <div className="flex shrink-0 flex-col gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "up")}
+                                disabled={isSavingCategoryOrder || index === 0}
+                              >
+                                <ArrowUp className="mr-2 h-4 w-4" />
+                                Subir
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => moveGroupInsideCategory(activeOrderingCategory.id, group.id, "down")}
+                                disabled={isSavingCategoryOrder || index === activeOrderingCategory.groups.length - 1}
+                              >
+                                <ArrowDown className="mr-2 h-4 w-4" />
+                                Bajar
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-[14px] border border-dashed border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
+              Aún no hay categorías de Guía Inteligente con casos de uso asociados para ordenar.
+            </div>
+          )}
         </section>
       </div>
 
