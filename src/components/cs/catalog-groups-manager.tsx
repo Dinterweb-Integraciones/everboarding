@@ -25,9 +25,10 @@ import { RichTextDisplay, RichTextTextarea } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
 import type {
   CreditCatalogGroup,
-  CreditCatalogGroupBadgeType,
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
+  CreditCatalogGroupCluster,
+  CreditCatalogGroupClusterLink,
   CreditCatalogGroupItem,
   CreditCatalogUseCaseCategory,
   CreditCatalogItem,
@@ -36,7 +37,8 @@ import { formatUserError, safeParseNumber } from "@/lib/utils";
 
 type CatalogGroupsManagerProps = {
   initialGroups: CreditCatalogGroup[];
-  initialBadgeTypes: CreditCatalogGroupBadgeType[];
+  initialClusters: CreditCatalogGroupCluster[];
+  initialClusterLinks: CreditCatalogGroupClusterLink[];
   initialGroupCategories: CreditCatalogGroupCategory[];
   initialGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   initialUseCaseCategories: CreditCatalogUseCaseCategory[];
@@ -68,7 +70,7 @@ type CatalogGroupForm = {
   completionOutcome: string;
   successMilestone: string;
   displayBadge: string;
-  cluster: string;
+  clusterIds: string[];
   useCaseCode: string;
   nextLogicalUseCases: string;
   previousUseCases: string;
@@ -89,7 +91,7 @@ const emptyForm: CatalogGroupForm = {
   completionOutcome: "",
   successMilestone: "",
   displayBadge: "",
-  cluster: "",
+  clusterIds: [],
   useCaseCode: "",
   nextLogicalUseCases: "",
   previousUseCases: "",
@@ -185,7 +187,8 @@ function FieldLabel({ children, help }: FieldLabelProps) {
 
 export function CatalogGroupsManager({
   initialGroups,
-  initialBadgeTypes,
+  initialClusters,
+  initialClusterLinks,
   initialGroupCategories,
   initialGroupCategoryLinks,
   initialUseCaseCategories,
@@ -193,7 +196,8 @@ export function CatalogGroupsManager({
   initialMemberships,
 }: CatalogGroupsManagerProps) {
   const [groups, setGroups] = useState(initialGroups);
-  const [badgeTypes, setBadgeTypes] = useState(initialBadgeTypes);
+  const [clusters, setClusters] = useState(initialClusters);
+  const [clusterLinks, setClusterLinks] = useState(initialClusterLinks);
   const [groupCategories] = useState(initialGroupCategories);
   const [groupCategoryLinks, setGroupCategoryLinks] = useState(initialGroupCategoryLinks);
   const [useCaseCategories] = useState(initialUseCaseCategories);
@@ -206,10 +210,10 @@ export function CatalogGroupsManager({
   const [taskToAdd, setTaskToAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
-  const [isBadgeTypeModalOpen, setIsBadgeTypeModalOpen] = useState(false);
-  const [newBadgeTypeLabel, setNewBadgeTypeLabel] = useState("");
-  const [isSavingBadgeType, setIsSavingBadgeType] = useState(false);
-  const [deletingBadgeTypeId, setDeletingBadgeTypeId] = useState<string | null>(null);
+  const [isClusterModalOpen, setIsClusterModalOpen] = useState(false);
+  const [newClusterLabel, setNewClusterLabel] = useState("");
+  const [isSavingCluster, setIsSavingCluster] = useState(false);
+  const [deletingClusterId, setDeletingClusterId] = useState<string | null>(null);
   const [groupSearchQuery, setGroupSearchQuery] = useState("");
   const [groupsPageSize, setGroupsPageSize] = useState(10);
   const [currentGroupsPage, setCurrentGroupsPage] = useState(1);
@@ -253,28 +257,40 @@ export function CatalogGroupsManager({
     [form.useCaseCategoryId, useCaseCategories],
   );
 
-  const availableBadgeTypes = useMemo(
+  const clustersById = useMemo(
+    () => new Map(clusters.map((cluster) => [cluster.id, cluster])),
+    [clusters],
+  );
+
+  const availableClusters = useMemo(
     () =>
-      [...badgeTypes]
-        .filter((badgeType) => badgeType.is_active && !badgeType.is_legacy)
+      [...clusters]
+        .filter((cluster) => cluster.is_active || form.clusterIds.includes(cluster.id))
         .sort(
           (left, right) =>
             safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
             || left.label.localeCompare(right.label, "es"),
         ),
-    [badgeTypes],
+    [clusters, form.clusterIds],
   );
 
-  const badgeTypeUsageCounts = useMemo(() => {
+  const clusterUsageCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    groups.forEach((group) => {
-      const keyword = group.display_badge?.trim();
-      if (keyword) {
-        counts.set(keyword, (counts.get(keyword) ?? 0) + 1);
-      }
+    clusterLinks.forEach((link) => {
+      counts.set(link.cluster_id, (counts.get(link.cluster_id) ?? 0) + 1);
     });
     return counts;
-  }, [groups]);
+  }, [clusterLinks]);
+
+  const selectedClusterSummary = useMemo(() => {
+    const selectedLabels = form.clusterIds
+      .map((clusterId) => clustersById.get(clusterId)?.label ?? null)
+      .filter((label): label is string => Boolean(label));
+
+    if (!selectedLabels.length) return "Sin cluster";
+    if (selectedLabels.length <= 2) return selectedLabels.join(", ");
+    return `${selectedLabels.slice(0, 2).join(", ")} +${selectedLabels.length - 2}`;
+  }, [clustersById, form.clusterIds]);
 
   const selectedCategorySummary = useMemo(() => {
     if (!form.modalCategoryIds.length) {
@@ -382,6 +398,13 @@ export function CatalogGroupsManager({
   const groupsTableRows = useMemo(
     () =>
       sortedGroups.map((group) => {
+        const selectedClusterIds = clusterLinks
+          .filter((link) => link.group_id === group.id)
+          .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
+          .map((link) => link.cluster_id);
+        const clusterNames = selectedClusterIds
+          .map((clusterId) => clustersById.get(clusterId)?.label ?? null)
+          .filter((label): label is string => Boolean(label));
         const selectedCategoryIds = sortCategoryLinks(
           groupCategoryLinks.filter((link) => link.group_id === group.id),
           groupCategoriesById,
@@ -413,7 +436,13 @@ export function CatalogGroupsManager({
             ? useCaseCategoriesById.get(group.use_case_category_id)?.name ?? "Categoría no disponible"
             : "Sin categoría",
           useCaseCode: group.use_case_code?.trim() || "Sin código",
-          clusterName: group.cluster?.trim() || "Sin clúster",
+          clusterIds: selectedClusterIds,
+          clusterNames: clusterNames.length
+            ? clusterNames
+            : group.cluster?.trim()
+              ? [group.cluster.trim()]
+              : [],
+          clusterName: clusterNames.join(", ") || group.cluster?.trim() || "Sin clúster",
           nextLogicalUseCases: group.next_logical_use_cases?.trim() || "Sin siguiente caso",
           previousUseCases: group.previous_use_cases?.trim() || "Sin casos previos",
           subsequentUseCases: group.subsequent_use_cases?.trim() || "Sin casos posteriores",
@@ -426,7 +455,7 @@ export function CatalogGroupsManager({
           tags: Array.isArray(group.tags) ? group.tags : [],
         };
       }),
-    [groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups, useCaseCategoriesById],
+    [clusterLinks, clustersById, groupCategoriesById, groupCategoryLinks, items, memberships, sortedGroups, useCaseCategoriesById],
   );
 
   const groupRowsById = useMemo(
@@ -568,6 +597,15 @@ export function CatalogGroupsManager({
   }
 
   function startEdit(group: CreditCatalogGroup) {
+    const selectedClusterIds = clusterLinks
+      .filter((link) => link.group_id === group.id)
+      .sort((left, right) => safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order))
+      .map((link) => link.cluster_id);
+    const legacyClusterId = group.cluster?.trim()
+      ? clusters.find(
+          (cluster) => cluster.label.toLowerCase() === group.cluster?.trim().toLowerCase(),
+        )?.id
+      : null;
     const selectedCategoryIds = sortCategoryLinks(
       groupCategoryLinks.filter((link) => link.group_id === group.id),
       groupCategoriesById,
@@ -583,7 +621,11 @@ export function CatalogGroupsManager({
       completionOutcome: group.completion_outcome ?? "",
       successMilestone: group.success_milestone ?? "",
       displayBadge: group.display_badge ?? "",
-      cluster: group.cluster ?? "",
+      clusterIds: selectedClusterIds.length
+        ? selectedClusterIds
+        : legacyClusterId
+          ? [legacyClusterId]
+          : [],
       useCaseCode: group.use_case_code ?? "",
       nextLogicalUseCases: group.next_logical_use_cases ?? "",
       previousUseCases: group.previous_use_cases ?? "",
@@ -643,94 +685,128 @@ export function CatalogGroupsManager({
     setSelectedTaskIds((current) => current.filter((currentId) => currentId !== taskId));
   }
 
-  async function saveBadgeType() {
-    const label = newBadgeTypeLabel.trim();
+  async function saveCluster() {
+    const label = newClusterLabel.trim();
     if (!label) {
-      setFeedback({ tone: "error", message: "Escribe el nombre de la keyword." });
+      setFeedback({ tone: "error", message: "Escribe el nombre del cluster." });
       return;
     }
 
-    if (availableBadgeTypes.some((badgeType) => badgeType.label.toLowerCase() === label.toLowerCase())) {
-      setFeedback({ tone: "error", message: "Esta keyword ya existe." });
+    if (clusters.some((cluster) => cluster.is_active && cluster.label.toLowerCase() === label.toLowerCase())) {
+      setFeedback({ tone: "error", message: "Este cluster ya existe." });
       return;
     }
 
-    setIsSavingBadgeType(true);
+    setIsSavingCluster(true);
     setFeedback(null);
 
     try {
-      const response = await fetch("/api/cs/catalog-group-badge-types", {
+      const response = await fetch("/api/cs/catalog-group-clusters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           label,
-          sortOrder: availableBadgeTypes.length,
+          sortOrder: clusters.length,
           isActive: true,
         }),
       });
 
-      const payload = (await response.json()) as CreditCatalogGroupBadgeType & { message?: string };
+      const payload = (await response.json()) as CreditCatalogGroupCluster & { message?: string };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos crear la keyword.");
+        throw new Error(payload.message || "No pudimos crear el cluster.");
       }
 
-      setBadgeTypes((current) => [...current, payload]);
-      setForm((current) => ({ ...current, displayBadge: payload.label }));
-      setNewBadgeTypeLabel("");
-      setFeedback({ tone: "success", message: "Keyword creada y seleccionada." });
+      setClusters((current) =>
+        current.some((cluster) => cluster.id === payload.id)
+          ? current.map((cluster) => (cluster.id === payload.id ? payload : cluster))
+          : [...current, payload],
+      );
+      setForm((current) => ({
+        ...current,
+        clusterIds: current.clusterIds.includes(payload.id)
+          ? current.clusterIds
+          : [...current.clusterIds, payload.id],
+      }));
+      setNewClusterLabel("");
+      setFeedback({ tone: "success", message: "Cluster creado y seleccionado." });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos crear la keyword."),
+        message: formatUserError(caughtError, "No pudimos crear el cluster."),
       });
     } finally {
-      setIsSavingBadgeType(false);
+      setIsSavingCluster(false);
     }
   }
 
-  async function deleteBadgeType(badgeType: CreditCatalogGroupBadgeType) {
-    const usageCount = badgeTypeUsageCounts.get(badgeType.label) ?? 0;
+  async function deleteCluster(cluster: CreditCatalogGroupCluster) {
+    const usageCount = clusterUsageCounts.get(cluster.id) ?? 0;
     const confirmed = window.confirm(
       usageCount > 0
-        ? `¿Retirar la keyword "${badgeType.label}" del catálogo? Seguirá guardada en los ${usageCount} casos de uso que ya la tienen asignada.`
-        : `¿Eliminar la keyword "${badgeType.label}"?`,
+        ? `¿Retirar el cluster "${cluster.label}" del catálogo? Seguirá guardado en los ${usageCount} casos de uso que ya lo tienen asignado.`
+        : `¿Eliminar el cluster "${cluster.label}"?`,
     );
     if (!confirmed) return;
 
-    setDeletingBadgeTypeId(badgeType.id);
+    setDeletingClusterId(cluster.id);
     setFeedback(null);
 
     try {
-      const response = await fetch(`/api/cs/catalog-group-badge-types/${badgeType.id}`, {
+      const response = await fetch(`/api/cs/catalog-group-clusters/${cluster.id}`, {
         method: "DELETE",
       });
       const payload = (await response.json()) as {
         message?: string;
         disposition?: "archived" | "deleted";
+        cluster?: CreditCatalogGroupCluster;
       };
       if (!response.ok) {
-        throw new Error(payload.message || "No pudimos eliminar la keyword.");
+        throw new Error(payload.message || "No pudimos eliminar el cluster.");
       }
 
-      setBadgeTypes((current) => current.filter((item) => item.id !== badgeType.id));
-      setForm((current) =>
-        current.displayBadge === badgeType.label ? { ...current, displayBadge: "" } : current,
+      setClusters((current) =>
+        payload.disposition === "archived"
+          ? current.map((item) => (item.id === cluster.id ? { ...item, is_active: false } : item))
+          : current.filter((item) => item.id !== cluster.id),
       );
+      setForm((current) => ({
+        ...current,
+        clusterIds: current.clusterIds.filter((clusterId) => clusterId !== cluster.id),
+      }));
       setFeedback({
         tone: "success",
         message:
           payload.disposition === "archived"
-            ? "Keyword archivada. Ya no aparece en el catálogo."
-            : "Keyword eliminada.",
+            ? "Cluster archivado. Ya no aparece en el catálogo."
+            : "Cluster eliminado.",
       });
     } catch (caughtError) {
       setFeedback({
         tone: "error",
-        message: formatUserError(caughtError, "No pudimos eliminar la keyword."),
+        message: formatUserError(caughtError, "No pudimos eliminar el cluster."),
       });
     } finally {
-      setDeletingBadgeTypeId(null);
+      setDeletingClusterId(null);
     }
+  }
+
+  function toggleCluster(clusterId: string) {
+    setForm((current) => ({
+      ...current,
+      clusterIds: current.clusterIds.includes(clusterId)
+        ? current.clusterIds.filter((currentId) => currentId !== clusterId)
+        : [...current.clusterIds, clusterId],
+    }));
+  }
+
+  function buildLocalClusterLinks(groupId: string, selectedClusterIds: string[]) {
+    return selectedClusterIds.map((clusterId, index) => ({
+      id: crypto.randomUUID(),
+      group_id: groupId,
+      cluster_id: clusterId,
+      sort_order: index,
+      created_at: new Date().toISOString(),
+    })) satisfies CreditCatalogGroupClusterLink[];
   }
 
   function toggleModalCategory(categoryId: string) {
@@ -887,7 +963,7 @@ export function CatalogGroupsManager({
             completionOutcome: form.completionOutcome,
             successMilestone: form.successMilestone,
             displayBadge: form.displayBadge,
-            cluster: form.cluster,
+            clusterIds: form.clusterIds,
             useCaseCode: form.useCaseCode,
             nextLogicalUseCases: form.nextLogicalUseCases,
             previousUseCases: form.previousUseCases,
@@ -910,6 +986,7 @@ export function CatalogGroupsManager({
       }
 
       const nextCategoryLinks = buildLocalCategoryLinks(payload.id, form.modalCategoryIds);
+      const nextClusterLinks = buildLocalClusterLinks(payload.id, form.clusterIds);
       const nextMemberships = selectedTaskIds.map((taskId, index) => ({
         id: crypto.randomUUID(),
         group_id: payload.id,
@@ -930,10 +1007,15 @@ export function CatalogGroupsManager({
           ...current.filter((membership) => membership.group_id !== editingId),
           ...nextMemberships,
         ]);
+        setClusterLinks((current) => [
+          ...current.filter((link) => link.group_id !== editingId),
+          ...nextClusterLinks,
+        ]);
         setFeedback({ tone: "success", message: "Grupo actualizado." });
       } else {
         setGroups((current) => [...current, payload]);
         setGroupCategoryLinks((current) => [...current, ...nextCategoryLinks]);
+        setClusterLinks((current) => [...current, ...nextClusterLinks]);
         setMemberships((current) => [...current, ...nextMemberships]);
         setFeedback({ tone: "success", message: "Grupo creado." });
       }
@@ -968,6 +1050,7 @@ export function CatalogGroupsManager({
 
       setGroups((current) => current.filter((item) => item.id !== group.id));
       setGroupCategoryLinks((current) => current.filter((link) => link.group_id !== group.id));
+      setClusterLinks((current) => current.filter((link) => link.group_id !== group.id));
       setMemberships((current) => current.filter((membership) => membership.group_id !== group.id));
       if (editingId === group.id) {
         resetForm();
@@ -1076,38 +1159,16 @@ export function CatalogGroupsManager({
               </div>
 
               <div className="order-5 lg:col-span-3 lg:col-start-7 lg:row-start-2">
-                <FieldLabel help="Selecciona la keyword que se mostrará en la tarjeta del caso de uso.">
+                <FieldLabel help="Escribe la keyword que se mostrará en la tarjeta del caso de uso.">
                   Keywords
                 </FieldLabel>
-                <div className="relative">
-                  <Select
-                    value={form.displayBadge ?? ""}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, displayBadge: event.target.value }))
-                    }
-                    className="pr-14"
-                  >
-                    <option value="">Sin keyword</option>
-                    {form.displayBadge.trim() &&
-                    !availableBadgeTypes.some((badgeType) => badgeType.label === form.displayBadge.trim()) ? (
-                      <option value={form.displayBadge.trim()}>{form.displayBadge.trim()}</option>
-                    ) : null}
-                    {availableBadgeTypes.map((badgeType) => (
-                      <option key={badgeType.id} value={badgeType.label}>
-                        {badgeType.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <button
-                    type="button"
-                    onClick={() => setIsBadgeTypeModalOpen(true)}
-                    className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg border border-[var(--accent)] bg-white text-[var(--accent)] transition hover:bg-[color-mix(in_oklab,var(--accent)_10%,white)]"
-                    aria-label="Administrar keywords"
-                    title="Administrar keywords"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
+                <Input
+                  value={form.displayBadge ?? ""}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, displayBadge: event.target.value }))
+                  }
+                  placeholder="Ej. Automatización"
+                />
               </div>
 
               <div className="order-6 rounded-[14px] border border-slate-200 bg-slate-50/70 p-4 lg:col-span-3 lg:col-start-10 lg:row-span-2 lg:row-start-1">
@@ -1276,16 +1337,49 @@ export function CatalogGroupsManager({
 
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <FieldLabel help="Agrupa casos de uso que pertenecen al mismo flujo o proceso.">
+                <FieldLabel help="Selecciona uno o varios clusters para agrupar el caso de uso por flujo o proceso.">
                   Clúster
                 </FieldLabel>
-                <Input
-                  value={form.cluster}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, cluster: event.target.value }))
-                  }
-                  placeholder="Ej. Pipeline de leads"
-                />
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsClusterModalOpen(true)}
+                    className="flex w-full items-center rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-14 text-left text-sm leading-5 text-slate-900 shadow-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[color-mix(in_oklab,var(--accent)_20%,white)]"
+                  >
+                    <span className={`min-w-0 flex-1 truncate ${form.clusterIds.length ? "text-slate-900" : "text-slate-400"}`}>
+                      {selectedClusterSummary}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsClusterModalOpen(true)}
+                    className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg border border-[var(--accent)] bg-white text-[var(--accent)] transition hover:bg-[color-mix(in_oklab,var(--accent)_10%,white)]"
+                    aria-label="Administrar clusters"
+                    title="Administrar clusters"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+                {form.clusterIds.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {form.clusterIds.map((clusterId) => (
+                      <span
+                        key={clusterId}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                      >
+                        {clustersById.get(clusterId)?.label ?? "Cluster no disponible"}
+                        <button
+                          type="button"
+                          onClick={() => toggleCluster(clusterId)}
+                          className="text-slate-400 transition hover:text-rose-600"
+                          aria-label={`Quitar cluster ${clustersById.get(clusterId)?.label ?? ""}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div>
@@ -2122,12 +2216,12 @@ export function CatalogGroupsManager({
         </section>
       </div>
 
-      {isBadgeTypeModalOpen ? (
+      {isClusterModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="keywords-modal-title"
+            aria-labelledby="clusters-modal-title"
             className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_28px_90px_rgba(15,23,42,0.28)]"
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5 sm:px-7">
@@ -2135,21 +2229,21 @@ export function CatalogGroupsManager({
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--accent)]">
                   Catálogo del caso de uso
                 </p>
-                <h3 id="keywords-modal-title" className="mt-1 text-2xl font-black text-slate-950">
-                  Administrar keywords
+                <h3 id="clusters-modal-title" className="mt-1 text-2xl font-black text-slate-950">
+                  Administrar clusters
                 </h3>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  Crea keywords reutilizables, selecciona una para el caso de uso actual o elimina las que ya no necesitas.
+                  Crea clusters reutilizables y selecciona todos los que correspondan al caso de uso actual.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  setIsBadgeTypeModalOpen(false);
-                  setNewBadgeTypeLabel("");
+                  setIsClusterModalOpen(false);
+                  setNewClusterLabel("");
                 }}
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                aria-label="Cerrar administrador de keywords"
+                aria-label="Cerrar administrador de clusters"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -2158,7 +2252,7 @@ export function CatalogGroupsManager({
             <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
               <section className="border-b border-slate-200 bg-slate-50/70 p-6 sm:p-7 lg:border-b-0 lg:border-r">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Agregar keyword
+                  Agregar cluster
                 </p>
                 <h4 className="mt-2 text-lg font-bold text-slate-900">Crea una nueva opción</h4>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -2166,14 +2260,14 @@ export function CatalogGroupsManager({
                 </p>
 
                 <div className="mt-5">
-                  <FieldLabel>Nombre de la keyword</FieldLabel>
+                  <FieldLabel>Nombre del cluster</FieldLabel>
                   <Input
-                    value={newBadgeTypeLabel}
-                    onChange={(event) => setNewBadgeTypeLabel(event.target.value)}
+                    value={newClusterLabel}
+                    onChange={(event) => setNewClusterLabel(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault();
-                        void saveBadgeType();
+                        void saveCluster();
                       }
                     }}
                     placeholder="Ej. Automatización"
@@ -2183,12 +2277,12 @@ export function CatalogGroupsManager({
 
                 <Button
                   type="button"
-                  onClick={() => void saveBadgeType()}
-                  disabled={isSavingBadgeType || !newBadgeTypeLabel.trim()}
+                  onClick={() => void saveCluster()}
+                  disabled={isSavingCluster || !newClusterLabel.trim()}
                   className="mt-4 w-full justify-center"
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  {isSavingBadgeType ? "Agregando..." : "Agregar keyword"}
+                  {isSavingCluster ? "Agregando..." : "Agregar cluster"}
                 </Button>
               </section>
 
@@ -2196,29 +2290,29 @@ export function CatalogGroupsManager({
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                      Keywords disponibles
+                      Clusters disponibles
                     </p>
                     <h4 className="mt-2 text-lg font-bold text-slate-900">Catálogo actual</h4>
                   </div>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-                    {availableBadgeTypes.length} keywords
+                    {availableClusters.length} clusters
                   </span>
                 </div>
 
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Si una keyword está en uso, se archivará y dejará de aparecer aquí sin afectar los casos existentes.
+                  Puedes asignar varios clusters. Si uno está en uso, se archivará sin afectar los casos existentes.
                 </p>
 
                 <div className="mt-5 space-y-2">
-                  {availableBadgeTypes.length ? (
-                    availableBadgeTypes.map((badgeType) => {
-                      const usageCount = badgeTypeUsageCounts.get(badgeType.label) ?? 0;
-                      const isSelected = form.displayBadge === badgeType.label;
-                      const isDeleting = deletingBadgeTypeId === badgeType.id;
+                  {availableClusters.length ? (
+                    availableClusters.map((cluster) => {
+                      const usageCount = clusterUsageCounts.get(cluster.id) ?? 0;
+                      const isSelected = form.clusterIds.includes(cluster.id);
+                      const isDeleting = deletingClusterId === cluster.id;
 
                       return (
                         <div
-                          key={badgeType.id}
+                          key={cluster.id}
                           className={`flex items-center gap-3 rounded-[14px] border px-4 py-3 transition ${
                             isSelected
                               ? "border-[var(--accent)] bg-[color-mix(in_oklab,var(--accent)_7%,white)]"
@@ -2226,7 +2320,7 @@ export function CatalogGroupsManager({
                           }`}
                         >
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-semibold text-slate-900">{badgeType.label}</p>
+                            <p className="truncate font-semibold text-slate-900">{cluster.label}</p>
                             <p className="mt-0.5 text-xs text-slate-500">
                               {usageCount
                                 ? `Asignada a ${usageCount} caso${usageCount === 1 ? "" : "s"} de uso`
@@ -2236,23 +2330,23 @@ export function CatalogGroupsManager({
 
                           <button
                             type="button"
-                            onClick={() => setForm((current) => ({ ...current, displayBadge: badgeType.label }))}
+                            onClick={() => toggleCluster(cluster.id)}
                             className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
                               isSelected
                                 ? "bg-[var(--accent)] text-white"
                                 : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
                             }`}
                           >
-                            {isSelected ? "Seleccionada" : "Seleccionar"}
+                            {isSelected ? "Quitar" : "Seleccionar"}
                           </button>
 
                           <button
                             type="button"
-                            onClick={() => void deleteBadgeType(badgeType)}
+                            onClick={() => void deleteCluster(cluster)}
                             disabled={isDeleting}
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
-                            aria-label={`${usageCount > 0 ? "Archivar" : "Eliminar"} keyword ${badgeType.label}`}
-                            title={usageCount > 0 ? "Archivar keyword" : "Eliminar keyword"}
+                            aria-label={`${usageCount > 0 ? "Archivar" : "Eliminar"} cluster ${cluster.label}`}
+                            title={usageCount > 0 ? "Archivar cluster" : "Eliminar cluster"}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -2261,7 +2355,7 @@ export function CatalogGroupsManager({
                     })
                   ) : (
                     <div className="rounded-[14px] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-                      <p className="font-semibold text-slate-700">Todavía no hay keywords</p>
+                      <p className="font-semibold text-slate-700">Todavía no hay clusters</p>
                       <p className="mt-1 text-sm text-slate-500">Agrega la primera desde el formulario.</p>
                     </div>
                   )}
@@ -2274,10 +2368,10 @@ export function CatalogGroupsManager({
                 type="button"
                 variant="secondary"
                 onClick={() => {
-                  setIsBadgeTypeModalOpen(false);
-                  setNewBadgeTypeLabel("");
+                  setIsClusterModalOpen(false);
+                  setNewClusterLabel("");
                 }}
-                disabled={isSavingBadgeType || Boolean(deletingBadgeTypeId)}
+                disabled={isSavingCluster || Boolean(deletingClusterId)}
               >
                 Cerrar
               </Button>

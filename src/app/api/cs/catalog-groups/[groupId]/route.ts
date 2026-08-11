@@ -24,6 +24,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       successMilestone?: string | null;
       displayBadge?: string | null;
       cluster?: string | null;
+      clusterIds?: string[] | null;
       useCaseCode?: string | null;
       nextLogicalUseCases?: string | null;
       previousUseCases?: string | null;
@@ -46,7 +47,9 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     const completionOutcome = body.completionOutcome?.trim() || null;
     const successMilestone = body.successMilestone?.trim() || null;
     const displayBadge = body.displayBadge?.trim() || null;
-    const cluster = body.cluster?.trim() || null;
+    const requestedClusterIds = Array.isArray(body.clusterIds)
+      ? [...new Set(body.clusterIds.map((clusterId) => clusterId.trim()).filter(Boolean))]
+      : [];
     const useCaseCode = body.useCaseCode?.trim() || null;
     const nextLogicalUseCases = body.nextLogicalUseCases?.trim() || null;
     const previousUseCases = body.previousUseCases?.trim() || null;
@@ -137,6 +140,27 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       }
     }
 
+    let selectedClusters: Array<{ id: string; label: string }> = [];
+    if (requestedClusterIds.length) {
+      const { data: clusterRows, error: clustersError } = await supabase
+        .from("credit_catalog_group_clusters")
+        .select("id, label")
+        .in("id", requestedClusterIds);
+
+      if (clustersError) throw clustersError;
+      const clustersById = new Map((clusterRows ?? []).map((cluster) => [cluster.id, cluster]));
+      selectedClusters = requestedClusterIds
+        .map((clusterId) => clustersById.get(clusterId) ?? null)
+        .filter((cluster): cluster is { id: string; label: string } => Boolean(cluster));
+
+      if (selectedClusters.length !== requestedClusterIds.length) {
+        return NextResponse.json(
+          { message: "Uno o mas clusters seleccionados ya no existen." },
+          { status: 400 },
+        );
+      }
+    }
+
     const { data: currentGroup, error: currentError } = await supabase
       .from("credit_catalog_groups")
       .select("*")
@@ -146,6 +170,8 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
     if (currentError || !currentGroup) {
       return NextResponse.json({ message: "No encontramos el grupo." }, { status: 404 });
     }
+
+    const cluster = selectedClusters[0]?.label ?? (body.cluster?.trim() || null);
 
     const { data, error } = await supabase
       .from("credit_catalog_groups")
@@ -180,7 +206,30 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         { status: 409 },
       );
     }
+
     if (error || !data) throw error ?? new Error("No pudimos actualizar el grupo.");
+
+    const { error: deleteClusterLinksError } = await supabase
+      .from("credit_catalog_group_cluster_links")
+      .delete()
+      .eq("group_id", groupId);
+
+    if (deleteClusterLinksError) throw deleteClusterLinksError;
+
+    if (selectedClusters.length) {
+      const { error: insertClusterLinksError } = await supabase
+        .from("credit_catalog_group_cluster_links")
+        .insert(
+          selectedClusters.map((selectedCluster, index) => ({
+            group_id: groupId,
+            cluster_id: selectedCluster.id,
+            sort_order: index,
+          })),
+        );
+
+      if (insertClusterLinksError) throw insertClusterLinksError;
+    }
+
     const { data: existingCategoryLinks, error: existingCategoryLinksError } = await supabase
       .from("credit_catalog_group_category_links")
       .select("id, category_id, sort_order")

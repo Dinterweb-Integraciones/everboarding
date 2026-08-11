@@ -868,6 +868,58 @@ export type Database = {
           updated_at?: string;
         };
       };
+      credit_catalog_group_clusters: {
+        Row: {
+          id: string;
+          label: string;
+          sort_order: number;
+          is_active: boolean;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          label: string;
+          sort_order?: number;
+          is_active?: boolean;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          label?: string;
+          sort_order?: number;
+          is_active?: boolean;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      credit_catalog_group_cluster_links: {
+        Row: {
+          id: string;
+          group_id: string;
+          cluster_id: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          cluster_id: string;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          group_id?: string;
+          cluster_id?: string;
+          sort_order?: number;
+          created_at?: string;
+        };
+      };
       credit_catalog_group_categories: {
         Row: {
           id: string;

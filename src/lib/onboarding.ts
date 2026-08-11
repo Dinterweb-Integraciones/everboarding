@@ -79,6 +79,8 @@ export type AssignableUser = {
 
 export type CreditCatalogGroup = Tables<"credit_catalog_groups">;
 export type CreditCatalogGroupBadgeType = Tables<"credit_catalog_group_badge_types">;
+export type CreditCatalogGroupCluster = Tables<"credit_catalog_group_clusters">;
+export type CreditCatalogGroupClusterLink = Tables<"credit_catalog_group_cluster_links">;
 export type CreditCatalogGroupCategory = Tables<"credit_catalog_group_categories">;
 export type CreditCatalogUseCaseCategory = Tables<"credit_catalog_use_case_categories">;
 export type CreditCatalogGroupCategoryLink = Tables<"credit_catalog_group_category_links">;

@@ -201,6 +201,16 @@ create table if not exists public.credit_catalog_group_badge_types (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.credit_catalog_group_clusters (
+  id uuid primary key default gen_random_uuid(),
+  label text not null unique,
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.credit_catalog_group_categories (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -279,6 +289,34 @@ create table if not exists public.credit_catalog_group_category_links (
   created_at timestamptz not null default timezone('utc', now()),
   unique (group_id, category_id)
 );
+
+create table if not exists public.credit_catalog_group_cluster_links (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.credit_catalog_groups(id) on delete cascade,
+  cluster_id uuid not null references public.credit_catalog_group_clusters(id) on delete cascade,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (group_id, cluster_id)
+);
+
+insert into public.credit_catalog_group_clusters (label, sort_order)
+select distinct on (lower(trim(cluster)))
+  trim(cluster),
+  (row_number() over (order by lower(trim(cluster))) - 1)::integer
+from public.credit_catalog_groups
+where nullif(trim(use_case_code), '') is not null
+  and nullif(trim(cluster), '') is not null
+order by lower(trim(cluster)), trim(cluster)
+on conflict do nothing;
+
+insert into public.credit_catalog_group_cluster_links (group_id, cluster_id, sort_order)
+select groups.id, clusters.id, 0
+from public.credit_catalog_groups as groups
+join public.credit_catalog_group_clusters as clusters
+  on lower(trim(clusters.label)) = lower(trim(groups.cluster))
+where nullif(trim(groups.use_case_code), '') is not null
+  and nullif(trim(groups.cluster), '') is not null
+on conflict (group_id, cluster_id) do nothing;
 
 create table if not exists public.managed_prompts (
   id uuid primary key default gen_random_uuid(),
@@ -582,6 +620,10 @@ create index if not exists credit_catalog_group_badge_types_sort_idx
 on public.credit_catalog_group_badge_types (sort_order, label);
 create index if not exists credit_catalog_group_badge_types_available_idx
 on public.credit_catalog_group_badge_types (is_legacy, is_active, sort_order, label);
+create unique index if not exists credit_catalog_group_clusters_label_unique_idx
+on public.credit_catalog_group_clusters (lower(trim(label)));
+create index if not exists credit_catalog_group_clusters_available_idx
+on public.credit_catalog_group_clusters (is_active, sort_order, label);
 create index if not exists credit_catalog_group_categories_sort_idx
 on public.credit_catalog_group_categories (sort_order, name);
 create index if not exists credit_catalog_use_case_categories_name_idx
@@ -605,6 +647,10 @@ create index if not exists credit_catalog_group_category_links_category_idx
 on public.credit_catalog_group_category_links (category_id);
 create index if not exists credit_catalog_group_category_links_category_sort_idx
 on public.credit_catalog_group_category_links (category_id, sort_order, created_at);
+create index if not exists credit_catalog_group_cluster_links_group_idx
+on public.credit_catalog_group_cluster_links (group_id, sort_order);
+create index if not exists credit_catalog_group_cluster_links_cluster_idx
+on public.credit_catalog_group_cluster_links (cluster_id);
 create index if not exists managed_prompts_updated_idx
 on public.managed_prompts (updated_at desc, created_at desc);
 create unique index if not exists managed_prompts_singleton_key_idx
@@ -668,6 +714,11 @@ for each row execute procedure public.set_current_timestamp_updated_at();
 drop trigger if exists set_credit_catalog_group_badge_types_updated_at on public.credit_catalog_group_badge_types;
 create trigger set_credit_catalog_group_badge_types_updated_at
 before update on public.credit_catalog_group_badge_types
+for each row execute procedure public.set_current_timestamp_updated_at();
+
+drop trigger if exists set_credit_catalog_group_clusters_updated_at on public.credit_catalog_group_clusters;
+create trigger set_credit_catalog_group_clusters_updated_at
+before update on public.credit_catalog_group_clusters
 for each row execute procedure public.set_current_timestamp_updated_at();
 
 drop trigger if exists set_credit_catalog_categories_updated_at on public.credit_catalog_categories;
@@ -1974,6 +2025,8 @@ alter table public.client_members enable row level security;
 alter table public.client_share_links enable row level security;
 alter table public.credit_catalog_groups enable row level security;
 alter table public.credit_catalog_group_badge_types enable row level security;
+alter table public.credit_catalog_group_clusters enable row level security;
+alter table public.credit_catalog_group_cluster_links enable row level security;
 alter table public.credit_catalog_group_categories enable row level security;
 alter table public.credit_catalog_use_case_categories enable row level security;
 alter table public.credit_catalog_categories enable row level security;
@@ -2005,6 +2058,10 @@ drop policy if exists "catalog_groups_read_authenticated" on public.credit_catal
 drop policy if exists "catalog_groups_manage_authenticated" on public.credit_catalog_groups;
 drop policy if exists "catalog_group_badge_types_read_authenticated" on public.credit_catalog_group_badge_types;
 drop policy if exists "catalog_group_badge_types_manage_authenticated" on public.credit_catalog_group_badge_types;
+drop policy if exists "catalog_group_clusters_read_authenticated" on public.credit_catalog_group_clusters;
+drop policy if exists "catalog_group_clusters_manage_authenticated" on public.credit_catalog_group_clusters;
+drop policy if exists "catalog_group_cluster_links_read_authenticated" on public.credit_catalog_group_cluster_links;
+drop policy if exists "catalog_group_cluster_links_manage_authenticated" on public.credit_catalog_group_cluster_links;
 drop policy if exists "catalog_group_categories_read_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_group_categories_manage_authenticated" on public.credit_catalog_group_categories;
 drop policy if exists "catalog_use_case_categories_read_authenticated" on public.credit_catalog_use_case_categories;
@@ -2119,6 +2176,32 @@ using (true);
 
 create policy "catalog_group_badge_types_manage_authenticated"
 on public.credit_catalog_group_badge_types
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_clusters_read_authenticated"
+on public.credit_catalog_group_clusters
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_clusters_manage_authenticated"
+on public.credit_catalog_group_clusters
+for all
+to authenticated
+using (true)
+with check (true);
+
+create policy "catalog_group_cluster_links_read_authenticated"
+on public.credit_catalog_group_cluster_links
+for select
+to authenticated
+using (true);
+
+create policy "catalog_group_cluster_links_manage_authenticated"
+on public.credit_catalog_group_cluster_links
 for all
 to authenticated
 using (true)

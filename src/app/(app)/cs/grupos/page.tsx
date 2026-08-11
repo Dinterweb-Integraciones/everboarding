@@ -2,9 +2,10 @@ import { CatalogGroupsManager } from "@/components/cs/catalog-groups-manager";
 import { requireUser } from "@/lib/auth";
 import type {
   CreditCatalogGroup,
-  CreditCatalogGroupBadgeType,
   CreditCatalogGroupCategory,
   CreditCatalogGroupCategoryLink,
+  CreditCatalogGroupCluster,
+  CreditCatalogGroupClusterLink,
   CreditCatalogGroupItem,
   CreditCatalogUseCaseCategory,
   CreditCatalogItem,
@@ -15,7 +16,8 @@ export default async function CatalogGroupsPage() {
 
   const [
     { data: groupRows, error: groupsError },
-    { data: badgeTypeRows, error: badgeTypesError },
+    { data: clusterRows, error: clustersError },
+    { data: clusterLinkRows, error: clusterLinksError },
     { data: categoryRows, error: categoriesError },
     { data: categoryLinkRows, error: categoryLinksError },
     { data: useCaseCategoryRows, error: useCaseCategoriesError },
@@ -24,12 +26,15 @@ export default async function CatalogGroupsPage() {
   ] = await Promise.all([
     supabase.from("credit_catalog_groups").select("*").order("sort_order").order("name"),
     supabase
-      .from("credit_catalog_group_badge_types")
+      .from("credit_catalog_group_clusters")
       .select("*")
-      .eq("is_active", true)
-      .eq("is_legacy", false)
       .order("sort_order")
       .order("label"),
+    supabase
+      .from("credit_catalog_group_cluster_links")
+      .select("*")
+      .order("group_id")
+      .order("sort_order"),
     supabase.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
     supabase.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     supabase.from("credit_catalog_use_case_categories").select("*").order("name"),
@@ -45,8 +50,12 @@ export default async function CatalogGroupsPage() {
     throw new Error("No pudimos cargar el catalogo de tareas.");
   }
 
-  if (badgeTypesError) {
-    console.warn("catalog_group_badge_types_load_failed", badgeTypesError);
+  if (clustersError) {
+    throw new Error("No pudimos cargar el catalogo de clusters.");
+  }
+
+  if (clusterLinksError) {
+    throw new Error("No pudimos cargar los clusters asignados.");
   }
 
   if (categoriesError) {
@@ -68,7 +77,8 @@ export default async function CatalogGroupsPage() {
   return (
     <CatalogGroupsManager
       initialGroups={(groupRows ?? []) as CreditCatalogGroup[]}
-      initialBadgeTypes={(badgeTypesError ? [] : (badgeTypeRows ?? [])) as CreditCatalogGroupBadgeType[]}
+      initialClusters={(clusterRows ?? []) as CreditCatalogGroupCluster[]}
+      initialClusterLinks={(clusterLinkRows ?? []) as CreditCatalogGroupClusterLink[]}
       initialGroupCategories={(categoryRows ?? []) as CreditCatalogGroupCategory[]}
       initialGroupCategoryLinks={(categoryLinkRows ?? []) as CreditCatalogGroupCategoryLink[]}
       initialUseCaseCategories={(useCaseCategoryRows ?? []) as CreditCatalogUseCaseCategory[]}
