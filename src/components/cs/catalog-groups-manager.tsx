@@ -1489,18 +1489,6 @@ export function CatalogGroupsManager({
               </div>
 
               <div>
-                <FieldLabel>Responsabilidades del cliente</FieldLabel>
-                <RichTextTextarea
-                  rows={3}
-                  value={form.completionOutcome}
-                  onChange={(value) =>
-                    setForm((current) => ({ ...current, completionOutcome: value }))
-                  }
-                  placeholder="Describe las responsabilidades que corresponden al cliente."
-                />
-              </div>
-
-              <div>
                 <FieldLabel>Criterio de Éxito</FieldLabel>
                 <RichTextTextarea
                   rows={3}
@@ -1509,6 +1497,18 @@ export function CatalogGroupsManager({
                     setForm((current) => ({ ...current, successMilestone: value }))
                   }
                   placeholder="Define el criterio o resultado que confirma el éxito."
+                />
+              </div>
+
+              <div>
+                <FieldLabel>Responsabilidades del cliente</FieldLabel>
+                <RichTextTextarea
+                  rows={3}
+                  value={form.completionOutcome}
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, completionOutcome: value }))
+                  }
+                  placeholder="Describe las responsabilidades que corresponden al cliente."
                 />
               </div>
             </div>
