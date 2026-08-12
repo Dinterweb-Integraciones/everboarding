@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
+import { BarChart3, ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText, Network } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { PlatformRole } from "@/lib/platform-access";
@@ -13,6 +13,7 @@ const catalogLinks = [
   { href: "/cs/categorias-casos-uso", label: "Categorías de Casos de Uso" },
   { href: "/cs/tareas", label: "Actividades" },
   { href: "/cs/grupos", label: "Casos de Uso" },
+  { href: "/cs/mapa-casos", label: "Mapa de Casos" },
   { href: "/cs/clientes", label: "Clientes" },
   { href: "/cs/cupones", label: "Cupones" },
   { href: "/cs/ventas", label: "Ventas" },
@@ -61,6 +62,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           { href: "/cs/categorias-casos-uso", label: "Cat. Casos de Uso", icon: LayoutGrid },
           { href: "/cs/tareas", label: "Actividades", icon: LayoutGrid },
           { href: "/cs/grupos", label: "Casos de Uso", icon: LayoutGrid },
+          { href: "/cs/mapa-casos", label: "Mapa de Casos", icon: Network },
           { href: "/cs/clientes", label: "Clientes", icon: LayoutGrid },
           { href: "/cs/cupones", label: "Cupones", icon: LayoutGrid },
           { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
