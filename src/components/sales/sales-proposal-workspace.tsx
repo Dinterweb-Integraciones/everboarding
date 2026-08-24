@@ -16,7 +16,6 @@ import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
 import {
   SALES_PROPOSAL_BASE_CREDITS,
   SALES_PROPOSAL_BASE_PRICE,
-  SALES_PROPOSAL_UPSELL_OPTIONS,
   STATUS_META,
   TASK_STATUS_META,
 } from "@/lib/constants";
@@ -170,6 +169,10 @@ const DINTERWEB_DEFAULT_PACKAGE = {
   credits: 80,
   price: 1197,
 } as const;
+// Paso de incremento exclusivo del stepper de capacidad en la vista de vendedor (variante HubSpot).
+const SALES_PROPOSAL_HUBSPOT_UPSELL_OPTIONS = [
+  { credits: SALES_PROPOSAL_BASE_CREDITS, price: SALES_PROPOSAL_BASE_PRICE },
+] as const;
 const EVALUATION_VALIDATION_META = {
   reviewing: {
     label: "En revisión",
@@ -580,7 +583,7 @@ function getCurrentHubspotUpsellCount(
     SalesProposalDraft,
     "contractedCredits" | "quotedPrice" | "appliedCouponType" | "couponBaseQuotedPrice"
   >,
-  option: Pick<(typeof SALES_PROPOSAL_UPSELL_OPTIONS)[number], "credits" | "price">,
+  option: { credits: number; price: number },
 ) {
   const extraCredits = Math.max(0, proposal.contractedCredits - SALES_PROPOSAL_BASE_CREDITS);
   const effectiveQuotedPrice =
@@ -788,7 +791,7 @@ export function SalesProposalWorkspace({
     : { preserveBacklogDates: true, autoFillBacklogDates: false };
   const newProposalHref = `${routeBase}/new`;
   const workspaceHomeHref = isDinterwebVariant ? "/sales/dinterweb" : newProposalHref;
-  const packageOptions = SALES_PROPOSAL_UPSELL_OPTIONS;
+  const packageOptions = SALES_PROPOSAL_HUBSPOT_UPSELL_OPTIONS;
 
   const router = useRouter();
   const pathname = usePathname();
@@ -4792,7 +4795,7 @@ function mergeRecommendedGroups(
                   onChange={(event) => setUpsellPackageCredits(safeParseNumber(event.target.value))}
                   className="h-9 flex-1 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 >
-                  {SALES_PROPOSAL_UPSELL_OPTIONS.map((option) => (
+                  {packageOptions.map((option) => (
                     <option key={`upsell-${option.credits}`} value={option.credits}>
                       {option.credits} créditos
                     </option>
