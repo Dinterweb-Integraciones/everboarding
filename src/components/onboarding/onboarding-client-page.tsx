@@ -5116,43 +5116,6 @@ export function OnboardingClientPage({
 
             <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
               <div className="space-y-6">
-                {currentCatalogGroup ? (
-                  <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                      Descripción del caso de uso
-                    </p>
-                    <RichTextDisplay
-                      value={currentCatalogGroup.description}
-                      fallback="Este caso de uso no tiene descripción detallada."
-                      className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                    />
-
-                    {currentCatalogGroup.successMilestone ? (
-                      <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                          Criterio de éxito
-                        </p>
-                        <RichTextDisplay
-                          value={currentCatalogGroup.successMilestone}
-                          className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                        />
-                      </div>
-                    ) : null}
-
-                    {currentCatalogGroup.completionOutcome ? (
-                      <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                          Responsabilidades del cliente
-                        </p>
-                        <RichTextDisplay
-                          value={currentCatalogGroup.completionOutcome}
-                          className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                        />
-                      </div>
-                    ) : null}
-                  </section>
-                ) : null}
-
                 <div className="grid gap-6">
                   <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
@@ -5198,6 +5161,30 @@ export function OnboardingClientPage({
                     )}
                   </section>
                 </div>
+
+                {currentCatalogGroup?.successMilestone ? (
+                  <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Criterio de éxito
+                    </p>
+                    <RichTextDisplay
+                      value={currentCatalogGroup.successMilestone}
+                      className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </section>
+                ) : null}
+
+                {currentCatalogGroup?.completionOutcome ? (
+                  <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                      Responsabilidades del cliente
+                    </p>
+                    <RichTextDisplay
+                      value={currentCatalogGroup.completionOutcome}
+                      className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  </section>
+                ) : null}
 
                 <section className="rounded-[4px] border border-[#dfe3eb] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                   <div className="flex items-center justify-between gap-3">
