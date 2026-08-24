@@ -54,6 +54,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
   const mobileLinks = [
     { href: "/dashboard", label: "Inicio", icon: House },
     ...(canSeeReports ? [{ href: "/informes", label: "Informes", icon: BarChart3 }] : []),
+    ...(canSeeReports ? [{ href: "/cs/mapa-cliente", label: "Mapa de Cliente", icon: Network }] : []),
     ...(platformRole === "admin" || platformRole === "superadmin"
       ? [
           { href: "/cs/prompts", label: "Prompts", icon: MessageSquareText },
@@ -96,6 +97,13 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           <Link href="/informes" className={getNavItemClass(isActive(pathname, "/informes"))}>
             <BarChart3 className="h-4 w-4 shrink-0" />
             <span className={navLabelClass}>Informes</span>
+          </Link>
+        ) : null}
+
+        {canSeeReports ? (
+          <Link href="/cs/mapa-cliente" className={getNavItemClass(isActive(pathname, "/cs/mapa-cliente"))}>
+            <Network className="h-4 w-4 shrink-0" />
+            <span className={navLabelClass}>Mapa de Cliente</span>
           </Link>
         ) : null}
 

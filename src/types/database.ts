@@ -836,6 +836,41 @@ export type Database = {
           updated_at?: string;
         };
       };
+      client_use_case_progress: {
+        Row: {
+          id: string;
+          client_id: string;
+          group_id: string;
+          is_completed: boolean;
+          completed_at: string | null;
+          notes: string | null;
+          updated_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          client_id: string;
+          group_id: string;
+          is_completed?: boolean;
+          completed_at?: string | null;
+          notes?: string | null;
+          updated_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          client_id?: string;
+          group_id?: string;
+          is_completed?: boolean;
+          completed_at?: string | null;
+          notes?: string | null;
+          updated_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       credit_catalog_group_badge_types: {
         Row: {
           id: string;

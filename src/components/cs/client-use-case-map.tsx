@@ -4,12 +4,16 @@ import {
   AlertTriangle,
   ArrowRight,
   Check,
+  CheckCircle2,
+  Circle,
   Focus,
   Layers3,
   Minus,
   Network,
   Plus,
   Search,
+  Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -39,21 +43,62 @@ import {
 } from "@/lib/use-case-graph";
 import { cn, safeParseNumber } from "@/lib/utils";
 
-type UseCaseClusterGraphProps = {
+export type ClientOption = {
+  id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+};
+
+export type ClientUseCaseProgressRow = {
+  id: string;
+  client_id: string;
+  group_id: string;
+  is_completed: boolean;
+  completed_at: string | null;
+};
+
+type ClientUseCaseMapProps = {
+  clients: ClientOption[];
   groups: CreditCatalogGroup[];
   clusters: CreditCatalogGroupCluster[];
   clusterLinks: CreditCatalogGroupClusterLink[];
   categories: CreditCatalogUseCaseCategory[];
+  progress: ClientUseCaseProgressRow[];
 };
 
 const ALL_CLUSTERS = "__all__";
 
-export function UseCaseClusterGraph({
+function progressKey(clientId: string, groupId: string) {
+  return `${clientId}:${groupId}`;
+}
+
+export function ClientUseCaseMap({
+  clients,
   groups,
   clusters,
   clusterLinks,
   categories,
-}: UseCaseClusterGraphProps) {
+  progress,
+}: ClientUseCaseMapProps) {
+  const sortedClients = useMemo(
+    () =>
+      [...clients].sort(
+        (left, right) =>
+          Number(right.is_active) - Number(left.is_active) || left.name.localeCompare(right.name, "es"),
+      ),
+    [clients],
+  );
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(
+    () => sortedClients[0]?.id ?? null,
+  );
+  const [progressByKey, setProgressByKey] = useState<Map<string, boolean>>(
+    () => new Map(progress.map((row) => [progressKey(row.client_id, row.group_id), row.is_completed])),
+  );
+  const [pendingGroupId, setPendingGroupId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [addSearchTerm, setAddSearchTerm] = useState("");
+
   const sortedClusters = useMemo(
     () =>
       [...clusters].sort(
@@ -133,12 +178,40 @@ export function UseCaseClusterGraph({
     return linksByCluster.get(selectedClusterId) ?? new Set<string>();
   }, [groups, linkedGroupIds, linksByCluster, selectedClusterId]);
 
+  const includedGroupIds = useMemo(() => {
+    if (!selectedClientId) return new Set<string>();
+    const set = new Set<string>();
+    groups.forEach((group) => {
+      if (progressByKey.has(progressKey(selectedClientId, group.id))) set.add(group.id);
+    });
+    return set;
+  }, [groups, progressByKey, selectedClientId]);
+  const includedCodedGroups = useMemo(
+    () => codedGroups.filter((group) => includedGroupIds.has(group.id)),
+    [codedGroups, includedGroupIds],
+  );
+  const includedCountByCluster = useMemo(() => {
+    const map = new Map<string, number>();
+    linksByCluster.forEach((groupIds, clusterId) => {
+      let count = 0;
+      groupIds.forEach((id) => {
+        if (includedGroupIds.has(id)) count += 1;
+      });
+      map.set(clusterId, count);
+    });
+    return map;
+  }, [includedGroupIds, linksByCluster]);
+
   const visibleGroups = useMemo(
     () =>
       groups.filter(
-        (group) => clusterGroupIds.has(group.id) && group.is_active && Boolean(group.use_case_code?.trim()),
+        (group) =>
+          includedGroupIds.has(group.id)
+          && clusterGroupIds.has(group.id)
+          && group.is_active
+          && Boolean(group.use_case_code?.trim()),
       ),
-    [clusterGroupIds, groups],
+    [clusterGroupIds, groups, includedGroupIds],
   );
   const visibleGroupIds = useMemo(
     () => new Set(visibleGroups.map((group) => group.id)),
@@ -154,15 +227,14 @@ export function UseCaseClusterGraph({
       ),
     [edges, visibleGroupIds, visibleRelations],
   );
-  const effectiveEdges = filteredEdges;
   const graph = useMemo(
     () => layoutGraph(
       visibleGroups,
-      effectiveEdges,
+      filteredEdges,
       primaryClusterByGroupId,
       selectedClusterId === ALL_CLUSTERS,
     ),
-    [effectiveEdges, primaryClusterByGroupId, selectedClusterId, visibleGroups],
+    [filteredEdges, primaryClusterByGroupId, selectedClusterId, visibleGroups],
   );
   const positionedById = useMemo(
     () => new Map(graph.nodes.map((node) => [node.group.id, node])),
@@ -177,12 +249,63 @@ export function UseCaseClusterGraph({
       ? "Sin clúster"
       : selectedCluster?.label ?? "Clúster";
   const visibleUnresolved = unresolvedReferences.filter((reference) => visibleGroupIds.has(reference.groupId));
-  const externalConnections = edges.filter(
-    (edge) => visibleGroupIds.has(edge.sourceId) !== visibleGroupIds.has(edge.targetId),
-  ).length;
   const selectedRelations = selectedGroup
-    ? effectiveEdges.filter((edge) => edge.sourceId === selectedGroup.id || edge.targetId === selectedGroup.id)
+    ? filteredEdges.filter((edge) => edge.sourceId === selectedGroup.id || edge.targetId === selectedGroup.id)
     : [];
+
+  const completedGroupIds = useMemo(() => {
+    if (!selectedClientId) return new Set<string>();
+    const set = new Set<string>();
+    groups.forEach((group) => {
+      if (progressByKey.get(progressKey(selectedClientId, group.id))) set.add(group.id);
+    });
+    return set;
+  }, [groups, progressByKey, selectedClientId]);
+
+  // A case already in the map is "unlocked" once at least one of its logical predecessors is done.
+  const unlockedGroupIds = useMemo(() => {
+    if (!selectedClientId) return new Set<string>();
+    const set = new Set<string>();
+    edges.forEach((edge) => {
+      if (edge.kind !== "logical") return;
+      if (completedGroupIds.has(edge.sourceId) && !completedGroupIds.has(edge.targetId)) {
+        set.add(edge.targetId);
+      }
+    });
+    return set;
+  }, [completedGroupIds, edges, selectedClientId]);
+
+  // Catalog cases NOT yet in the map, but ready to be pulled in because their predecessor is done.
+  const suggestedToAddGroupIds = useMemo(() => {
+    if (!selectedClientId) return new Set<string>();
+    const set = new Set<string>();
+    edges.forEach((edge) => {
+      if (edge.kind !== "logical") return;
+      if (completedGroupIds.has(edge.sourceId) && !includedGroupIds.has(edge.targetId)) {
+        set.add(edge.targetId);
+      }
+    });
+    return set;
+  }, [completedGroupIds, edges, includedGroupIds, selectedClientId]);
+
+  const addableGroups = useMemo(() => {
+    const normalizedAddSearch = normalizeReference(addSearchTerm);
+    return codedGroups
+      .filter((group) => !includedGroupIds.has(group.id))
+      .filter(
+        (group) =>
+          !normalizedAddSearch
+          || normalizeReference(group.name).includes(normalizedAddSearch)
+          || normalizeReference(group.use_case_code ?? "").includes(normalizedAddSearch),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name, "es"))
+      .slice(0, 8);
+  }, [addSearchTerm, codedGroups, includedGroupIds]);
+
+  const suggestedToAddGroups = useMemo(
+    () => codedGroups.filter((group) => suggestedToAddGroupIds.has(group.id)),
+    [codedGroups, suggestedToAddGroupIds],
+  );
 
   function selectCluster(clusterId: string) {
     setSelectedClusterId(clusterId);
@@ -195,6 +318,84 @@ export function UseCaseClusterGraph({
     setVisibleRelations((current) => ({ ...current, [kind]: !current[kind] }));
   }
 
+  async function saveCompletion(groupId: string, nextValue: boolean) {
+    if (!selectedClientId) return;
+
+    setPendingGroupId(groupId);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/cs/client-use-case-progress", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: selectedClientId, groupId, isCompleted: nextValue }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { is_completed?: boolean; message?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message || "No pudimos actualizar el progreso del caso de uso.");
+      }
+
+      setProgressByKey((current) => {
+        const next = new Map(current);
+        next.set(progressKey(selectedClientId, groupId), Boolean(payload?.is_completed ?? nextValue));
+        return next;
+      });
+    } catch (caughtError) {
+      setErrorMessage(
+        caughtError instanceof Error ? caughtError.message : "No pudimos actualizar el progreso del caso de uso.",
+      );
+    } finally {
+      setPendingGroupId(null);
+    }
+  }
+
+  function addCase(groupId: string) {
+    return saveCompletion(groupId, false);
+  }
+
+  function toggleCompletion(groupId: string, nextValue: boolean) {
+    return saveCompletion(groupId, nextValue);
+  }
+
+  async function removeCase(groupId: string) {
+    if (!selectedClientId) return;
+
+    setPendingGroupId(groupId);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/cs/client-use-case-progress?clientId=${selectedClientId}&groupId=${groupId}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message || "No pudimos quitar el caso de uso del mapa.");
+      }
+
+      setProgressByKey((current) => {
+        const next = new Map(current);
+        next.delete(progressKey(selectedClientId, groupId));
+        return next;
+      });
+      setSelectedGroupId((current) => (current === groupId ? null : current));
+    } catch (caughtError) {
+      setErrorMessage(
+        caughtError instanceof Error ? caughtError.message : "No pudimos quitar el caso de uso del mapa.",
+      );
+    } finally {
+      setPendingGroupId(null);
+    }
+  }
+
+  const selectedClient = selectedClientId
+    ? sortedClients.find((client) => client.id === selectedClientId) ?? null
+    : null;
+
   return (
     <div className="mx-auto w-full max-w-[1800px] px-4 py-8 sm:px-6 lg:px-8">
       <div className="rounded-[24px] border border-slate-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)] sm:px-8">
@@ -203,12 +404,51 @@ export function UseCaseClusterGraph({
           Arquitectura de casos
         </div>
         <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-          Mapa de casos de uso
+          Mapa de casos por cliente
         </h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+          Elige un cliente y arma su mapa agregando casos de uso desde el catálogo. Marca los que ya completó
+          y usa las sugerencias para saber qué agregar como siguiente paso lógico.
+        </p>
+
+        <label className="mt-4 block max-w-md space-y-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">Cliente</span>
+          <Select
+            value={selectedClientId ?? ""}
+            onChange={(event) => {
+              setSelectedClientId(event.target.value || null);
+              setSelectedGroupId(null);
+            }}
+            className="h-11 font-semibold"
+            aria-label="Seleccionar cliente"
+          >
+            {sortedClients.length === 0 ? <option value="">No hay clientes disponibles</option> : null}
+            {sortedClients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name}
+                {client.is_active ? "" : " (inactivo)"}
+              </option>
+            ))}
+          </Select>
+        </label>
       </div>
 
-      <main className="mt-6 min-w-0">
-          <section className="overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_14px_42px_rgba(15,23,42,0.05)]">
+      {!selectedClient ? (
+        <div className="mt-6 flex min-h-[300px] flex-col items-center justify-center rounded-[20px] border border-slate-200 bg-white px-6 text-center">
+          <p className="text-sm font-semibold text-slate-500">Selecciona un cliente para construir su mapa.</p>
+        </div>
+      ) : (
+        <main className="mt-6 min-w-0">
+          <AddCasePanel
+            addSearchTerm={addSearchTerm}
+            addableGroups={addableGroups}
+            onAdd={addCase}
+            pendingGroupId={pendingGroupId}
+            setAddSearchTerm={setAddSearchTerm}
+            suggestedToAddGroups={suggestedToAddGroups}
+          />
+
+          <section className="mt-6 overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_14px_42px_rgba(15,23,42,0.05)]">
             <div className="border-b border-slate-200 px-4 py-4 sm:px-5">
               <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
                 <div className="min-w-0">
@@ -217,7 +457,7 @@ export function UseCaseClusterGraph({
                     <h2 className="truncate text-lg font-black text-slate-950">{clusterTitle}</h2>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    El color identifica el clúster y la punta de la flecha indica cuál caso sigue.
+                    {completedGroupIds.size} de {includedGroupIds.size} casos completados por {selectedClient.name}.
                   </p>
                 </div>
 
@@ -230,14 +470,14 @@ export function UseCaseClusterGraph({
                       className="h-10 border-[color-mix(in_oklab,var(--accent)_30%,white)] bg-[color-mix(in_oklab,var(--accent)_4%,white)] font-semibold"
                       aria-label="Seleccionar grafo"
                     >
-                      <option value={ALL_CLUSTERS}>Todos los clústeres · Vista general ({codedGroups.length})</option>
+                      <option value={ALL_CLUSTERS}>Todos los clústeres · Vista general ({includedGroupIds.size})</option>
                       {sortedClusters.map((cluster) => (
                         <option key={cluster.id} value={cluster.id}>
-                          {cluster.label} ({linksByCluster.get(cluster.id)?.size ?? 0})
+                          {cluster.label} ({includedCountByCluster.get(cluster.id) ?? 0})
                         </option>
                       ))}
                       <option value={WITHOUT_CLUSTER}>
-                        Sin clúster ({codedGroups.filter((group) => !linkedGroupIds.has(group.id)).length})
+                        Sin clúster ({includedCodedGroups.filter((group) => !linkedGroupIds.has(group.id)).length})
                       </option>
                     </Select>
                   </label>
@@ -322,11 +562,14 @@ export function UseCaseClusterGraph({
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
-                <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                  Color por clúster
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> Completado
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Sugerido como siguiente
                 </span>
                 {(selectedClusterId === ALL_CLUSTERS
-                  ? sortedClusters.filter((cluster) => (linksByCluster.get(cluster.id)?.size ?? 0) > 0)
+                  ? sortedClusters.filter((cluster) => (includedCountByCluster.get(cluster.id) ?? 0) > 0)
                   : selectedCluster
                     ? [selectedCluster]
                     : []
@@ -345,7 +588,7 @@ export function UseCaseClusterGraph({
                   </button>
                 ))}
                 {selectedClusterId === ALL_CLUSTERS
-                  && codedGroups.some((group) => !linkedGroupIds.has(group.id)) ? (
+                  && includedCodedGroups.some((group) => !linkedGroupIds.has(group.id)) ? (
                   <button
                     type="button"
                     onClick={() => selectCluster(WITHOUT_CLUSTER)}
@@ -369,13 +612,13 @@ export function UseCaseClusterGraph({
                   height={graph.height * zoom}
                   viewBox={`0 0 ${graph.width} ${graph.height}`}
                   role="img"
-                  aria-label={`${visibleGroups.length} casos de uso y ${effectiveEdges.length} relaciones`}
+                  aria-label={`${visibleGroups.length} casos de uso y ${filteredEdges.length} relaciones`}
                 >
                   <defs>
                     {[...new Set([...clusterColorById.values(), UNASSIGNED_COLOR])].map((color) => (
                       <marker
                         key={color}
-                        id={`cluster-arrow-${color.slice(1)}`}
+                        id={`client-cluster-arrow-${color.slice(1)}`}
                         viewBox="0 0 10 10"
                         refX="9"
                         refY="5"
@@ -386,7 +629,7 @@ export function UseCaseClusterGraph({
                         <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
                       </marker>
                     ))}
-                    <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="150%">
+                    <filter id="client-node-shadow" x="-20%" y="-20%" width="140%" height="150%">
                       <feDropShadow dx="0" dy="5" stdDeviation="7" floodColor="#0f172a" floodOpacity="0.09" />
                     </filter>
                   </defs>
@@ -411,7 +654,7 @@ export function UseCaseClusterGraph({
                         stroke={edgeColor}
                         strokeWidth={isMuted ? 1.25 : edge.kind === "logical" ? 2.2 : 1.7}
                         strokeDasharray={config.dash}
-                        markerEnd={`url(#cluster-arrow-${edgeColor.slice(1)})`}
+                        markerEnd={`url(#client-cluster-arrow-${edgeColor.slice(1)})`}
                         opacity={isMuted ? 0.1 : edge.kind === "logical" ? 0.62 : 0.42}
                       />
                     );
@@ -436,6 +679,8 @@ export function UseCaseClusterGraph({
                     const nodeColor = clusterId
                       ? clusterColorById.get(clusterId) ?? UNASSIGNED_COLOR
                       : UNASSIGNED_COLOR;
+                    const isCompleted = completedGroupIds.has(node.group.id);
+                    const isSuggested = !isCompleted && unlockedGroupIds.has(node.group.id);
                     return (
                       <g
                         key={node.group.id}
@@ -454,19 +699,29 @@ export function UseCaseClusterGraph({
                             setSelectedGroupId(selected ? null : node.group.id);
                           }
                         }}
-                        aria-label={`${code}: ${node.group.name}`}
+                        aria-label={`${code}: ${node.group.name}${isCompleted ? " (completado)" : ""}`}
                         opacity={muted ? 0.28 : 1}
                       >
                         <title>{`${code}: ${node.group.name}`}</title>
                         {selected ? (
                           <circle r="35" fill={nodeColor} opacity="0.16" />
                         ) : null}
+                        {isSuggested ? (
+                          <circle
+                            r={NODE_RADIUS + 6}
+                            fill="none"
+                            stroke="#f59e0b"
+                            strokeWidth="2.5"
+                            strokeDasharray="4 4"
+                          />
+                        ) : null}
                         <circle
                           r={NODE_RADIUS}
                           fill={nodeColor}
-                          stroke={node.group.is_active ? "#ffffff" : "#fb7185"}
-                          strokeWidth={selected ? 4 : node.group.is_active ? 2.5 : 4}
-                          filter="url(#node-shadow)"
+                          stroke={isCompleted ? "#059669" : node.group.is_active ? "#ffffff" : "#fb7185"}
+                          strokeWidth={selected ? 4 : isCompleted ? 3.5 : node.group.is_active ? 2.5 : 4}
+                          filter="url(#client-node-shadow)"
+                          opacity={isCompleted ? 0.55 : 1}
                         />
                         <text
                           x="0"
@@ -479,8 +734,20 @@ export function UseCaseClusterGraph({
                         >
                           {truncate(code, 10)}
                         </text>
-                        {!node.group.is_active ? (
-                          <circle cx="18" cy="-18" r="5" fill="#fb7185" stroke="#ffffff" strokeWidth="2" />
+                        {isCompleted ? (
+                          <g transform="translate(-18 -18)">
+                            <circle r="8" fill="#059669" stroke="#ffffff" strokeWidth="2" />
+                            <path
+                              d="M -3.2 0 L -1 2.4 L 3.4 -2.6"
+                              fill="none"
+                              stroke="#ffffff"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </g>
+                        ) : !node.group.is_active ? (
+                          <circle cx="-18" cy="-18" r="5" fill="#fb7185" stroke="#ffffff" strokeWidth="2" />
                         ) : null}
                         {nodeClusterIds.length > 1 ? nodeClusterIds.slice(1, 5).map((secondaryClusterId, index) => (
                           <circle
@@ -523,7 +790,7 @@ export function UseCaseClusterGraph({
                           rx="12"
                           fill="#0f172a"
                           opacity="0.96"
-                          filter="url(#node-shadow)"
+                          filter="url(#client-node-shadow)"
                         />
                         <text x="14" y="19" fontSize="9" fontWeight="800" fill="#94a3b8" letterSpacing="0.08em">
                           {hoveredNode.group.use_case_code?.trim() || "CASO DE USO"}
@@ -543,30 +810,40 @@ export function UseCaseClusterGraph({
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
                   <Network className="h-7 w-7" />
                 </div>
-                <h3 className="mt-4 font-bold text-slate-900">No hay casos para mostrar</h3>
+                <h3 className="mt-4 font-bold text-slate-900">
+                  {includedGroupIds.size === 0 ? "El mapa de este cliente está vacío" : "No hay casos en este clúster"}
+                </h3>
                 <p className="mt-1 max-w-md text-sm leading-6 text-slate-500">
-                  Asigna casos de uso a este clúster o habilita la visualización de casos inactivos.
+                  {includedGroupIds.size === 0
+                    ? "Agrega el primer caso de uso desde el buscador de arriba para empezar a construir el mapa."
+                    : "Cambia de clúster o agrega más casos de uso desde el buscador de arriba."}
                 </p>
               </div>
             )}
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-500">
-              <p>Selecciona un nodo para inspeccionar sus conexiones.</p>
-              {externalConnections > 0 && selectedClusterId !== ALL_CLUSTERS ? (
-                <p className="font-semibold text-slate-600">
-                  {externalConnections} {externalConnections === 1 ? "conexión externa" : "conexiones externas"} ocultas
-                </p>
-              ) : null}
+              <p>Selecciona un nodo para marcarlo como completado y ver sus conexiones.</p>
             </div>
           </section>
 
-          {selectedGroup ? (
-            <CaseDetail
+          {errorMessage ? (
+            <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {errorMessage}
+            </p>
+          ) : null}
+
+          {selectedGroup && selectedClientId ? (
+            <ClientCaseDetail
               categoriesById={categoriesById}
+              completedGroupIds={completedGroupIds}
               edges={selectedRelations}
               group={selectedGroup}
               groupsById={groupsById}
+              isCompleted={completedGroupIds.has(selectedGroup.id)}
+              isPending={pendingGroupId === selectedGroup.id}
               onClose={() => setSelectedGroupId(null)}
+              onRemove={() => removeCase(selectedGroup.id)}
+              onToggleCompleted={(nextValue) => toggleCompletion(selectedGroup.id, nextValue)}
             />
           ) : null}
 
@@ -595,23 +872,118 @@ export function UseCaseClusterGraph({
               </div>
             </section>
           ) : null}
-      </main>
+        </main>
+      )}
     </div>
   );
 }
 
-function CaseDetail({
+function AddCasePanel({
+  addSearchTerm,
+  addableGroups,
+  onAdd,
+  pendingGroupId,
+  setAddSearchTerm,
+  suggestedToAddGroups,
+}: {
+  addSearchTerm: string;
+  addableGroups: CreditCatalogGroup[];
+  onAdd: (groupId: string) => void;
+  pendingGroupId: string | null;
+  setAddSearchTerm: (value: string) => void;
+  suggestedToAddGroups: CreditCatalogGroup[];
+}) {
+  return (
+    <section className="overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_14px_42px_rgba(15,23,42,0.05)]">
+      <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
+        <div className="flex items-center gap-2">
+          <Plus className="h-4 w-4 text-[var(--accent)]" />
+          <h3 className="text-sm font-black uppercase tracking-[0.1em] text-slate-700">Agregar caso de uso</h3>
+        </div>
+        <div className="relative mt-3 max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={addSearchTerm}
+            onChange={(event) => setAddSearchTerm(event.target.value)}
+            placeholder="Buscar caso o código en el catálogo"
+            className="h-10 pl-9"
+          />
+        </div>
+        {addSearchTerm ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {addableGroups.length === 0 ? (
+              <p className="text-sm text-slate-400">No encontramos casos que coincidan con la búsqueda.</p>
+            ) : (
+              addableGroups.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  disabled={pendingGroupId === group.id}
+                  onClick={() => onAdd(group.id)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:border-[var(--accent)] hover:bg-white disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {group.use_case_code ? `${group.use_case_code} · ` : ""}
+                  {group.name}
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {suggestedToAddGroups.length ? (
+        <div className="px-4 py-4 sm:px-5">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-600">
+            <Sparkles className="h-3.5 w-3.5" />
+            Sugeridos para agregar
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Ya completó el caso previo, así que estos son un siguiente paso lógico.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {suggestedToAddGroups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                disabled={pendingGroupId === group.id}
+                onClick={() => onAdd(group.id)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {group.use_case_code ? `${group.use_case_code} · ` : ""}
+                {group.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ClientCaseDetail({
   categoriesById,
+  completedGroupIds,
   edges,
   group,
   groupsById,
+  isCompleted,
+  isPending,
   onClose,
+  onRemove,
+  onToggleCompleted,
 }: {
   categoriesById: Map<string, CreditCatalogUseCaseCategory>;
+  completedGroupIds: Set<string>;
   edges: GraphEdge[];
   group: CreditCatalogGroup;
   groupsById: Map<string, CreditCatalogGroup>;
+  isCompleted: boolean;
+  isPending: boolean;
   onClose: () => void;
+  onRemove: () => void;
+  onToggleCompleted: (nextValue: boolean) => void;
 }) {
   return (
     <section className="mt-6 rounded-[20px] border border-slate-200 bg-white p-5 shadow-[0_14px_42px_rgba(15,23,42,0.05)] sm:p-6">
@@ -626,6 +998,11 @@ function CaseDetail({
                 {categoriesById.get(group.use_case_category_id)?.name ?? "Categoría no disponible"}
               </span>
             ) : null}
+            {isCompleted ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Completado
+              </span>
+            ) : null}
           </div>
           <h3 className="mt-3 text-xl font-black text-slate-950">{group.name}</h3>
           {group.description ? (
@@ -634,6 +1011,32 @@ function CaseDetail({
         </div>
         <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Cerrar detalle">
           <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => onToggleCompleted(!isCompleted)}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black transition disabled:cursor-wait disabled:opacity-60",
+            isCompleted
+              ? "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700",
+          )}
+        >
+          {isCompleted ? <Circle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {isPending ? "Guardando..." : isCompleted ? "Marcar como pendiente" : "Marcar como completado"}
+        </button>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={onRemove}
+          className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-black text-rose-600 transition hover:bg-rose-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          <Trash2 className="h-4 w-4" />
+          Quitar del mapa
         </button>
       </div>
 
@@ -652,6 +1055,11 @@ function CaseDetail({
               <div className="mt-3 space-y-2">
                 {related.length ? related.map((item) => (
                   <div key={item.id} className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    {completedGroupIds.has(item.id) ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    ) : (
+                      <Circle className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    )}
                     <span className="shrink-0 text-xs font-black text-slate-400">{item.use_case_code || "—"}</span>
                     <span className="truncate">{item.name}</span>
                   </div>

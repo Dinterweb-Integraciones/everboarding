@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownAZ,
@@ -97,20 +97,18 @@ type CustomerSuccessProfileRow = {
 type CreditHistoryReportRow = {
   clientId: string;
   clientName: string;
-  totalPurchasedCredits: number;
-  availableCredits: number;
-  completedCredits: number;
-  committedCredits: number;
-  kickoffCompletedAt: string | null;
-  daysSinceKickoff: number | null;
-};
-type RecurringCreditReportRow = {
-  clientId: string;
-  clientName: string;
+  customerSuccessId: string | null;
+  customerSuccessName: string | null;
+  billing: "paquetes" | "recurrencia";
   totalContractedCredits: number;
   availableCredits: number;
+  planningCredits: number;
+  executingCredits: number;
+  remainingCredits: number;
+  evaluationCredits: number;
   completedCredits: number;
-  committedCredits: number;
+  kickoffCompletedAt: string | null;
+  daysSinceKickoff: number | null;
   renewalAt: string | null;
   daysUntilRenewal: number | null;
 };
@@ -308,24 +306,22 @@ export function ReportsPanel({
   );
   const initiativeCreditTotals = useMemo(() => {
     const completedByClient = new Map<string, number>();
-    const committedByClient = new Map<string, number>();
+    const planningByClient = new Map<string, number>();
+    const executingByClient = new Map<string, number>();
+    const evaluationByClient = new Map<string, number>();
 
     initiatives.forEach((initiative) => {
       const credits = Number(initiative.credits) || 0;
-      if (initiative.status === "completed") {
-        completedByClient.set(
-          initiative.client_id,
-          (completedByClient.get(initiative.client_id) ?? 0) + credits,
-        );
-      } else if (initiative.status === "planned" || initiative.status === "executing") {
-        committedByClient.set(
-          initiative.client_id,
-          (committedByClient.get(initiative.client_id) ?? 0) + credits,
-        );
-      }
+      const byStatus = {
+        completed: completedByClient,
+        planned: planningByClient,
+        executing: executingByClient,
+        backlog: evaluationByClient,
+      }[initiative.status];
+      byStatus.set(initiative.client_id, (byStatus.get(initiative.client_id) ?? 0) + credits);
     });
 
-    return { completedByClient, committedByClient };
+    return { completedByClient, planningByClient, executingByClient, evaluationByClient };
   }, [initiatives]);
   const creditHistoryRows = useMemo(() => {
     const grantedCreditsByClient = new Map<string, number>();
@@ -337,56 +333,57 @@ export function ReportsPanel({
     });
 
     return rows
-      .filter((row) => row.billing === "paquetes")
-      .map((row) => ({
-        clientId: row.client_id,
-        clientName: row.client_name,
-        totalPurchasedCredits: grantedCreditsByClient.get(row.client_id) ?? 0,
-        availableCredits: Number(row.credits_remaining) || 0,
-        completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
-        committedCredits: initiativeCreditTotals.committedByClient.get(row.client_id) ?? 0,
-        kickoffCompletedAt: row.kickoff_completed_at,
-        daysSinceKickoff: row.days_since_kickoff_completed,
-      }))
+      .map((row) => {
+        const availableCredits = Number(row.credits_remaining) || 0;
+        const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
+        const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
+
+        return {
+          clientId: row.client_id,
+          clientName: row.client_name,
+          customerSuccessId: row.customer_success_id,
+          customerSuccessName: row.customer_success_name,
+          billing: row.billing,
+          totalContractedCredits:
+            row.billing === "paquetes"
+              ? grantedCreditsByClient.get(row.client_id) ?? 0
+              : row.contracted_credits,
+          availableCredits,
+          planningCredits,
+          executingCredits,
+          remainingCredits: availableCredits + planningCredits + executingCredits,
+          evaluationCredits: initiativeCreditTotals.evaluationByClient.get(row.client_id) ?? 0,
+          completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
+          kickoffCompletedAt: row.kickoff_completed_at,
+          daysSinceKickoff: row.days_since_kickoff_completed,
+          renewalAt: row.credit_renewal_at,
+          daysUntilRenewal: row.days_until_credit_renewal,
+        };
+      })
       .sort(
         (first, second) =>
-          (second.daysSinceKickoff ?? -1) - (first.daysSinceKickoff ?? -1)
+          (first.customerSuccessName ?? "Sin asignar").localeCompare(
+            second.customerSuccessName ?? "Sin asignar",
+            "es",
+          )
           || first.clientName.localeCompare(second.clientName, "es"),
       ) satisfies CreditHistoryReportRow[];
   }, [customerSuccessCreditGrants, initiativeCreditTotals, rows]);
-  const recurringCreditRows = useMemo(
-    () =>
-      rows
-        .filter((row) => row.billing === "recurrencia")
-        .map((row) => ({
-          clientId: row.client_id,
-          clientName: row.client_name,
-          totalContractedCredits: row.contracted_credits,
-          availableCredits: Number(row.credits_remaining) || 0,
-          completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
-          committedCredits: initiativeCreditTotals.committedByClient.get(row.client_id) ?? 0,
-          renewalAt: row.credit_renewal_at,
-          daysUntilRenewal: row.days_until_credit_renewal,
-        }))
-        .sort(
-          (first, second) =>
-            (first.daysUntilRenewal ?? Number.POSITIVE_INFINITY)
-              - (second.daysUntilRenewal ?? Number.POSITIVE_INFINITY)
-            || first.clientName.localeCompare(second.clientName, "es"),
-        ) satisfies RecurringCreditReportRow[],
-    [initiativeCreditTotals, rows],
-  );
 
   const panelSummary = useMemo(() => {
     if (selectedPanelKey === "credit_history") {
       return [
-        { label: "Clientes con paquetes", value: creditHistoryRows.length },
-        { label: "Clientes recurrentes", value: recurringCreditRows.length },
+        {
+          label: "Clientes con paquetes",
+          value: creditHistoryRows.filter((row) => row.billing === "paquetes").length,
+        },
+        {
+          label: "Clientes recurrentes",
+          value: creditHistoryRows.filter((row) => row.billing === "recurrencia").length,
+        },
         {
           label: "Créditos disponibles",
-          value:
-            creditHistoryRows.reduce((sum, row) => sum + row.availableCredits, 0)
-            + recurringCreditRows.reduce((sum, row) => sum + row.availableCredits, 0),
+          value: creditHistoryRows.reduce((sum, row) => sum + row.availableCredits, 0),
         },
       ];
     }
@@ -399,7 +396,7 @@ export function ReportsPanel({
         value: selectedPanelKey === "norths" ? activeNorthStarsCount : totalNorthStarsCount,
       },
     ];
-  }, [activeNorthStarsCount, creditHistoryRows, filteredRows.length, recurringCreditRows, rows.length, selectedPanelKey, totalNorthStarsCount]);
+  }, [activeNorthStarsCount, creditHistoryRows, filteredRows.length, rows.length, selectedPanelKey, totalNorthStarsCount]);
 
   const customerSuccessOptions = useMemo(
     () =>
@@ -793,7 +790,7 @@ export function ReportsPanel({
               />
             </div>
           ) : selectedPanelKey === "credit_history" ? (
-            <CreditHistoryReport packageRows={creditHistoryRows} recurringRows={recurringCreditRows} />
+            <CreditHistoryReport rows={creditHistoryRows} />
           ) : selectedPanelKey === "customer_success" ? (
             <CustomerSuccessDashboard
               rows={rows}
@@ -827,170 +824,61 @@ export function ReportsPanel({
   );
 }
 
-function CreditHistoryReport({
-  packageRows,
-  recurringRows,
-}: {
-  packageRows: CreditHistoryReportRow[];
-  recurringRows: RecurringCreditReportRow[];
-}) {
-  return (
-    <div className="space-y-4 p-4">
-      <PackageCreditReport rows={packageRows} />
-      <RecurringCreditReport rows={recurringRows} />
-    </div>
-  );
-}
-
-function PackageCreditReport({ rows }: { rows: CreditHistoryReportRow[] }) {
+function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const filteredRows = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    if (!normalizedSearch) return rows;
 
-    return rows.filter((row) => row.clientName.toLowerCase().includes(normalizedSearch));
+  const groups = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const byCs = new Map<string, { csId: string | null; csName: string; clients: CreditHistoryReportRow[] }>();
+
+    rows.forEach((row) => {
+      if (normalizedSearch && !row.clientName.toLowerCase().includes(normalizedSearch)) return;
+
+      const key = row.customerSuccessId ?? "__unassigned__";
+      const group = byCs.get(key) ?? {
+        csId: row.customerSuccessId,
+        csName: row.customerSuccessName || "Sin asignar",
+        clients: [] as CreditHistoryReportRow[],
+      };
+      group.clients.push(row);
+      byCs.set(key, group);
+    });
+
+    return [...byCs.values()]
+      .map((group) => {
+        const clients = [...group.clients].sort((first, second) =>
+          first.clientName.localeCompare(second.clientName, "es"),
+        );
+        return {
+          ...group,
+          clients,
+          recurringContracted: clients
+            .filter((row) => row.billing === "recurrencia")
+            .reduce((sum, row) => sum + row.totalContractedCredits, 0),
+          packageContracted: clients
+            .filter((row) => row.billing === "paquetes")
+            .reduce((sum, row) => sum + row.totalContractedCredits, 0),
+        };
+      })
+      .sort((first, second) => first.csName.localeCompare(second.csName, "es"));
   }, [rows, searchTerm]);
 
-  return (
-      <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-[#dfe3eb] p-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-black text-[#213343]">Clientes con paquetes</h3>
-              <InfoTooltip>
-                El total comprado suma todos los créditos otorgados al cliente. Completados incluye casos
-                terminados y comprometidos incluye casos planificados o en ejecución.
-              </InfoTooltip>
-            </div>
-            <p className="mt-1 text-xs font-semibold text-[#516f90]">
-              Ordenado de mayor a menor cantidad de días desde el kickoff completado.
-            </p>
-          </div>
-
-          <label className="w-full space-y-1.5 lg:max-w-sm">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
-              Buscar cliente
-            </span>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#516f90]" />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white pl-9 pr-3 text-sm font-semibold text-[#33475b] outline-none transition focus:border-[#00a4bd] focus:ring-2 focus:ring-[#00a4bd]/15"
-                placeholder="Nombre del cliente"
-              />
-            </div>
-          </label>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] border-collapse text-left">
-            <thead className="bg-[#f8fbfd]">
-              <tr className="border-b border-[#dfe3eb]">
-                {[
-                  "Cliente",
-                  "Total del paquete comprado",
-                  "Créditos disponibles",
-                  "Créditos completados",
-                  "Créditos comprometidos",
-                  "Días desde kickoff",
-                ].map((header) => (
-                  <th
-                    key={header}
-                    className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]"
-                  >
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRows.map((row) => (
-                <tr key={row.clientId} className="border-b border-[#edf1f5] last:border-b-0 hover:bg-[#f8fbfd]">
-                  <td className="px-4 py-4">
-                    <a
-                      href={`/clients/${row.clientId}`}
-                      className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
-                    >
-                      {row.clientName}
-                    </a>
-                  </td>
-                  <td className="px-4 py-4 text-sm font-black text-[#213343]">
-                    {formatNumber(row.totalPurchasedCredits)} CR
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
-                      {formatNumber(row.availableCredits)} CR
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                    {formatNumber(row.completedCredits)} CR
-                  </td>
-                  <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                    {formatNumber(row.committedCredits)} CR
-                  </td>
-                  <td className="px-4 py-4">
-                    {row.daysSinceKickoff === null ? (
-                      <span className="text-sm font-semibold text-[#99acc2]">Kickoff pendiente</span>
-                    ) : (
-                      <div>
-                        <p className="text-sm font-black text-[#213343]">
-                          {formatNumber(row.daysSinceKickoff)} días
-                        </p>
-                        {row.kickoffCompletedAt ? (
-                          <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
-                            Desde {formatDate(row.kickoffCompletedAt.slice(0, 10))}
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {filteredRows.length === 0 ? (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
-            <div className="flex h-11 w-11 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white text-[#516f90]">
-              <Table2 className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-black text-[#213343]">Sin clientes con paquetes</p>
-              <p className="mt-1 text-sm font-medium text-[#516f90]">
-                No hay clientes que coincidan con la búsqueda o todavía no existen paquetes activos.
-              </p>
-            </div>
-          </div>
-        ) : null}
-      </article>
-  );
-}
-
-function RecurringCreditReport({ rows }: { rows: RecurringCreditReportRow[] }) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const filteredRows = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    if (!normalizedSearch) return rows;
-
-    return rows.filter((row) => row.clientName.toLowerCase().includes(normalizedSearch));
-  }, [rows, searchTerm]);
+  const totalClients = groups.reduce((sum, group) => sum + group.clients.length, 0);
 
   return (
     <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
       <div className="flex flex-col gap-4 border-b border-[#dfe3eb] p-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-black text-[#213343]">Clientes con recurrencia</h3>
+            <h3 className="text-base font-black text-[#213343]">Historial de créditos por cliente</h3>
             <InfoTooltip>
-              El total contratado corresponde a los créditos del plan vigente. La renovación se calcula
-              desde el día siguiente al cierre del último ciclo pagado. Completados incluye casos
-              terminados y comprometidos incluye casos planificados o en ejecución.
+              Restantes suma disponibles + en planificación + en ejecución. En evaluación corresponde a
+              casos aún no aprobados (backlog). Completados incluye casos terminados. La tabla agrupa a
+              cada cliente bajo su Customer Success.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
-            Ordenado de menor a mayor cantidad de días para la renovación de créditos.
+            Agrupado por Customer Success, en orden alfabético.
           </p>
         </div>
 
@@ -1011,16 +899,21 @@ function RecurringCreditReport({ rows }: { rows: RecurringCreditReportRow[] }) {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1040px] border-collapse text-left">
+        <table className="w-full min-w-[1520px] border-collapse text-left">
           <thead className="bg-[#f8fbfd]">
             <tr className="border-b border-[#dfe3eb]">
               {[
+                "CS",
                 "Cliente",
-                "Total de créditos contratados",
-                "Créditos disponibles",
-                "Créditos completados",
-                "Créditos comprometidos",
-                "Días para renovación",
+                "Tipo de servicio",
+                "Créditos contratados",
+                "Disponibles",
+                "En planificación",
+                "En ejecución",
+                "Restantes",
+                "En evaluación",
+                "Completados",
+                "Fecha clave",
               ].map((header) => (
                 <th
                   key={header}
@@ -1032,69 +925,131 @@ function RecurringCreditReport({ rows }: { rows: RecurringCreditReportRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map((row) => (
-              <tr key={row.clientId} className="border-b border-[#edf1f5] last:border-b-0 hover:bg-[#f8fbfd]">
-                <td className="px-4 py-4">
-                  <a
-                    href={`/clients/${row.clientId}`}
-                    className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
-                  >
-                    {row.clientName}
-                  </a>
-                </td>
-                <td className="px-4 py-4 text-sm font-black text-[#213343]">
-                  {formatNumber(row.totalContractedCredits)} CR
-                </td>
-                <td className="px-4 py-4">
-                  <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
-                    {formatNumber(row.availableCredits)} CR
-                  </span>
-                </td>
-                <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                  {formatNumber(row.completedCredits)} CR
-                </td>
-                <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                  {formatNumber(row.committedCredits)} CR
-                </td>
-                <td className="px-4 py-4">
-                  {row.daysUntilRenewal === null ? (
-                    <span className="text-sm font-semibold text-[#99acc2]">Sin fecha de renovación</span>
-                  ) : (
-                    <div>
-                      <p
-                        className={`text-sm font-black ${
-                          row.daysUntilRenewal < 0 ? "text-rose-600" : "text-[#213343]"
+            {groups.map((group) => (
+              <Fragment key={group.csId ?? "__unassigned__"}>
+                {group.clients.map((row, rowIndex) => (
+                  <tr key={row.clientId} className="border-b border-[#edf1f5] last:border-b-0 hover:bg-[#f8fbfd]">
+                    {rowIndex === 0 ? (
+                      <td
+                        rowSpan={group.clients.length}
+                        className="border-r border-[#edf1f5] bg-[#f8fbfd] px-4 py-4 align-top"
+                      >
+                        <p className="text-sm font-black text-[#213343]">{group.csName}</p>
+                        <p className="mt-1 text-xs font-bold text-[#516f90]">
+                          {group.clients.length} {group.clients.length === 1 ? "cliente" : "clientes"}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold text-[#516f90]">
+                          Recurrentes:{" "}
+                          <strong className="text-[#213343]">{formatNumber(group.recurringContracted)} CR</strong>
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-[#516f90]">
+                          Paquetes:{" "}
+                          <strong className="text-[#213343]">{formatNumber(group.packageContracted)} CR</strong>
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-[#516f90]">
+                          Total:{" "}
+                          <strong className="text-[#213343]">
+                            {formatNumber(group.recurringContracted + group.packageContracted)} CR
+                          </strong>
+                        </p>
+                      </td>
+                    ) : null}
+                    <td className="px-4 py-4">
+                      <a
+                        href={`/clients/${row.clientId}`}
+                        className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
+                      >
+                        {row.clientName}
+                      </a>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${
+                          row.billing === "paquetes" ? "bg-violet-50 text-violet-700" : "bg-sky-50 text-sky-700"
                         }`}
                       >
-                        {row.daysUntilRenewal < 0
-                          ? `Vencida hace ${formatNumber(Math.abs(row.daysUntilRenewal))} días`
-                          : row.daysUntilRenewal === 0
-                            ? "Renueva hoy"
-                            : `${formatNumber(row.daysUntilRenewal)} días`}
-                      </p>
-                      {row.renewalAt ? (
-                        <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
-                          {row.daysUntilRenewal < 0 ? "Renovaba" : "Renueva"} el {formatDate(row.renewalAt)}
-                        </p>
-                      ) : null}
-                    </div>
-                  )}
-                </td>
-              </tr>
+                        {row.billing === "paquetes" ? "Paquete" : "Recurrente"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 text-sm font-black text-[#213343]">
+                      {formatNumber(row.totalContractedCredits)} CR
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
+                        {formatNumber(row.availableCredits)} CR
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.planningCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.executingCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-black text-[#213343]">
+                      {formatNumber(row.remainingCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.evaluationCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.completedCredits)} CR
+                    </td>
+                    <td className="px-4 py-4">
+                      {row.billing === "paquetes" ? (
+                        row.daysSinceKickoff === null ? (
+                          <span className="text-sm font-semibold text-[#99acc2]">Kickoff pendiente</span>
+                        ) : (
+                          <div>
+                            <p className="text-sm font-black text-[#213343]">
+                              {formatNumber(row.daysSinceKickoff)} días desde kickoff
+                            </p>
+                            {row.kickoffCompletedAt ? (
+                              <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
+                                Desde {formatDate(row.kickoffCompletedAt.slice(0, 10))}
+                              </p>
+                            ) : null}
+                          </div>
+                        )
+                      ) : row.daysUntilRenewal === null ? (
+                        <span className="text-sm font-semibold text-[#99acc2]">Sin fecha de renovación</span>
+                      ) : (
+                        <div>
+                          <p
+                            className={`text-sm font-black ${
+                              row.daysUntilRenewal < 0 ? "text-rose-600" : "text-[#213343]"
+                            }`}
+                          >
+                            {row.daysUntilRenewal < 0
+                              ? `Vencida hace ${formatNumber(Math.abs(row.daysUntilRenewal))} días`
+                              : row.daysUntilRenewal === 0
+                                ? "Renueva hoy"
+                                : `${formatNumber(row.daysUntilRenewal)} días para renovar`}
+                          </p>
+                          {row.renewalAt ? (
+                            <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
+                              {row.daysUntilRenewal < 0 ? "Renovaba" : "Renueva"} el {formatDate(row.renewalAt)}
+                            </p>
+                          ) : null}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
 
-      {filteredRows.length === 0 ? (
+      {totalClients === 0 ? (
         <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-[4px] border border-[#dfe3eb] bg-white text-[#516f90]">
             <Table2 className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-black text-[#213343]">Sin clientes con recurrencia</p>
+            <p className="text-sm font-black text-[#213343]">Sin clientes</p>
             <p className="mt-1 text-sm font-medium text-[#516f90]">
-              No hay clientes que coincidan con la búsqueda o todavía no existen recurrencias activas.
+              No hay clientes que coincidan con la búsqueda.
             </p>
           </div>
         </div>
