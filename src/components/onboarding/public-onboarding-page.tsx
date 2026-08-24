@@ -2399,29 +2399,27 @@ export function PublicOnboardingPage({
                 </div>
               </section>
 
-              {activeInitiativeCatalogGroup?.successMilestone ? (
-                <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                    Criterio de éxito
-                  </p>
-                  <RichTextDisplay
-                    value={activeInitiativeCatalogGroup.successMilestone}
-                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                  />
-                </section>
-              ) : null}
+              <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Criterio de éxito
+                </p>
+                <RichTextDisplay
+                  value={activeInitiativeCatalogGroup?.successMilestone ?? ""}
+                  fallback="Sin criterio de éxito definido."
+                  className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                />
+              </section>
 
-              {activeInitiativeCatalogGroup?.completionOutcome ? (
-                <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                    Responsabilidades del cliente
-                  </p>
-                  <RichTextDisplay
-                    value={activeInitiativeCatalogGroup.completionOutcome}
-                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                  />
-                </section>
-              ) : null}
+              <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Responsabilidades del cliente
+                </p>
+                <RichTextDisplay
+                  value={activeInitiativeCatalogGroup?.completionOutcome ?? ""}
+                  fallback="Sin responsabilidades del cliente definidas."
+                  className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                />
+              </section>
 
               <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">

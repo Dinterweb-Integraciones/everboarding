@@ -4987,33 +4987,31 @@ function mergeRecommendedGroups(
                 </div>
               </section>
 
-              {catalogGroupForDraft?.completionOutcome ? (
-                <section>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Responsabilidades del cliente
-                  </p>
-                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                    <RichTextDisplay
-                      value={catalogGroupForDraft.completionOutcome}
-                      className="text-[13px] leading-relaxed text-[#33475b]"
-                    />
-                  </div>
-                </section>
-              ) : null}
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Responsabilidades del cliente
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                  <RichTextDisplay
+                    value={catalogGroupForDraft?.completionOutcome ?? ""}
+                    fallback="Sin responsabilidades del cliente definidas."
+                    className="text-[13px] leading-relaxed text-[#33475b]"
+                  />
+                </div>
+              </section>
 
-              {catalogGroupForDraft?.successMilestone ? (
-                <section>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
-                    Criterio de Éxito
-                  </p>
-                  <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                    <RichTextDisplay
-                      value={catalogGroupForDraft.successMilestone}
-                      className="text-[13px] leading-relaxed text-[#33475b]"
-                    />
-                  </div>
-                </section>
-              ) : null}
+              <section>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                  Criterio de Éxito
+                </p>
+                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
+                  <RichTextDisplay
+                    value={catalogGroupForDraft?.successMilestone ?? ""}
+                    fallback="Sin criterio de éxito definido."
+                    className="text-[13px] leading-relaxed text-[#33475b]"
+                  />
+                </div>
+              </section>
 
               <section className="rounded-[6px] border border-[#dfe3eb] bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
