@@ -143,6 +143,29 @@ function getPlainInitiativeDescription(value: string | null | undefined, fallbac
   return richTextToPlainText(value) || fallback;
 }
 
+function findCatalogGroupForInitiative(
+  initiative: Pick<InitiativeRecord, "title" | "description">,
+  groups: CatalogModalGroup[],
+) {
+  const normalizedTitle = normalizeCatalogText(initiative.title);
+  const titleMatch = groups.find((group) => normalizeCatalogText(group.name) === normalizedTitle);
+
+  if (titleMatch) return titleMatch;
+
+  const normalizedDescription = normalizeCatalogText(richTextToPlainText(initiative.description));
+  if (normalizedDescription.length < 80) return null;
+
+  return groups.find((group) => {
+    const groupDescription = normalizeCatalogText(richTextToPlainText(group.description));
+    if (groupDescription.length < 80) return false;
+
+    return (
+      groupDescription === normalizedDescription ||
+      groupDescription.slice(0, 180) === normalizedDescription.slice(0, 180)
+    );
+  }) ?? null;
+}
+
 function parseCalendarDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, (month || 1) - 1, day || 1);
@@ -634,6 +657,9 @@ export function PublicOnboardingPage({
   const shouldShowActiveInitiativeOriginalCredits =
     activeInitiativeIsCommerciallyWaived &&
     activeInitiativeOriginalCredits > (activeInitiativePreview?.credits ?? 0);
+  const activeInitiativeCatalogGroup = activeInitiativePreview
+    ? findCatalogGroupForInitiative(activeInitiativePreview, catalogGroups)
+    : null;
 
   async function exportPublicPlanPdf() {
     setFeedback(null);
@@ -2345,6 +2371,43 @@ export function PublicOnboardingPage({
             </div>
 
             <div className="space-y-6 px-6 py-6">
+              {activeInitiativeCatalogGroup ? (
+                <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Descripción del caso de uso
+                  </p>
+                  <RichTextDisplay
+                    value={activeInitiativeCatalogGroup.description}
+                    fallback="Este caso de uso no tiene descripción detallada."
+                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                  />
+
+                  {activeInitiativeCatalogGroup.successMilestone ? (
+                    <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Criterio de éxito
+                      </p>
+                      <RichTextDisplay
+                        value={activeInitiativeCatalogGroup.successMilestone}
+                        className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                      />
+                    </div>
+                  ) : null}
+
+                  {activeInitiativeCatalogGroup.completionOutcome ? (
+                    <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Responsabilidades del cliente
+                      </p>
+                      <RichTextDisplay
+                        value={activeInitiativeCatalogGroup.completionOutcome}
+                        className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                      />
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
               <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                   Rango estimado

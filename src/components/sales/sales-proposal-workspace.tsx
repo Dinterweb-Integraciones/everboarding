@@ -4955,6 +4955,43 @@ function mergeRecommendedGroups(
             </div>
 
             <div className="space-y-6 px-6 py-6">
+              {catalogGroupForDraft ? (
+                <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Descripción del caso de uso
+                  </p>
+                  <RichTextDisplay
+                    value={catalogGroupForDraft.description}
+                    fallback="Este caso de uso no tiene descripción detallada."
+                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                  />
+
+                  {catalogGroupForDraft.successMilestone ? (
+                    <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Criterio de éxito
+                      </p>
+                      <RichTextDisplay
+                        value={catalogGroupForDraft.successMilestone}
+                        className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                      />
+                    </div>
+                  ) : null}
+
+                  {catalogGroupForDraft.completionOutcome ? (
+                    <div className="mt-4 border-t border-dashed border-[#dfe3eb] pt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Responsabilidades del cliente
+                      </p>
+                      <RichTextDisplay
+                        value={catalogGroupForDraft.completionOutcome}
+                        className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                      />
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
               <section className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">Rango estimado</p>
                 <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
