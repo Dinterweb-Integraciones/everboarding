@@ -30,14 +30,7 @@ export function resolveClientExpansionPackage(contractedCredits: number) {
     };
   }
 
-  if (normalizedCredits >= PUBLIC_EXTRA_CREDIT_PACKAGE.credits) {
-    return PUBLIC_EXTRA_CREDIT_PACKAGE;
-  }
-
-  return {
-    credits: normalizedCredits,
-    price: Math.round(normalizedCredits * PLAN_PRICE_FACTOR),
-  };
+  return PUBLIC_EXTRA_CREDIT_PACKAGE;
 }
 
 export const PLAN_TIER_OPTIONS = [60, 80, 100] as const;
