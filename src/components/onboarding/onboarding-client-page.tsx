@@ -3827,55 +3827,68 @@ export function OnboardingClientPage({
                 </div>
 
                 <div className="divide-y divide-[#eaf0f6]">
-                  {items.map((initiative) => (
-                    <div
-                      key={initiative.id}
-                      className="grid w-full gap-4 px-4 py-4 text-left lg:grid-cols-[1.2fr_0.8fr]"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-[12px] font-bold text-[#33475b]">{initiative.title}</h4>
-                              {initiative.is_blocked ? (
-                                <span className="rounded-[2px] bg-[#fee2e2] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#dc2626]">
-                                  Bloqueado
-                                </span>
-                              ) : null}
-                            </div>
-                            <p className="mt-1 text-[10px] text-[#516f90]">
-                              {getPlainInitiativeDescription(initiative.description)}
-                            </p>
-                            <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
-                              {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
-                            </div>
-                          </div>
-                          <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
-                            {initiative.credits} CR
-                          </span>
-                        </div>
-                      </div>
+                  {items.map((initiative) => {
+                    const summaryCatalogGroup = findCatalogGroupForInitiative(initiative, catalogGroups);
+                    const summaryFields = [
+                      {
+                        label: "Alcance y descripcion detallada",
+                        value: initiative.description || summaryCatalogGroup?.description || "",
+                        fallback: "Sin descripcion detallada.",
+                      },
+                      {
+                        label: "Responsabilidades del cliente",
+                        value: summaryCatalogGroup?.completionOutcome || "",
+                        fallback: "Sin resultado definido.",
+                      },
+                      {
+                        label: "Criterio de Éxito",
+                        value: summaryCatalogGroup?.successMilestone || "",
+                        fallback: "Sin criterio definido.",
+                      },
+                    ];
 
-                      <div className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
-                        <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                          Actividades incluidas
-                        </p>
-                        <div className="mt-2 space-y-1">
-                          {initiative.subitems.map((subitem) => (
-                            <div
-                              key={subitem.id}
-                              className="flex items-center justify-between gap-3 rounded-[3px] bg-white px-2 py-1.5 text-[10px] text-[#33475b]"
-                            >
-                              <span className="truncate">{subitem.name}</span>
-                              <span className="shrink-0 text-[9px] text-[#516f90]">
-                                {subitem.quantity} x {subitem.unit_credits} CR
-                              </span>
+                    return (
+                      <div key={initiative.id} className="w-full px-4 py-4 text-left">
+                        <div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-[12px] font-bold text-[#33475b]">{initiative.title}</h4>
+                                {initiative.is_blocked ? (
+                                  <span className="rounded-[2px] bg-[#fee2e2] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#dc2626]">
+                                    Bloqueado
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="mt-2 rounded-[2px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
+                                {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
+                              </div>
+                            </div>
+                            <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
+                              {initiative.credits} CR
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                          {summaryFields.map((field) => (
+                            <div key={`${initiative.id}-${field.label}`} className="rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                                {field.label}
+                              </p>
+                              <div className="mt-2 border-t border-[#dfe3eb] pt-3">
+                                <RichTextDisplay
+                                  value={field.value}
+                                  fallback={field.fallback}
+                                  className="text-[11px] leading-5 text-[#516f90]"
+                                />
+                              </div>
                             </div>
                           ))}
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );

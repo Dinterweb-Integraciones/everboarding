@@ -385,31 +385,6 @@ export function PublicOnboardingPage({
       {} as Record<InitiativeStatus, InitiativeRecord[]>,
     );
   }, [initiatives]);
-  const reportGroupedInitiatives = useMemo(
-    () =>
-      summaryStatuses.reduce(
-        (accumulator, status) => {
-          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
-            id: initiative.id,
-            title: initiative.title,
-            description: getPlainInitiativeDescription(initiative.description, ""),
-            credits: initiative.credits,
-            status: initiative.status,
-            dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
-            isBlocked: initiative.is_blocked,
-            subitems: initiative.subitems.map((subitem) => ({
-              id: subitem.id,
-              name: subitem.name,
-              quantity: subitem.quantity,
-              unitCredits: subitem.unit_credits,
-            })),
-          }));
-          return accumulator;
-        },
-        {} as Record<InitiativeStatus, PlanReportInitiative[]>,
-      ),
-    [groupedInitiatives],
-  );
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, typeof initialData.catalog>();
 
@@ -455,6 +430,41 @@ export function PublicOnboardingPage({
       items: initialData.catalog,
     });
   }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupCategoryLinks, initialData.catalogGroupMemberships, initialData.catalogGroups]);
+  const reportGroupedInitiatives = useMemo(
+    () =>
+      summaryStatuses.reduce(
+        (accumulator, status) => {
+          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => {
+            const matchedCatalogGroup = findCatalogGroupForInitiative(initiative, catalogGroups);
+
+            return {
+              id: initiative.id,
+              title: initiative.title,
+              description: getPlainInitiativeDescription(initiative.description, ""),
+              successMilestone: matchedCatalogGroup
+                ? richTextToPlainText(matchedCatalogGroup.successMilestone)
+                : "",
+              completionOutcome: matchedCatalogGroup
+                ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
+                : "",
+              credits: initiative.credits,
+              status: initiative.status,
+              dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
+              isBlocked: initiative.is_blocked,
+              subitems: initiative.subitems.map((subitem) => ({
+                id: subitem.id,
+                name: subitem.name,
+                quantity: subitem.quantity,
+                unitCredits: subitem.unit_credits,
+              })),
+            };
+          });
+          return accumulator;
+        },
+        {} as Record<InitiativeStatus, PlanReportInitiative[]>,
+      ),
+    [catalogGroups, groupedInitiatives],
+  );
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData.catalogGroupCategories]);
@@ -1482,17 +1492,15 @@ export function PublicOnboardingPage({
             ) : null}
           </div>
 
-          {audience === "prospect" ? (
-            <button
-              type="button"
-              onClick={() => void exportPublicPlanPdf()}
-              disabled={isExportingReport}
-              className="inline-flex items-center justify-center gap-2 rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90] transition hover:border-[#9cb1c6] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Download className="h-3.5 w-3.5" />
-              {isExportingReport ? "Generando..." : "Descargar PDF"}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => void exportPublicPlanPdf()}
+            disabled={isExportingReport}
+            className="inline-flex items-center justify-center gap-2 rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90] transition hover:border-[#9cb1c6] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {isExportingReport ? "Generando..." : "Descargar PDF"}
+          </button>
         </div>
       </header>
 
@@ -2214,36 +2222,57 @@ export function PublicOnboardingPage({
                       </span>
                     </div>
                     <div className="divide-y divide-[#eef2f7]">
-                    {items.map((initiative) => (
-                        <div
-                          key={`summary-card-${initiative.id}`}
-                          className="grid w-full gap-6 px-5 py-5 text-left lg:grid-cols-[1.35fr_0.65fr]"
-                        >
+                    {items.map((initiative) => {
+                      const summaryCatalogGroup = findCatalogGroupForInitiative(initiative, catalogGroups);
+                      const summaryFields = [
+                        {
+                          label: "Alcance y descripcion detallada",
+                          value: initiative.description || summaryCatalogGroup?.description || "",
+                          fallback: "Sin descripcion detallada.",
+                        },
+                        {
+                          label: "Responsabilidades del cliente",
+                          value: summaryCatalogGroup?.completionOutcome || "",
+                          fallback: "Sin resultado definido.",
+                        },
+                        {
+                          label: "Criterio de Éxito",
+                          value: summaryCatalogGroup?.successMilestone || "",
+                          fallback: "Sin criterio definido.",
+                        },
+                      ];
+
+                      return (
+                        <div key={`summary-card-${initiative.id}`} className="w-full px-5 py-5 text-left">
                           <div>
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <h4 className="text-[14px] font-bold text-[#33475b]">{initiative.title}</h4>
-                                <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
-                                  {getPlainInitiativeDescription(initiative.description)}
-                                </p>
                                 <div className="mt-2 inline-flex rounded-[3px] border border-[#cbd6e2] bg-[#f5f8fa] px-2 py-0.5 text-[9px] font-bold text-[#33475b]">
                                   {formatDateRange(initiative.est_start_date, initiative.est_end_date)}
                                 </div>
                               </div>
                             </div>
                           </div>
-                          <div className="rounded-[4px] border border-[#dfe3eb] bg-white p-3">
-                            <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                              Historial de notas
-                            </p>
-                            <div className="mt-2 border-t border-[#dfe3eb] pt-3">
-                              <p className="text-[11px] italic text-[#516f90]">
-                                {initiative.logs[0]?.entry || "Sin notas registradas."}
-                              </p>
-                            </div>
+                          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                            {summaryFields.map((field) => (
+                              <div key={`${initiative.id}-${field.label}`} className="rounded-[4px] border border-[#dfe3eb] bg-white p-3">
+                                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                                  {field.label}
+                                </p>
+                                <div className="mt-2 border-t border-[#dfe3eb] pt-3">
+                                  <RichTextDisplay
+                                    value={field.value}
+                                    fallback={field.fallback}
+                                    className="text-[11px] leading-5 text-[#516f90]"
+                                  />
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                    ))}
+                      );
+                    })}
                     </div>
                   </div>
                 );
@@ -2268,28 +2297,26 @@ export function PublicOnboardingPage({
         </section>
       </main>
 
-      {audience === "prospect" ? (
-        <PlanReportExportPages
-          rootId="public-plan-report-export-root"
-          pageIdPrefix="public-plan-report"
-          reportLabel="Propuesta publica"
-          clientName={initialData.client.name || "Prospecto"}
-          description={initialData.client.description || stageMeta.description}
-          startDateLabel={formatLongDate(config.start_date)}
-          stageLabel="Vista prospecto"
-          metrics={{
-            available: metrics.available,
-            committed: metrics.reserved,
-            completed: metrics.consumed,
-            lost: metrics.lost,
-            total: metrics.total,
-            priceLabel: formatCurrency(prospectDisplayedPaymentAmount),
-            creditsLabel: `${prospectDisplayedPlanCredits} CR`,
-            cadenceLabel: getPlanCadenceLabel(config.custom_plan_period_months),
-          }}
-          groupedInitiatives={reportGroupedInitiatives}
-        />
-      ) : null}
+      <PlanReportExportPages
+        rootId="public-plan-report-export-root"
+        pageIdPrefix="public-plan-report"
+        reportLabel={audience === "prospect" ? "Propuesta publica" : "Plan de trabajo"}
+        clientName={initialData.client.name || (audience === "prospect" ? "Prospecto" : "Cliente")}
+        description={initialData.client.description || stageMeta.description}
+        startDateLabel={formatLongDate(config.start_date)}
+        stageLabel={audience === "prospect" ? "Vista prospecto" : "Vista cliente"}
+        metrics={{
+          available: metrics.available,
+          committed: metrics.reserved,
+          completed: metrics.consumed,
+          lost: metrics.lost,
+          total: metrics.total,
+          priceLabel: formatCurrency(prospectDisplayedPaymentAmount),
+          creditsLabel: `${prospectDisplayedPlanCredits} CR`,
+          cadenceLabel: getPlanCadenceLabel(config.custom_plan_period_months),
+        }}
+        groupedInitiatives={reportGroupedInitiatives}
+      />
 
       {activeInitiativePreview ? (
         <div className="fixed inset-0 z-40 flex justify-end bg-[#33475b]/60 backdrop-blur-[2px]">

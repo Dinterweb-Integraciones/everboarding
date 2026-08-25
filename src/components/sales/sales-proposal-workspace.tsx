@@ -992,33 +992,44 @@ export function SalesProposalWorkspace({
     [proposal.initiatives],
   );
 
-  const metrics = useMemo(() => calculateSalesProposalMetrics(proposal), [proposal]);
   const reportGroupedInitiatives = useMemo(
     () =>
       summaryStatuses.reduce(
         (accumulator, status) => {
-          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => ({
-            id: initiative.id,
-            title: initiative.title,
-            description: getPlainInitiativeDescription(initiative.description, ""),
-            credits: calculateSalesInitiativeCredits(initiative),
-            status: initiative.status,
-            dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
-            isBlocked: initiative.isBlocked,
-            subitems: initiative.subitems.map((subitem) => ({
-              id: subitem.id,
-              name: subitem.name,
-              quantity: subitem.quantity,
-              unitCredits: initiative.commerciallyWaived ? 0 : subitem.unitCredits,
-              statusLabel: TASK_STATUS_META[subitem.status]?.label,
-            })),
-          }));
+          accumulator[status] = groupedInitiatives[status].map<PlanReportInitiative>((initiative) => {
+            const matchedCatalogGroup = findCatalogGroupForInitiative(initiative, catalogGroups);
+
+            return {
+              id: initiative.id,
+              title: initiative.title,
+              description: getPlainInitiativeDescription(initiative.description, ""),
+              successMilestone: matchedCatalogGroup
+                ? richTextToPlainText(matchedCatalogGroup.successMilestone)
+                : "",
+              completionOutcome: matchedCatalogGroup
+                ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
+                : "",
+              credits: calculateSalesInitiativeCredits(initiative),
+              status: initiative.status,
+              dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
+              isBlocked: initiative.isBlocked,
+              subitems: initiative.subitems.map((subitem) => ({
+                id: subitem.id,
+                name: subitem.name,
+                quantity: subitem.quantity,
+                unitCredits: initiative.commerciallyWaived ? 0 : subitem.unitCredits,
+                statusLabel: TASK_STATUS_META[subitem.status]?.label,
+              })),
+            };
+          });
           return accumulator;
         },
         {} as Record<InitiativeStatus, PlanReportInitiative[]>,
       ),
-    [groupedInitiatives],
+    [catalogGroups, groupedInitiatives],
   );
+
+  const metrics = useMemo(() => calculateSalesProposalMetrics(proposal), [proposal]);
 
   const timelineRows = useMemo(() => {
     const today = new Date();

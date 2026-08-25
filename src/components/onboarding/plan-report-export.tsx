@@ -13,6 +13,8 @@ export type PlanReportInitiative = {
   id: string;
   title: string;
   description: string;
+  successMilestone?: string;
+  completionOutcome?: string;
   credits: number;
   status: InitiativeStatus;
   dateRange: string;
@@ -299,9 +301,6 @@ export function PlanReportExportPages({
                         ) : null}
                       </div>
                       <h2 className="mt-2 text-[16px] font-bold text-[#33475b]">{initiative.title}</h2>
-                      <p className="mt-2 text-[11px] leading-5 text-[#516f90]">
-                        {initiative.description || "Sin descripcion ejecutiva."}
-                      </p>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-[6px] border border-[#dfe3eb] bg-white p-3">
@@ -312,6 +311,33 @@ export function PlanReportExportPages({
                         <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#8aa0b4]">Creditos</p>
                         <p className="mt-2 text-[18px] font-bold text-[#33475b]">{initiative.credits} CR</p>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 border-b border-[#eaf0f6] px-5 py-4 grid-cols-3">
+                    <div className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Alcance y descripcion detallada
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#33475b]">
+                        {initiative.description || "Sin descripcion ejecutiva."}
+                      </p>
+                    </div>
+                    <div className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Responsabilidades del cliente
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#33475b]">
+                        {initiative.completionOutcome || "Sin responsabilidades del cliente definidas."}
+                      </p>
+                    </div>
+                    <div className="rounded-[6px] border border-[#dfe3eb] bg-[#fcfcfc] p-3">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                        Criterio de exito
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#33475b]">
+                        {initiative.successMilestone || "Sin criterio de exito definido."}
+                      </p>
                     </div>
                   </div>
 
