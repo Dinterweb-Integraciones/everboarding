@@ -5,8 +5,11 @@ import {
   Activity,
   ArrowDownAZ,
   ArrowDownWideNarrow,
+  ArrowUpDown,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   CircleHelp,
   Search,
@@ -824,8 +827,50 @@ export function ReportsPanel({
   );
 }
 
+type CreditHistorySortKey =
+  | "totalContractedCredits"
+  | "availableCredits"
+  | "planningCredits"
+  | "executingCredits"
+  | "remainingCredits"
+  | "evaluationCredits"
+  | "completedCredits";
+
+const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
+  { key: "cs", label: "CS" },
+  { key: "client", label: "Cliente" },
+  { key: "billing", label: "Tipo de servicio" },
+  { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
+  { key: "available", label: "Disponibles", sortKey: "availableCredits" },
+  { key: "planning", label: "En planificación", sortKey: "planningCredits" },
+  { key: "executing", label: "En ejecución", sortKey: "executingCredits" },
+  { key: "remaining", label: "Restantes", sortKey: "remainingCredits" },
+  { key: "evaluation", label: "En evaluación", sortKey: "evaluationCredits" },
+  { key: "completed", label: "Completados", sortKey: "completedCredits" },
+  { key: "date", label: "Fecha clave" },
+];
+
 function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [csFilter, setCsFilter] = useState("all");
+  const [billingFilter, setBillingFilter] = useState<"all" | CreditHistoryReportRow["billing"]>("all");
+  const [sort, setSort] = useState<{ key: CreditHistorySortKey; direction: "asc" | "desc" } | null>(null);
+
+  const csFilterOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    rows.forEach((row) => {
+      const key = row.customerSuccessId ?? "__unassigned__";
+      if (!byKey.has(key)) byKey.set(key, row.customerSuccessName || "Sin asignar");
+    });
+    return [...byKey.entries()].sort(([, first], [, second]) => first.localeCompare(second, "es"));
+  }, [rows]);
+
+  function toggleSort(key: CreditHistorySortKey) {
+    setSort((current) => {
+      if (!current || current.key !== key) return { key, direction: "desc" };
+      return { key, direction: current.direction === "desc" ? "asc" : "desc" };
+    });
+  }
 
   const groups = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -833,8 +878,11 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
 
     rows.forEach((row) => {
       if (normalizedSearch && !row.clientName.toLowerCase().includes(normalizedSearch)) return;
+      if (billingFilter !== "all" && row.billing !== billingFilter) return;
 
       const key = row.customerSuccessId ?? "__unassigned__";
+      if (csFilter !== "all" && csFilter !== key) return;
+
       const group = byCs.get(key) ?? {
         csId: row.customerSuccessId,
         csName: row.customerSuccessName || "Sin asignar",
@@ -846,9 +894,13 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
 
     return [...byCs.values()]
       .map((group) => {
-        const clients = [...group.clients].sort((first, second) =>
-          first.clientName.localeCompare(second.clientName, "es"),
-        );
+        const clients = [...group.clients].sort((first, second) => {
+          if (sort) {
+            const diff = first[sort.key] - second[sort.key];
+            if (diff !== 0) return sort.direction === "asc" ? diff : -diff;
+          }
+          return first.clientName.localeCompare(second.clientName, "es");
+        });
         return {
           ...group,
           clients,
@@ -858,10 +910,16 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
           packageContracted: clients
             .filter((row) => row.billing === "paquetes")
             .reduce((sum, row) => sum + row.totalContractedCredits, 0),
+          availableTotal: clients.reduce((sum, row) => sum + row.availableCredits, 0),
+          planningTotal: clients.reduce((sum, row) => sum + row.planningCredits, 0),
+          executingTotal: clients.reduce((sum, row) => sum + row.executingCredits, 0),
+          remainingTotal: clients.reduce((sum, row) => sum + row.remainingCredits, 0),
+          evaluationTotal: clients.reduce((sum, row) => sum + row.evaluationCredits, 0),
+          completedTotal: clients.reduce((sum, row) => sum + row.completedCredits, 0),
         };
       })
       .sort((first, second) => first.csName.localeCompare(second.csName, "es"));
-  }, [rows, searchTerm]);
+  }, [rows, searchTerm, billingFilter, csFilter, sort]);
 
   const totalClients = groups.reduce((sum, group) => sum + group.clients.length, 0);
 
@@ -882,44 +940,88 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
           </p>
         </div>
 
-        <label className="w-full space-y-1.5 lg:max-w-sm">
-          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
-            Buscar cliente
-          </span>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#516f90]" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white pl-9 pr-3 text-sm font-semibold text-[#33475b] outline-none transition focus:border-[#00a4bd] focus:ring-2 focus:ring-[#00a4bd]/15"
-              placeholder="Nombre del cliente"
-            />
-          </div>
-        </label>
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-end lg:w-auto">
+          <label className="w-full space-y-1.5 sm:w-64">
+            <span className="block whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
+              Customer Success
+            </span>
+            <select
+              value={csFilter}
+              onChange={(event) => setCsFilter(event.target.value)}
+              className="block h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b] outline-none focus:border-[#00a4bd]"
+            >
+              <option value="all">Todos</option>
+              {csFilterOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="w-full space-y-1.5 sm:w-56">
+            <span className="block whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
+              Tipo de servicio
+            </span>
+            <select
+              value={billingFilter}
+              onChange={(event) =>
+                setBillingFilter(event.target.value as "all" | CreditHistoryReportRow["billing"])
+              }
+              className="block h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#33475b] outline-none focus:border-[#00a4bd]"
+            >
+              <option value="all">Todos</option>
+              <option value="paquetes">Paquete</option>
+              <option value="recurrencia">Recurrente</option>
+            </select>
+          </label>
+
+          <label className="w-full space-y-1.5 lg:max-w-sm">
+            <span className="block whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[#99acc2]">
+              Buscar cliente
+            </span>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#516f90]" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white pl-9 pr-3 text-sm font-semibold text-[#33475b] outline-none transition focus:border-[#00a4bd] focus:ring-2 focus:ring-[#00a4bd]/15"
+                placeholder="Nombre del cliente"
+              />
+            </div>
+          </label>
+        </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="max-h-[70vh] overflow-auto">
         <table className="w-full min-w-[1520px] border-collapse text-left">
-          <thead className="bg-[#f8fbfd]">
+          <thead>
             <tr className="border-b border-[#dfe3eb]">
-              {[
-                "CS",
-                "Cliente",
-                "Tipo de servicio",
-                "Créditos contratados",
-                "Disponibles",
-                "En planificación",
-                "En ejecución",
-                "Restantes",
-                "En evaluación",
-                "Completados",
-                "Fecha clave",
-              ].map((header) => (
+              {CREDIT_HISTORY_COLUMNS.map((column) => (
                 <th
-                  key={header}
-                  className="px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]"
+                  key={column.key}
+                  className="sticky top-0 z-10 border-b border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]"
                 >
-                  {header}
+                  {column.sortKey ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(column.sortKey as CreditHistorySortKey)}
+                      className="inline-flex items-center gap-1 hover:text-[#213343]"
+                    >
+                      {column.label}
+                      {sort?.key === column.sortKey ? (
+                        sort.direction === "asc" ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-40" />
+                      )}
+                    </button>
+                  ) : (
+                    column.label
+                  )}
                 </th>
               ))}
             </tr>
@@ -952,6 +1054,26 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                             {formatNumber(group.recurringContracted + group.packageContracted)} CR
                           </strong>
                         </p>
+                        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[#e2e8f0] pt-2">
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Disp.: <strong className="text-[#213343]">{formatNumber(group.availableTotal)} CR</strong>
+                          </p>
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Planif.: <strong className="text-[#213343]">{formatNumber(group.planningTotal)} CR</strong>
+                          </p>
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Ejec.: <strong className="text-[#213343]">{formatNumber(group.executingTotal)} CR</strong>
+                          </p>
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Rest.: <strong className="text-[#213343]">{formatNumber(group.remainingTotal)} CR</strong>
+                          </p>
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Eval.: <strong className="text-[#213343]">{formatNumber(group.evaluationTotal)} CR</strong>
+                          </p>
+                          <p className="text-[11px] font-semibold text-[#516f90]">
+                            Compl.: <strong className="text-[#213343]">{formatNumber(group.completedTotal)} CR</strong>
+                          </p>
+                        </div>
                       </td>
                     ) : null}
                     <td className="px-4 py-4">
