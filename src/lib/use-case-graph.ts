@@ -83,6 +83,28 @@ export function truncate(value: string, length: number) {
   return value.length > length ? `${value.slice(0, length - 1).trim()}…` : value;
 }
 
+export function wrapStarLabel(text: string, maxChars: number): string[] {
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) lines.push(current);
+  if (lines.length > 2) {
+    const kept = lines.slice(0, 2);
+    kept[1] = `${kept[1].slice(0, Math.max(0, kept[1].length - 1))}…`;
+    return kept;
+  }
+  return lines;
+}
+
 export function wrapNodeTitle(value: string) {
   const words = value.trim().split(/\s+/);
   const lines: string[] = [];

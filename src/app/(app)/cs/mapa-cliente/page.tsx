@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { ClientUseCaseMap } from "@/components/cs/client-use-case-map";
 import { requireUser } from "@/lib/auth";
+import type { ClientUseCaseInitiative as ClientInitiativeRow } from "@/lib/client-use-case-status";
 import type {
   CreditCatalogGroup,
   CreditCatalogGroupCluster,
@@ -30,7 +31,8 @@ export default async function ClientUseCaseMapPage() {
     { data: clusterRows, error: clustersError },
     { data: clusterLinkRows, error: clusterLinksError },
     { data: categoryRows, error: categoriesError },
-    { data: progressRows, error: progressError },
+    { data: initiativeRows, error: initiativesError },
+    { data: routeRows, error: routesError },
   ] = await Promise.all([
     admin
       .from("clients")
@@ -45,7 +47,8 @@ export default async function ClientUseCaseMapPage() {
       .order("group_id")
       .order("sort_order"),
     admin.from("credit_catalog_use_case_categories").select("*").order("name"),
-    admin.from("client_use_case_progress").select("id,client_id,group_id,is_completed,completed_at"),
+    admin.from("onboarding_initiatives").select("id,client_id,title,description,status"),
+    admin.from("client_use_case_routes").select("client_id,group_id,position,icon").order("position"),
   ]);
 
   if (clientsError) throw new Error("No pudimos cargar los clientes.");
@@ -53,7 +56,8 @@ export default async function ClientUseCaseMapPage() {
   if (clustersError) throw new Error("No pudimos cargar los clústeres.");
   if (clusterLinksError) throw new Error("No pudimos cargar la relación con los clústeres.");
   if (categoriesError) throw new Error("No pudimos cargar las categorías de casos de uso.");
-  if (progressError) throw new Error("No pudimos cargar el progreso de los clientes.");
+  if (initiativesError) throw new Error("No pudimos cargar las iniciativas de los clientes.");
+  if (routesError) throw new Error("No pudimos cargar las rutas tentativas de los clientes.");
 
   return (
     <ClientUseCaseMap
@@ -62,7 +66,8 @@ export default async function ClientUseCaseMapPage() {
       clusters={(clusterRows ?? []) as CreditCatalogGroupCluster[]}
       clusterLinks={(clusterLinkRows ?? []) as CreditCatalogGroupClusterLink[]}
       categories={(categoryRows ?? []) as CreditCatalogUseCaseCategory[]}
-      progress={(progressRows ?? []) as Tables<"client_use_case_progress">[]}
+      initiatives={(initiativeRows ?? []) as ClientInitiativeRow[]}
+      routes={(routeRows ?? []) as Tables<"client_use_case_routes">[]}
     />
   );
 }

@@ -13,7 +13,6 @@ const catalogLinks = [
   { href: "/cs/categorias-casos-uso", label: "Categorías de Casos de Uso" },
   { href: "/cs/tareas", label: "Actividades" },
   { href: "/cs/grupos", label: "Casos de Uso" },
-  { href: "/cs/mapa-casos", label: "Mapa de Casos" },
   { href: "/cs/clientes", label: "Clientes" },
   { href: "/cs/cupones", label: "Cupones" },
   { href: "/cs/ventas", label: "Ventas" },
@@ -54,7 +53,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
   const mobileLinks = [
     { href: "/dashboard", label: "Inicio", icon: House },
     ...(canSeeReports ? [{ href: "/informes", label: "Informes", icon: BarChart3 }] : []),
-    ...(canSeeReports ? [{ href: "/cs/mapa-cliente", label: "Mapa de Cliente", icon: Network }] : []),
+    ...(canSeeReports ? [{ href: "/cs/mapa-cliente", label: "Mapa de Clientes", icon: Network }] : []),
     ...(platformRole === "admin" || platformRole === "superadmin"
       ? [
           { href: "/cs/prompts", label: "Prompts", icon: MessageSquareText },
@@ -63,7 +62,6 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           { href: "/cs/categorias-casos-uso", label: "Cat. Casos de Uso", icon: LayoutGrid },
           { href: "/cs/tareas", label: "Actividades", icon: LayoutGrid },
           { href: "/cs/grupos", label: "Casos de Uso", icon: LayoutGrid },
-          { href: "/cs/mapa-casos", label: "Mapa de Casos", icon: Network },
           { href: "/cs/clientes", label: "Clientes", icon: LayoutGrid },
           { href: "/cs/cupones", label: "Cupones", icon: LayoutGrid },
           { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
