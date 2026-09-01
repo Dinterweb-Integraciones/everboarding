@@ -18,8 +18,8 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   evaluation_cases_count: number;
   validated_evaluation_cases_count: number;
   contracted_credits: number;
-  credit_renewal_at: string | null;
-  days_until_credit_renewal: number | null;
+  current_cycle_start_at: string;
+  credit_expiration_at: string | null;
 };
 
 type InitiativeSourceRow = {
@@ -62,6 +62,7 @@ type ActiveClientMilestoneRow = {
 type PaidBillingCycleRow = {
   client_id: string;
   paid_at: string;
+  cycle_start_date: string;
   cycle_end_date: string;
 };
 
@@ -104,6 +105,7 @@ type CustomerSuccessCreditGrantRow = {
   granted_credits: number;
   used_credits: number;
   expired_credits: number;
+  grant_date: string;
   expires_at: string;
 };
 
@@ -187,32 +189,11 @@ function isCommerciallyWaivedLabel(labels: string[] | null | undefined) {
   });
 }
 
-function addDaysToIsoDate(value: string, days: number) {
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
-}
-
-function getCalendarDaysUntil(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  const [year, month, day] = value.split("-").map(Number);
-  const target = Date.UTC(year, month - 1, day);
-  if (Number.isNaN(target)) {
-    return null;
-  }
-
-  const today = new Date();
-  const todayStart = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((target - todayStart) / (1000 * 60 * 60 * 24));
+function isoDateDaysAgo(days: number) {
+  const now = new Date();
+  const utcToday = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  utcToday.setUTCDate(utcToday.getUTCDate() - days);
+  return utcToday.toISOString().slice(0, 10);
 }
 
 function getInitiativeCreditKey(clientId: string, initiativeTitle: string) {
@@ -311,7 +292,7 @@ export default async function ReportsPage() {
   const { data: paidBillingCycleRows, error: paidBillingCyclesError } = clientIds.length
     ? await admin
         .from("client_billing_cycles")
-        .select("client_id, paid_at, cycle_end_date")
+        .select("client_id, paid_at, cycle_start_date, cycle_end_date")
         .in("client_id", clientIds)
         .eq("status", "paid")
         .not("paid_at", "is", null)
@@ -455,7 +436,7 @@ export default async function ReportsPage() {
   const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
     ? await admin
         .from("client_credit_grants")
-        .select("client_id, granted_credits, used_credits, expired_credits, expires_at")
+        .select("client_id, granted_credits, used_credits, expired_credits, grant_date, expires_at")
         .in("client_id", clientIds)
     : { data: [] as CustomerSuccessCreditGrantRow[], error: null };
 
@@ -489,6 +470,7 @@ export default async function ReportsPage() {
 
   const northStarCounts = new Map<string, number>();
   const firstPaidDates = new Map<string, string>();
+  const latestPaidCycleStarts = new Map<string, string>();
   const latestPaidCycleEnds = new Map<string, string>();
   const assignedDates = new Map<string, string>();
   const kickoffCompletedDates = new Map<string, string>();
@@ -504,6 +486,7 @@ export default async function ReportsPage() {
 
     const currentCycleEnd = latestPaidCycleEnds.get(cycle.client_id);
     if (!currentCycleEnd || cycle.cycle_end_date > currentCycleEnd) {
+      latestPaidCycleStarts.set(cycle.client_id, cycle.cycle_start_date);
       latestPaidCycleEnds.set(cycle.client_id, cycle.cycle_end_date);
     }
   });
@@ -711,13 +694,22 @@ export default async function ReportsPage() {
       config,
     ]),
   );
+  const latestGrantByClient = new Map<string, CustomerSuccessCreditGrantRow>();
+  ((customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]).forEach((grant) => {
+    const currentLatest = latestGrantByClient.get(grant.client_id);
+    if (!currentLatest || grant.grant_date > currentLatest.grant_date) {
+      latestGrantByClient.set(grant.client_id, grant);
+    }
+  });
   const rows = clientRows.map((row) => {
     const config = configByClientId.get(row.client_id);
     const periodMonths = config?.custom_plan_period_months ?? 1;
     const contractedCredits =
       config?.custom_plan_credits ?? (config?.base_capacity ?? 0) * periodMonths;
-    const latestPaidCycleEnd = latestPaidCycleEnds.get(row.client_id);
-    const renewalAt = latestPaidCycleEnd ? addDaysToIsoDate(latestPaidCycleEnd, 1) : null;
+    const latestGrant = latestGrantByClient.get(row.client_id);
+    const currentCycleStartAt =
+      latestPaidCycleStarts.get(row.client_id) ?? latestGrant?.grant_date ?? isoDateDaysAgo(30);
+    const creditExpirationAt = row.billing === "paquetes" ? latestGrant?.expires_at ?? null : null;
 
     return {
       ...row,
@@ -733,8 +725,8 @@ export default async function ReportsPage() {
       evaluation_cases_count: evaluationCasesCounts.get(row.client_id) ?? 0,
       validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
       contracted_credits: contractedCredits,
-      credit_renewal_at: renewalAt,
-      days_until_credit_renewal: getCalendarDaysUntil(renewalAt),
+      current_cycle_start_at: currentCycleStartAt,
+      credit_expiration_at: creditExpirationAt,
     };
   }) satisfies ClientHealthReportRow[];
 

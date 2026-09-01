@@ -5,6 +5,7 @@ import {
   RISK_INACTIVE_DAYS,
   TASK_STATUS_META,
 } from "@/lib/constants";
+import { richTextToPlainText } from "@/components/ui/rich-text";
 import { safeParseNumber, toIsoDate } from "@/lib/utils";
 import type { Database, Tables } from "@/types/database";
 
@@ -288,6 +289,41 @@ export function normalizeInitiativeTitle(value: string | null | undefined) {
 
 export function isKickoffInitiative(initiative: Pick<InitiativeRecord, "title">) {
   return normalizeInitiativeTitle(initiative.title).includes("kickoff");
+}
+
+export function normalizeCatalogText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// No hay catalog_group_id en onboarding_initiatives por diseño: el matching es por
+// titulo/descripcion normalizados, no por FK (ver memoria del proyecto).
+export function findCatalogGroupForInitiative<
+  Group extends { name: string; description: string | null },
+>(initiative: Pick<InitiativeRecord, "title" | "description">, groups: Group[]): Group | null {
+  const normalizedTitle = normalizeCatalogText(initiative.title);
+  const titleMatch = groups.find((group) => normalizeCatalogText(group.name) === normalizedTitle);
+
+  if (titleMatch) return titleMatch;
+
+  const normalizedDescription = normalizeCatalogText(richTextToPlainText(initiative.description));
+  if (normalizedDescription.length < 80) return null;
+
+  return (
+    groups.find((group) => {
+      const groupDescription = normalizeCatalogText(richTextToPlainText(group.description));
+      if (groupDescription.length < 80) return false;
+
+      return (
+        groupDescription === normalizedDescription ||
+        groupDescription.slice(0, 180) === normalizedDescription.slice(0, 180)
+      );
+    }) ?? null
+  );
 }
 
 export function isNorthStarCompleted(config: Pick<OnboardingConfig, "north_star_status">) {

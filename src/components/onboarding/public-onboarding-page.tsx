@@ -28,11 +28,13 @@ import {
   calculateCredits,
   calculateMetrics,
   compareInitiativesForBoard,
+  findCatalogGroupForInitiative,
   formatDateRange,
   getEvaluationValidationLabel,
   getEstimatedStatus,
   getEffectivePlanPrice,
   getPlanCadenceLabel,
+  normalizeCatalogText,
   shouldRequireNorthStar,
   resolveStageFromPublicAudience,
   type CatalogModalGroup,
@@ -105,15 +107,6 @@ function getSafeStatusMeta(status: InitiativeStatus | string | null | undefined)
   ];
 }
 
-function normalizeCatalogText(value: string | null | undefined) {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
   const normalizedQuery = normalizeCatalogText(query);
   if (!normalizedQuery) return true;
@@ -141,29 +134,6 @@ function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
 
 function getPlainInitiativeDescription(value: string | null | undefined, fallback = "Sin descripcion ejecutiva.") {
   return richTextToPlainText(value) || fallback;
-}
-
-function findCatalogGroupForInitiative(
-  initiative: Pick<InitiativeRecord, "title" | "description">,
-  groups: CatalogModalGroup[],
-) {
-  const normalizedTitle = normalizeCatalogText(initiative.title);
-  const titleMatch = groups.find((group) => normalizeCatalogText(group.name) === normalizedTitle);
-
-  if (titleMatch) return titleMatch;
-
-  const normalizedDescription = normalizeCatalogText(richTextToPlainText(initiative.description));
-  if (normalizedDescription.length < 80) return null;
-
-  return groups.find((group) => {
-    const groupDescription = normalizeCatalogText(richTextToPlainText(group.description));
-    if (groupDescription.length < 80) return false;
-
-    return (
-      groupDescription === normalizedDescription ||
-      groupDescription.slice(0, 180) === normalizedDescription.slice(0, 180)
-    );
-  }) ?? null;
 }
 
 function parseCalendarDate(value: string) {
