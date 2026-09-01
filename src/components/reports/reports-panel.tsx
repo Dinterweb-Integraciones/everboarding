@@ -38,8 +38,8 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   evaluation_cases_count: number;
   validated_evaluation_cases_count: number;
   contracted_credits: number;
-  credit_renewal_at: string | null;
-  days_until_credit_renewal: number | null;
+  current_cycle_start_at: string;
+  credit_expiration_at: string | null;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
 type PanelKey = "clients" | "credit_history" | "customer_success" | "operational" | "norths";
@@ -107,13 +107,9 @@ type CreditHistoryReportRow = {
   availableCredits: number;
   planningCredits: number;
   executingCredits: number;
-  remainingCredits: number;
-  evaluationCredits: number;
   completedCredits: number;
-  kickoffCompletedAt: string | null;
-  daysSinceKickoff: number | null;
-  renewalAt: string | null;
-  daysUntilRenewal: number | null;
+  cycleStartAt: string;
+  creditExpirationAt: string | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -153,9 +149,9 @@ const panels: Array<{
   },
   {
     key: "credit_history",
-    label: "Historial de Créditos",
-    title: "Historial de Créditos",
-    description: "Créditos comprados o contratados, disponibilidad, consumo y próximas renovaciones.",
+    label: "Operaciones",
+    title: "Operaciones",
+    description: "Créditos contratados, disponibilidad y producción del ciclo actual (o últimos 30 días) por cliente.",
   },
   {
     key: "customer_success",
@@ -308,24 +304,37 @@ export function ReportsPanel({
     [rows],
   );
   const initiativeCreditTotals = useMemo(() => {
+    const windowStartByClientId = new Map(rows.map((row) => [row.client_id, row.current_cycle_start_at]));
     const completedByClient = new Map<string, number>();
     const planningByClient = new Map<string, number>();
     const executingByClient = new Map<string, number>();
-    const evaluationByClient = new Map<string, number>();
 
     initiatives.forEach((initiative) => {
       const credits = Number(initiative.credits) || 0;
-      const byStatus = {
-        completed: completedByClient,
-        planned: planningByClient,
-        executing: executingByClient,
-        backlog: evaluationByClient,
-      }[initiative.status];
+
+      // "Completados" refleja producción reciente (ciclo actual o últimos 30 días),
+      // no el acumulado histórico del cliente.
+      if (initiative.status === "completed") {
+        const windowStart = windowStartByClientId.get(initiative.client_id);
+        const completedDate = initiative.completed_at?.slice(0, 10);
+        if (windowStart && completedDate && completedDate >= windowStart) {
+          completedByClient.set(initiative.client_id, (completedByClient.get(initiative.client_id) ?? 0) + credits);
+        }
+        return;
+      }
+
+      const byStatus =
+        initiative.status === "planned"
+          ? planningByClient
+          : initiative.status === "executing"
+            ? executingByClient
+            : null;
+      if (!byStatus) return;
       byStatus.set(initiative.client_id, (byStatus.get(initiative.client_id) ?? 0) + credits);
     });
 
-    return { completedByClient, planningByClient, executingByClient, evaluationByClient };
-  }, [initiatives]);
+    return { completedByClient, planningByClient, executingByClient };
+  }, [initiatives, rows]);
   const creditHistoryRows = useMemo(() => {
     const grantedCreditsByClient = new Map<string, number>();
     customerSuccessCreditGrants.forEach((grant) => {
@@ -354,13 +363,9 @@ export function ReportsPanel({
           availableCredits,
           planningCredits,
           executingCredits,
-          remainingCredits: availableCredits + planningCredits + executingCredits,
-          evaluationCredits: initiativeCreditTotals.evaluationByClient.get(row.client_id) ?? 0,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
-          kickoffCompletedAt: row.kickoff_completed_at,
-          daysSinceKickoff: row.days_since_kickoff_completed,
-          renewalAt: row.credit_renewal_at,
-          daysUntilRenewal: row.days_until_credit_renewal,
+          cycleStartAt: row.current_cycle_start_at,
+          creditExpirationAt: row.credit_expiration_at,
         };
       })
       .sort(
@@ -832,22 +837,19 @@ type CreditHistorySortKey =
   | "availableCredits"
   | "planningCredits"
   | "executingCredits"
-  | "remainingCredits"
-  | "evaluationCredits"
   | "completedCredits";
 
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
   { key: "cs", label: "CS" },
-  { key: "client", label: "Cliente" },
+  { key: "client", label: "Cuenta" },
   { key: "billing", label: "Tipo de servicio" },
   { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
-  { key: "available", label: "Disponibles", sortKey: "availableCredits" },
-  { key: "planning", label: "En planificación", sortKey: "planningCredits" },
-  { key: "executing", label: "En ejecución", sortKey: "executingCredits" },
-  { key: "remaining", label: "Restantes", sortKey: "remainingCredits" },
-  { key: "evaluation", label: "En evaluación", sortKey: "evaluationCredits" },
-  { key: "completed", label: "Completados", sortKey: "completedCredits" },
-  { key: "date", label: "Fecha clave" },
+  { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
+  { key: "planning", label: "Créditos en Planificación", sortKey: "planningCredits" },
+  { key: "executing", label: "Créditos en Ejecución", sortKey: "executingCredits" },
+  { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
+  { key: "cycleStart", label: "Fecha de inicio del ciclo" },
+  { key: "creditExpiration", label: "Fecha de vencimiento de créditos" },
 ];
 
 function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
@@ -913,8 +915,6 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
           availableTotal: clients.reduce((sum, row) => sum + row.availableCredits, 0),
           planningTotal: clients.reduce((sum, row) => sum + row.planningCredits, 0),
           executingTotal: clients.reduce((sum, row) => sum + row.executingCredits, 0),
-          remainingTotal: clients.reduce((sum, row) => sum + row.remainingCredits, 0),
-          evaluationTotal: clients.reduce((sum, row) => sum + row.evaluationCredits, 0),
           completedTotal: clients.reduce((sum, row) => sum + row.completedCredits, 0),
         };
       })
@@ -928,11 +928,12 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
       <div className="flex flex-col gap-4 border-b border-[#dfe3eb] p-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-black text-[#213343]">Historial de créditos por cliente</h3>
+            <h3 className="text-base font-black text-[#213343]">Operaciones por cliente</h3>
             <InfoTooltip>
-              Restantes suma disponibles + en planificación + en ejecución. En evaluación corresponde a
-              casos aún no aprobados (backlog). Completados incluye casos terminados. La tabla agrupa a
-              cada cliente bajo su Customer Success.
+              Completados suma los créditos de casos terminados dentro del ciclo de facturación actual del
+              cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
+              La fecha de inicio del ciclo marca desde cuándo se cuenta. La tabla agrupa a cada cliente bajo
+              su Customer Success.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
@@ -996,17 +997,17 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
       <div className="max-h-[70vh] overflow-auto">
         <table className="w-full min-w-[1520px] border-collapse text-left">
           <thead>
-            <tr className="border-b border-[#dfe3eb]">
+            <tr className="border-b-2 border-[#33475b]">
               {CREDIT_HISTORY_COLUMNS.map((column) => (
                 <th
                   key={column.key}
-                  className="sticky top-0 z-10 border-b border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]"
+                  className="sticky top-0 z-10 border-b-2 border-[#33475b] bg-[#eef3f8] px-4 py-3 text-[10px] font-black uppercase tracking-[0.14em] text-[#213343] shadow-[0_1px_0_rgba(33,51,67,0.08)]"
                 >
                   {column.sortKey ? (
                     <button
                       type="button"
                       onClick={() => toggleSort(column.sortKey as CreditHistorySortKey)}
-                      className="inline-flex items-center gap-1 hover:text-[#213343]"
+                      className="inline-flex items-center gap-1 font-black uppercase hover:text-[#00a4bd]"
                     >
                       {column.label}
                       {sort?.key === column.sortKey ? (
@@ -1027,14 +1028,24 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {groups.map((group) => (
+            {groups.map((group, groupIndex) => {
+              const isEvenGroup = groupIndex % 2 === 0;
+              const rowBg = isEvenGroup ? "bg-white" : "bg-[#f4f7fb]";
+              const rowHoverBg = isEvenGroup ? "hover:bg-[#eef6fa]" : "hover:bg-[#e8f1f7]";
+              const csCellBg = isEvenGroup ? "bg-[#eef3f8]" : "bg-[#e2ebf5]";
+              return (
               <Fragment key={group.csId ?? "__unassigned__"}>
                 {group.clients.map((row, rowIndex) => (
-                  <tr key={row.clientId} className="border-b border-[#edf1f5] last:border-b-0 hover:bg-[#f8fbfd]">
+                  <tr
+                    key={row.clientId}
+                    className={`border-b border-[#edf1f5] last:border-b-0 ${rowBg} ${rowHoverBg} ${
+                      rowIndex === 0 && groupIndex > 0 ? "border-t-4 border-t-[#33475b]" : ""
+                    }`}
+                  >
                     {rowIndex === 0 ? (
                       <td
                         rowSpan={group.clients.length}
-                        className="border-r border-[#edf1f5] bg-[#f8fbfd] px-4 py-4 align-top"
+                        className={`border-r-2 border-r-[#33475b]/40 ${csCellBg} px-4 py-4 align-top`}
                       >
                         <p className="text-sm font-black text-[#213343]">{group.csName}</p>
                         <p className="mt-1 text-xs font-bold text-[#516f90]">
@@ -1063,12 +1074,6 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                           </p>
                           <p className="text-[11px] font-semibold text-[#516f90]">
                             Ejec.: <strong className="text-[#213343]">{formatNumber(group.executingTotal)} CR</strong>
-                          </p>
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Rest.: <strong className="text-[#213343]">{formatNumber(group.remainingTotal)} CR</strong>
-                          </p>
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Eval.: <strong className="text-[#213343]">{formatNumber(group.evaluationTotal)} CR</strong>
                           </p>
                           <p className="text-[11px] font-semibold text-[#516f90]">
                             Compl.: <strong className="text-[#213343]">{formatNumber(group.completedTotal)} CR</strong>
@@ -1107,58 +1112,20 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.executingCredits)} CR
                     </td>
-                    <td className="px-4 py-4 text-sm font-black text-[#213343]">
-                      {formatNumber(row.remainingCredits)} CR
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.evaluationCredits)} CR
-                    </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.completedCredits)} CR
                     </td>
-                    <td className="px-4 py-4">
-                      {row.billing === "paquetes" ? (
-                        row.daysSinceKickoff === null ? (
-                          <span className="text-sm font-semibold text-[#99acc2]">Kickoff pendiente</span>
-                        ) : (
-                          <div>
-                            <p className="text-sm font-black text-[#213343]">
-                              {formatNumber(row.daysSinceKickoff)} días desde kickoff
-                            </p>
-                            {row.kickoffCompletedAt ? (
-                              <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
-                                Desde {formatDate(row.kickoffCompletedAt.slice(0, 10))}
-                              </p>
-                            ) : null}
-                          </div>
-                        )
-                      ) : row.daysUntilRenewal === null ? (
-                        <span className="text-sm font-semibold text-[#99acc2]">Sin fecha de renovación</span>
-                      ) : (
-                        <div>
-                          <p
-                            className={`text-sm font-black ${
-                              row.daysUntilRenewal < 0 ? "text-rose-600" : "text-[#213343]"
-                            }`}
-                          >
-                            {row.daysUntilRenewal < 0
-                              ? `Vencida hace ${formatNumber(Math.abs(row.daysUntilRenewal))} días`
-                              : row.daysUntilRenewal === 0
-                                ? "Renueva hoy"
-                                : `${formatNumber(row.daysUntilRenewal)} días para renovar`}
-                          </p>
-                          {row.renewalAt ? (
-                            <p className="mt-0.5 text-xs font-semibold text-[#516f90]">
-                              {row.daysUntilRenewal < 0 ? "Renovaba" : "Renueva"} el {formatDate(row.renewalAt)}
-                            </p>
-                          ) : null}
-                        </div>
-                      )}
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {formatDate(row.cycleStartAt)}
+                    </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {row.creditExpirationAt ? formatDate(row.creditExpirationAt) : "-"}
                     </td>
                   </tr>
                 ))}
               </Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
