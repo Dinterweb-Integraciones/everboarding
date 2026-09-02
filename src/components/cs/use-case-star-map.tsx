@@ -1,7 +1,8 @@
 "use client";
 
-import { Map as MapIcon, Search, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Map as MapIcon, Maximize2, Search, ZoomIn, ZoomOut, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { EmojiPicker } from "@/components/cs/emoji-picker";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,27 @@ export type RouteItem = { groupId: string; icon: string };
 
 export const DEFAULT_NODE_ICON = "🧩";
 export const MAX_MAP_NODES = 16;
+
+/** Deterministic per-id "randomness" so the star's irregularity stays stable across renders. */
+function hashSeed(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function jitterFor(id: string, salt: string, spread: number) {
+  const seed = hashSeed(`${id}:${salt}`);
+  return ((seed % 1000) / 1000 - 0.5) * 2 * spread;
+}
+
+const ZOOM_MIN = 0.55;
+const ZOOM_MAX = 2.4;
+
+function clampZoom(value: number) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+}
 
 type UseCaseStarMapProps = {
   clientName: string;
@@ -48,6 +70,39 @@ export function UseCaseStarMap({
   onIconChange,
 }: UseCaseStarMapProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOffsets, setDragOffsets] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragStartRef = useRef<{ groupId: string; pointerX: number; pointerY: number; moved: boolean } | null>(
+    null,
+  );
+  const panStartRef = useRef<{ pointerX: number; pointerY: number; panX: number; panY: number } | null>(null);
+  const dragRafRef = useRef<number | null>(null);
+  const pendingDragRef = useRef<{ groupId: string; x: number; y: number } | null>(null);
+  const panRafRef = useRef<number | null>(null);
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault();
+      setZoom((current) => clampZoom(current - event.deltaY * 0.0016));
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (dragRafRef.current !== null) cancelAnimationFrame(dragRafRef.current);
+      if (panRafRef.current !== null) cancelAnimationFrame(panRafRef.current);
+    },
+    [],
+  );
 
   const nodes = useMemo(
     () =>
@@ -73,6 +128,13 @@ export function UseCaseStarMap({
       .slice(0, 8);
   }, [candidateGroups, searchTerm]);
 
+  const orderedNodes = useMemo(() => {
+    if (!draggingId) return nodes;
+    const dragged = nodes.filter((node) => node.group.id === draggingId);
+    const rest = nodes.filter((node) => node.group.id !== draggingId);
+    return [...rest, ...dragged];
+  }, [draggingId, nodes]);
+
   const nodeIds = useMemo(() => new Set(nodes.map((node) => node.group.id)), [nodes]);
   const relationLines = useMemo(() => {
     const seen = new Set<string>();
@@ -97,14 +159,111 @@ export function UseCaseStarMap({
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     nodes.forEach((node, index) => {
-      const angle = ((-90 + (360 / Math.max(n, 1)) * index) * Math.PI) / 180;
+      const baseAngleDeg = -90 + (360 / Math.max(n, 1)) * index;
+      const angle = ((baseAngleDeg + jitterFor(node.group.id, "angle", 12)) * Math.PI) / 180;
+      const jitteredRadius = radius + jitterFor(node.group.id, "radius", 34);
       map.set(node.group.id, {
-        x: cx + radius * Math.cos(angle),
-        y: cy + radius * Math.sin(angle),
+        x: cx + jitteredRadius * Math.cos(angle),
+        y: cy + jitteredRadius * Math.sin(angle),
       });
     });
     return map;
   }, [n, nodes, radius]);
+
+  function pointerToSvgPoint(clientX: number, clientY: number) {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    const viewSize = 800 / zoom;
+    return {
+      x: (clientX - rect.left) * (viewSize / rect.width),
+      y: (clientY - rect.top) * (viewSize / rect.height),
+    };
+  }
+
+  function handleNodePointerDown(groupId: string, event: ReactPointerEvent<SVGGElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = pointerToSvgPoint(event.clientX, event.clientY);
+    dragStartRef.current = { groupId, pointerX: point.x, pointerY: point.y, moved: false };
+    setDraggingId(groupId);
+  }
+
+  function handleNodePointerMove(groupId: string, event: ReactPointerEvent<SVGGElement>) {
+    const start = dragStartRef.current;
+    if (!start || start.groupId !== groupId) return;
+    const point = pointerToSvgPoint(event.clientX, event.clientY);
+    const dx = point.x - start.pointerX;
+    const dy = point.y - start.pointerY;
+    if (Math.hypot(dx, dy) > 3) start.moved = true;
+    pendingDragRef.current = { groupId, x: dx, y: dy };
+    if (dragRafRef.current === null) {
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        const pending = pendingDragRef.current;
+        if (!pending) return;
+        setDragOffsets((prev) => {
+          const next = new Map(prev);
+          next.set(pending.groupId, { x: pending.x, y: pending.y });
+          return next;
+        });
+      });
+    }
+  }
+
+  function handleNodePointerUp(groupId: string, event: ReactPointerEvent<SVGGElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = null;
+    }
+    pendingDragRef.current = null;
+    const wasClick = !dragStartRef.current?.moved;
+    dragStartRef.current = null;
+    setDraggingId(null);
+    setDragOffsets((prev) => {
+      const next = new Map(prev);
+      next.delete(groupId);
+      return next;
+    });
+    if (wasClick) onSelectGroup(groupId);
+  }
+
+  function handleCanvasPointerDown(event: ReactPointerEvent<SVGRectElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panStartRef.current = { pointerX: event.clientX, pointerY: event.clientY, panX: pan.x, panY: pan.y };
+    setIsPanning(true);
+  }
+
+  function handleCanvasPointerMove(event: ReactPointerEvent<SVGRectElement>) {
+    if (!panStartRef.current) return;
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const scale = 800 / zoom / rect.width;
+    pendingPanRef.current = {
+      x: panStartRef.current.panX + (event.clientX - panStartRef.current.pointerX) * scale,
+      y: panStartRef.current.panY + (event.clientY - panStartRef.current.pointerY) * scale,
+    };
+    if (panRafRef.current === null) {
+      panRafRef.current = requestAnimationFrame(() => {
+        panRafRef.current = null;
+        if (pendingPanRef.current) setPan(pendingPanRef.current);
+      });
+    }
+  }
+
+  function handleCanvasPointerUp(event: ReactPointerEvent<SVGRectElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (panRafRef.current !== null) {
+      cancelAnimationFrame(panRafRef.current);
+      panRafRef.current = null;
+    }
+    pendingPanRef.current = null;
+    panStartRef.current = null;
+    setIsPanning(false);
+  }
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[340px_1fr]">
@@ -216,31 +375,86 @@ export function UseCaseStarMap({
             </p>
           </div>
         ) : (
-          <svg
-            viewBox="0 0 800 800"
-            role="img"
-            aria-label={`Mapa de casos de uso de ${clientName}`}
-            className="w-full max-w-[640px]"
-          >
+          <div className="relative w-full overflow-hidden rounded-2xl">
+            <div className="absolute right-2 top-2 z-10 flex gap-1 rounded-full border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setZoom((current) => clampZoom(current - 0.2))}
+                aria-label="Alejar"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ZoomOut className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 0, y: 0 });
+                }}
+                aria-label="Restablecer zoom"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoom((current) => clampZoom(current + 0.2))}
+                aria-label="Acercar"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              >
+                <ZoomIn className="h-4 w-4" />
+              </button>
+            </div>
+            <svg
+              ref={svgRef}
+              viewBox={(() => {
+                const size = 800 / zoom;
+                const offset = (800 - size) / 2;
+                return `${offset - pan.x} ${offset - pan.y} ${size} ${size}`;
+              })()}
+              role="img"
+              aria-label={`Mapa de casos de uso de ${clientName}`}
+              className="w-full touch-none"
+            >
             <defs>
               <filter id="star-node-shadow" x="-40%" y="-40%" width="180%" height="180%">
                 <feDropShadow dx="0" dy="3" stdDeviation="5" floodColor="#0f172a" floodOpacity="0.16" />
               </filter>
             </defs>
 
+            <rect
+              x={0}
+              y={0}
+              width={800}
+              height={800}
+              fill="transparent"
+              onPointerDown={handleCanvasPointerDown}
+              onPointerMove={handleCanvasPointerMove}
+              onPointerUp={handleCanvasPointerUp}
+              onPointerCancel={handleCanvasPointerUp}
+              className={isPanning ? "cursor-grabbing" : "cursor-grab"}
+            />
             <g>
               {nodes.map(({ group }) => {
                 const p = positions.get(group.id);
                 if (!p) return null;
+                const offset = dragOffsets.get(group.id);
+                const x2 = p.x + (offset?.x ?? 0);
+                const y2 = p.y + (offset?.y ?? 0);
                 return (
                   <line
                     key={group.id}
                     x1={cx}
                     y1={cy}
-                    x2={p.x}
-                    y2={p.y}
+                    x2={x2}
+                    y2={y2}
                     stroke="#cbd5e1"
                     strokeWidth={2.5}
+                    style={
+                      draggingId === group.id
+                        ? undefined
+                        : { transition: "x2 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), y2 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)" }
+                    }
                   />
                 );
               })}
@@ -248,25 +462,35 @@ export function UseCaseStarMap({
                 const pa = positions.get(pair.a);
                 const pb = positions.get(pair.b);
                 if (!pa || !pb) return null;
+                const offsetA = dragOffsets.get(pair.a);
+                const offsetB = dragOffsets.get(pair.b);
                 return (
                   <line
                     key={`${pair.a}-${pair.b}`}
-                    x1={pa.x}
-                    y1={pa.y}
-                    x2={pb.x}
-                    y2={pb.y}
+                    x1={pa.x + (offsetA?.x ?? 0)}
+                    y1={pa.y + (offsetA?.y ?? 0)}
+                    x2={pb.x + (offsetB?.x ?? 0)}
+                    y2={pb.y + (offsetB?.y ?? 0)}
                     stroke="#a1a1aa"
                     strokeWidth={1.5}
                     strokeDasharray="7 6"
+                    style={
+                      draggingId === pair.a || draggingId === pair.b
+                        ? undefined
+                        : { transition: "x1 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), y1 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), x2 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), y2 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)" }
+                    }
                   />
                 );
               })}
             </g>
 
             <g>
-              {nodes.map(({ item, group }) => {
+              {orderedNodes.map(({ item, group }) => {
                 const p = positions.get(group.id);
                 if (!p) return null;
+                const offset = dragOffsets.get(group.id);
+                const x = p.x + (offset?.x ?? 0);
+                const y = p.y + (offset?.y ?? 0);
                 const status: ClientUseCaseDisplayStatus = statusByGroupId.get(group.id) ?? "untouched";
                 const statusColors = CLIENT_USE_CASE_STATUS_COLORS[status];
                 const selected = selectedGroupId === group.id;
@@ -274,9 +498,17 @@ export function UseCaseStarMap({
                 return (
                   <g
                     key={group.id}
-                    transform={`translate(${p.x} ${p.y})`}
-                    onClick={() => onSelectGroup(group.id)}
-                    className="cursor-pointer outline-none"
+                    transform={`translate(${x} ${y})`}
+                    style={
+                      draggingId === group.id
+                        ? undefined
+                        : { transition: "transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)" }
+                    }
+                    onPointerDown={(event) => handleNodePointerDown(group.id, event)}
+                    onPointerMove={(event) => handleNodePointerMove(group.id, event)}
+                    onPointerUp={(event) => handleNodePointerUp(group.id, event)}
+                    onPointerCancel={(event) => handleNodePointerUp(group.id, event)}
+                    className={cn("outline-none", draggingId === group.id ? "cursor-grabbing" : "cursor-grab")}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(event) => {
@@ -331,7 +563,8 @@ export function UseCaseStarMap({
                 </text>
               ))}
             </g>
-          </svg>
+            </svg>
+          </div>
         )}
         <p className="max-w-[52ch] text-center text-xs leading-5 text-slate-500">
           Línea continua: caso incluido en el mapa · línea punteada: relación real entre dos casos de uso del
