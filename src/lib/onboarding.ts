@@ -291,6 +291,28 @@ export function isKickoffInitiative(initiative: Pick<InitiativeRecord, "title">)
   return normalizeInitiativeTitle(initiative.title).includes("kickoff");
 }
 
+export function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
+  const normalizedQuery = normalizeCatalogText(query);
+  if (!normalizedQuery) return true;
+
+  const searchableText = [
+    group.name,
+    group.useCaseCode,
+    group.preview,
+    group.description,
+    group.completionOutcome,
+    group.successMilestone,
+    group.modalCategory,
+    group.displayBadge,
+    ...group.tags,
+    ...group.items.map((item) => `${item.label} ${item.category}`),
+  ]
+    .map((value) => normalizeCatalogText(richTextToPlainText(value)))
+    .join(" ");
+
+  return searchableText.includes(normalizedQuery);
+}
+
 export function normalizeCatalogText(value: string | null | undefined) {
   return (value ?? "")
     .normalize("NFD")

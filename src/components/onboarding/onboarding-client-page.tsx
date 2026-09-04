@@ -65,6 +65,7 @@ import {
   getPlanCadenceLabel,
   getPlanPeriodLabel,
   isKickoffInitiative,
+  matchesCatalogGroupSearch,
   normalizeCatalogText,
   shouldRequireNorthStarDraft,
   setEvaluationValidationLabel,
@@ -89,27 +90,6 @@ type OnboardingClientPageProps = {
   userId: string;
   canSharePublicLinks: boolean;
 };
-
-function matchesCatalogGroupSearch(group: CatalogModalGroup, query: string) {
-  const normalizedQuery = normalizeCatalogText(query);
-  if (!normalizedQuery) return true;
-
-  const searchableText = [
-    group.name,
-    group.preview,
-    group.description,
-    group.completionOutcome,
-    group.successMilestone,
-    group.modalCategory,
-    group.displayBadge,
-    ...group.tags,
-    ...group.items.map((item) => `${item.label} ${item.category}`),
-  ]
-    .map((value) => normalizeCatalogText(richTextToPlainText(value)))
-    .join(" ");
-
-  return searchableText.includes(normalizedQuery);
-}
 
 function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
   return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
@@ -4541,7 +4521,7 @@ export function OnboardingClientPage({
                             type="search"
                             value={catalogSearchQuery}
                             onChange={(event) => setCatalogSearchQuery(event.target.value)}
-                            placeholder="Buscar grupo, caso de uso o tarea..."
+                            placeholder="Buscar grupo, codigo, caso de uso o tarea..."
                             className="h-11 w-full rounded-[8px] border border-[#cbd6e2] bg-[#fbfcfe] pl-11 pr-4 text-[13px] text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#14b8a6] focus:bg-white"
                           />
                         </label>
@@ -4607,7 +4587,7 @@ export function OnboardingClientPage({
                             style={{
                               display: "-webkit-box",
                               WebkitBoxOrient: "vertical",
-                              WebkitLineClamp: 2,
+                              WebkitLineClamp: 3,
                               overflow: "hidden",
                             }}
                           >
