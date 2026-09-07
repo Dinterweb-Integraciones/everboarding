@@ -143,6 +143,8 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
         (label) => label === "Bonificado comercialmente" || label === "Obsequiado comercialmente",
       ),
       description: initiative.description ?? "",
+      completionOutcome: initiative.completion_outcome ?? "",
+      successMilestone: initiative.success_milestone ?? "",
       estStartDate: initiative.est_start_date ?? "",
       estEndDate: initiative.est_end_date ?? "",
       sortOrder: initiative.sort_order,

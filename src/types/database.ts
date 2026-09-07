@@ -633,6 +633,8 @@ export type Database = {
           labels: string[];
           status: Database["public"]["Enums"]["initiative_status"];
           description: string | null;
+          completion_outcome: string | null;
+          success_milestone: string | null;
           owner_client: string | null;
           owner_csm: string | null;
           est_start_date: string | null;
@@ -655,6 +657,8 @@ export type Database = {
           labels?: string[];
           status?: Database["public"]["Enums"]["initiative_status"];
           description?: string | null;
+          completion_outcome?: string | null;
+          success_milestone?: string | null;
           owner_client?: string | null;
           owner_csm?: string | null;
           est_start_date?: string | null;
@@ -677,6 +681,8 @@ export type Database = {
           labels?: string[];
           status?: Database["public"]["Enums"]["initiative_status"];
           description?: string | null;
+          completion_outcome?: string | null;
+          success_milestone?: string | null;
           owner_client?: string | null;
           owner_csm?: string | null;
           est_start_date?: string | null;

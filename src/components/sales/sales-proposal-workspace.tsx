@@ -630,11 +630,14 @@ function alignInitiativesToProposalStartDate(
     backlog: 3,
   };
 
+  const backlogAnchorDate = addCalendarDays(parseCalendarDate(proposalStartDate), 28);
+
   nextInitiatives
     .filter((initiative) => initiative.status === "backlog")
     .forEach((initiative) => {
-      initiative.estStartDate = "";
-      initiative.estEndDate = "";
+      const durationDays = getInitiativeDurationDays(initiative);
+      initiative.estStartDate = toIsoDate(backlogAnchorDate);
+      initiative.estEndDate = toIsoDate(addCalendarDays(backlogAnchorDate, durationDays - 1));
     });
 
   nextInitiatives
@@ -983,12 +986,16 @@ export function SalesProposalWorkspace({
               id: initiative.id,
               title: initiative.title,
               description: getPlainInitiativeDescription(initiative.description, ""),
-              successMilestone: matchedCatalogGroup
-                ? richTextToPlainText(matchedCatalogGroup.successMilestone)
-                : "",
-              completionOutcome: matchedCatalogGroup
-                ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
-                : "",
+              successMilestone: initiative.successMilestone
+                ? richTextToPlainText(initiative.successMilestone)
+                : matchedCatalogGroup
+                  ? richTextToPlainText(matchedCatalogGroup.successMilestone)
+                  : "",
+              completionOutcome: initiative.completionOutcome
+                ? richTextToPlainText(initiative.completionOutcome)
+                : matchedCatalogGroup
+                  ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
+                  : "",
               credits: calculateSalesInitiativeCredits(initiative),
               status: initiative.status,
               dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
@@ -1655,6 +1662,8 @@ function createInitiativeFromGroup(
   next.title = group.name;
   next.type = group.modalCategory || group.name;
   next.description = getCatalogGroupInitiativeDescription(group);
+    next.completionOutcome = group.completionOutcome || "";
+    next.successMilestone = group.successMilestone || "";
     next.subitems = group.items.length
       ? group.items.map((item) => createProposalSubitemFromCatalog(item))
       : [
@@ -3873,6 +3882,7 @@ function mergeRecommendedGroups(
                                 width: `${Math.max(previewSpan * timelineRows.dayWidth - 4, timelineRows.dayWidth * 6)}px`,
                                 opacity: ganttDrag?.initiativeId === row.initiative.id ? 0.92 : 1,
                               }}
+                              title={`${row.initiative.title} · ${formatDateRange(baseStart, baseEnd)}`}
                             >
                               <div
                                 onPointerDown={(event) => {
@@ -3889,7 +3899,7 @@ function mergeRecommendedGroups(
                                 }}
                                 onDoubleClick={() => openInitiativeEditor(row.initiative)}
                                 className="absolute inset-y-0 left-3 right-3 z-0 flex cursor-grab items-center justify-center rounded-[3px] px-1 text-center active:cursor-grabbing"
-                                title="Arrastra para mover fechas. Doble clic para editar."
+                                title={`${row.initiative.title} · ${formatDateRange(baseStart, baseEnd)} — Arrastra para mover fechas. Doble clic para editar.`}
                               >
                                 <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
                               </div>
@@ -4030,12 +4040,12 @@ function mergeRecommendedGroups(
                         },
                         {
                           label: "Responsabilidades del cliente",
-                          value: summaryCatalogGroup?.completionOutcome || "",
+                          value: initiative.completionOutcome || summaryCatalogGroup?.completionOutcome || "",
                           fallback: "Sin resultado definido.",
                         },
                         {
                           label: "Criterio de Éxito",
-                          value: summaryCatalogGroup?.successMilestone || "",
+                          value: initiative.successMilestone || summaryCatalogGroup?.successMilestone || "",
                           fallback: "Sin criterio definido.",
                         },
                       ];
@@ -4985,10 +4995,12 @@ function mergeRecommendedGroups(
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
                   Responsabilidades del cliente
                 </p>
-                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                  <RichTextDisplay
-                    value={catalogGroupForDraft?.completionOutcome ?? ""}
-                    fallback="Sin responsabilidades del cliente definidas."
+                <div className="mt-3">
+                  <RichTextTextarea
+                    rows={3}
+                    value={initiativeDraft.completionOutcome || catalogGroupForDraft?.completionOutcome || ""}
+                    onChange={(value) => updateInitiativeDraft("completionOutcome", value)}
+                    placeholder="Describe lo que el cliente debe completar de su lado."
                     className="text-[13px] leading-relaxed text-[#33475b]"
                   />
                 </div>
@@ -4998,10 +5010,12 @@ function mergeRecommendedGroups(
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
                   Criterio de Éxito
                 </p>
-                <div className="mt-3 rounded-[6px] border border-[#dfe3eb] bg-white p-5 shadow-sm">
-                  <RichTextDisplay
-                    value={catalogGroupForDraft?.successMilestone ?? ""}
-                    fallback="Sin criterio de éxito definido."
+                <div className="mt-3">
+                  <RichTextTextarea
+                    rows={3}
+                    value={initiativeDraft.successMilestone || catalogGroupForDraft?.successMilestone || ""}
+                    onChange={(value) => updateInitiativeDraft("successMilestone", value)}
+                    placeholder="Describe como se mide el exito de este caso de uso."
                     className="text-[13px] leading-relaxed text-[#33475b]"
                   />
                 </div>

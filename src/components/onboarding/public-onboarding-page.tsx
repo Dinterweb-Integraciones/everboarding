@@ -391,12 +391,16 @@ export function PublicOnboardingPage({
               id: initiative.id,
               title: initiative.title,
               description: getPlainInitiativeDescription(initiative.description, ""),
-              successMilestone: matchedCatalogGroup
-                ? richTextToPlainText(matchedCatalogGroup.successMilestone)
-                : "",
-              completionOutcome: matchedCatalogGroup
-                ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
-                : "",
+              successMilestone: initiative.success_milestone
+                ? richTextToPlainText(initiative.success_milestone)
+                : matchedCatalogGroup
+                  ? richTextToPlainText(matchedCatalogGroup.successMilestone)
+                  : "",
+              completionOutcome: initiative.completion_outcome
+                ? richTextToPlainText(initiative.completion_outcome)
+                : matchedCatalogGroup
+                  ? richTextToPlainText(matchedCatalogGroup.completionOutcome)
+                  : "",
               credits: initiative.credits,
               status: initiative.status,
               dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
@@ -2381,7 +2385,7 @@ export function PublicOnboardingPage({
                   Criterio de éxito
                 </p>
                 <RichTextDisplay
-                  value={activeInitiativeCatalogGroup?.successMilestone ?? ""}
+                  value={activeInitiativePreview.success_milestone || activeInitiativeCatalogGroup?.successMilestone || ""}
                   fallback="Sin criterio de éxito definido."
                   className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
                 />
@@ -2392,7 +2396,7 @@ export function PublicOnboardingPage({
                   Responsabilidades del cliente
                 </p>
                 <RichTextDisplay
-                  value={activeInitiativeCatalogGroup?.completionOutcome ?? ""}
+                  value={activeInitiativePreview.completion_outcome || activeInitiativeCatalogGroup?.completionOutcome || ""}
                   fallback="Sin responsabilidades del cliente definidas."
                   className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
                 />

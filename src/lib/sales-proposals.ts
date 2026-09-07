@@ -45,6 +45,8 @@ export type SalesProposalInitiativeDraft = {
   validationStatus: "reviewing" | "validated" | null;
   commerciallyWaived: boolean;
   description: string;
+  completionOutcome: string;
+  successMilestone: string;
   estStartDate: string;
   estEndDate: string;
   sortOrder: number;
@@ -123,6 +125,8 @@ type CompactSalesProposalInitiativeSnapshot = [
   subitems?: CompactSalesProposalSubitemSnapshot[],
   validationStatus?: "reviewing" | "validated" | null,
   commerciallyWaived?: number | boolean,
+  completionOutcome?: string | null,
+  successMilestone?: string | null,
 ];
 
 type CompactSalesProposalSnapshot = {
@@ -178,6 +182,8 @@ function createCompactSalesProposalSnapshot(
       ]),
       initiative.validationStatus,
       initiative.commerciallyWaived ? 1 : 0,
+      initiative.completionOutcome || null,
+      initiative.successMilestone || null,
     ]),
   };
 }
@@ -487,6 +493,8 @@ export function createEmptySalesInitiative(status: InitiativeStatus): SalesPropo
     status,
     validationStatus: null,
     description: "",
+    completionOutcome: "",
+    successMilestone: "",
     estStartDate: "",
     estEndDate: "",
     sortOrder: 0,
@@ -548,6 +556,8 @@ function normalizeSalesProposalInitiativeDraft(
         initiative[10] === "reviewing" || initiative[10] === "validated" ? initiative[10] : null,
       commerciallyWaived: Boolean(initiative[11]),
       description: initiative[4] || "",
+      completionOutcome: initiative[12] || "",
+      successMilestone: initiative[13] || "",
       estStartDate: initiative[5] || "",
       estEndDate: initiative[6] || "",
       sortOrder: safeParseNumber(initiative[7] ?? initiativeIndex),
@@ -567,6 +577,8 @@ function normalizeSalesProposalInitiativeDraft(
         : null,
     commerciallyWaived: Boolean(initiative.commerciallyWaived),
     description: initiative.description || "",
+    completionOutcome: initiative.completionOutcome || "",
+    successMilestone: initiative.successMilestone || "",
     estStartDate: initiative.estStartDate || "",
     estEndDate: initiative.estEndDate || "",
     sortOrder: safeParseNumber(initiative.sortOrder ?? initiativeIndex),

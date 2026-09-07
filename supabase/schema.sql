@@ -539,6 +539,8 @@ create table if not exists public.onboarding_initiatives (
   labels text[] not null default '{}'::text[],
   status public.initiative_status not null default 'backlog',
   description text,
+  completion_outcome text,
+  success_milestone text,
   owner_client text,
   owner_csm text,
   est_start_date date,
@@ -570,7 +572,9 @@ create table if not exists public.onboarding_initiative_subitems (
 
 alter table public.onboarding_initiatives
 add column if not exists labels text[] not null default '{}'::text[],
-add column if not exists north_star_history_id uuid references public.onboarding_north_star_history(id) on delete set null;
+add column if not exists north_star_history_id uuid references public.onboarding_north_star_history(id) on delete set null,
+add column if not exists completion_outcome text,
+add column if not exists success_milestone text;
 
 alter table public.onboarding_initiative_subitems
 add column if not exists status public.initiative_task_status not null default 'pending',

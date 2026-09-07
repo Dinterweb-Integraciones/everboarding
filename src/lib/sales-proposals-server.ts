@@ -1291,6 +1291,8 @@ async function activateSalesProposalWithPaymentContext(
           type: initiative.type || null,
           status: initiative.status,
           description: initiative.description || null,
+          completion_outcome: initiative.completionOutcome || null,
+          success_milestone: initiative.successMilestone || null,
           est_start_date: initiative.estStartDate || null,
           est_end_date: initiative.estEndDate || null,
           date_planned: proposal.startDate || null,

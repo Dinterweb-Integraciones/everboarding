@@ -135,6 +135,8 @@ export type OnboardingSnapshot = {
   catalogGroupCategories: CreditCatalogGroupCategory[];
   catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
+  catalogGroupClusters: CreditCatalogGroupCluster[];
+  catalogGroupClusterLinks: CreditCatalogGroupClusterLink[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
   northStarHistory: NorthStarHistoryRecord[];
@@ -211,6 +213,8 @@ export type InitiativeEditorDraft = {
   labels: string[];
   status: InitiativeStatus;
   description: string;
+  completionOutcome: string;
+  successMilestone: string;
   ownerClient: string;
   ownerCSM: string;
   estStartDate: string;
@@ -484,6 +488,8 @@ export function createEmptyDraft(status: InitiativeStatus = "backlog"): Initiati
     labels: [],
     status,
     description: "",
+    completionOutcome: "",
+    successMilestone: "",
     ownerClient: "",
     ownerCSM: "",
     estStartDate: "",

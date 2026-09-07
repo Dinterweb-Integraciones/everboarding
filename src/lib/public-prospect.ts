@@ -122,6 +122,8 @@ export function mapProposalInitiativeToPublicRecord(
     ).concat(initiative.commerciallyWaived ? ["Bonificado comercialmente"] : []),
     status,
     description: initiative.description,
+    completion_outcome: initiative.completionOutcome || null,
+    success_milestone: initiative.successMilestone || null,
     owner_client: null,
     owner_csm: null,
     est_start_date: initiative.estStartDate || null,

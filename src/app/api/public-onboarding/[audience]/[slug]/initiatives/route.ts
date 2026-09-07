@@ -255,6 +255,8 @@ export async function POST(request: Request, context: RouteContext) {
         status: "backlog" as const,
         validationStatus: null,
         description: input.description || "",
+        completionOutcome: "",
+        successMilestone: "",
         estStartDate: "",
         estEndDate: "",
         sortOrder: nextSortOrder,

@@ -1430,6 +1430,8 @@ export function OnboardingClientPage({
       labels: initiative.labels ?? [],
       status: initiative.status,
       description: getPlainInitiativeDescription(initiative.description, ""),
+      completionOutcome: getPlainInitiativeDescription(initiative.completion_outcome, ""),
+      successMilestone: getPlainInitiativeDescription(initiative.success_milestone, ""),
       ownerClient: initiative.owner_client ?? "",
       ownerCSM: initiative.owner_csm ?? "",
       estStartDate: initiative.est_start_date ?? "",
@@ -1539,6 +1541,8 @@ export function OnboardingClientPage({
         type: group.modalCategory || group.name,
         status,
         description: getPlainInitiativeDescription(group.description, "") || null,
+        completion_outcome: getPlainInitiativeDescription(group.completionOutcome, "") || null,
+        success_milestone: getPlainInitiativeDescription(group.successMilestone, "") || null,
         owner_client: null,
         owner_csm: null,
         est_start_date: options?.estStartDate ?? null,
@@ -2328,6 +2332,8 @@ export function OnboardingClientPage({
           labels: draft.labels,
           status: draft.status,
           description: getPlainInitiativeDescription(draft.description, "") || null,
+          completion_outcome: getPlainInitiativeDescription(draft.completionOutcome, "") || null,
+          success_milestone: getPlainInitiativeDescription(draft.successMilestone, "") || null,
           owner_client: draft.ownerClient.trim() || null,
           owner_csm: draft.ownerCSM.trim() || null,
           est_start_date: draft.estStartDate || null,
@@ -2404,6 +2410,8 @@ export function OnboardingClientPage({
         labels: draft.labels,
         status: draft.status,
         description: getPlainInitiativeDescription(draft.description, "") || null,
+        completion_outcome: getPlainInitiativeDescription(draft.completionOutcome, "") || null,
+        success_milestone: getPlainInitiativeDescription(draft.successMilestone, "") || null,
         owner_client: draft.ownerClient.trim() || null,
         owner_csm: draft.ownerCSM.trim() || null,
         est_start_date: draft.estStartDate || null,
@@ -2697,6 +2705,8 @@ export function OnboardingClientPage({
           labels: draft.labels,
           status: draft.status,
           description: draft.description,
+          completionOutcome: draft.completionOutcome,
+          successMilestone: draft.successMilestone,
           ownerClient: draft.ownerClient,
           ownerCSM: draft.ownerCSM,
           estStartDate: draft.estStartDate,
@@ -2711,6 +2721,8 @@ export function OnboardingClientPage({
           labels: currentEditingInitiative?.labels ?? [],
           status: currentEditingInitiative?.status ?? "backlog",
           description: getPlainInitiativeDescription(currentEditingInitiative?.description, ""),
+          completionOutcome: getPlainInitiativeDescription(currentEditingInitiative?.completion_outcome, ""),
+          successMilestone: getPlainInitiativeDescription(currentEditingInitiative?.success_milestone, ""),
           ownerClient: currentEditingInitiative?.owner_client ?? "",
           ownerCSM: currentEditingInitiative?.owner_csm ?? "",
           estStartDate: currentEditingInitiative?.est_start_date ?? "",
@@ -2731,6 +2743,8 @@ export function OnboardingClientPage({
       : Boolean(
           draft.title.trim() ||
             draft.description.trim() ||
+            draft.completionOutcome.trim() ||
+            draft.successMilestone.trim() ||
             draft.ownerClient.trim() ||
             draft.ownerCSM.trim() ||
             draft.estStartDate ||
@@ -3623,6 +3637,7 @@ export function OnboardingClientPage({
                                 width: `${Math.max(previewSpan * ganttTimeline.dayWidth - 4, ganttTimeline.dayWidth * 6)}px`,
                                 opacity: ganttDrag?.initiativeId === row.initiative.id ? 0.92 : 1,
                               }}
+                              title={`${row.initiative.title} · ${formatDateRange(baseStart, baseEnd)}`}
                             >
                               <div
                                 onPointerDown={(event) => {
@@ -3639,7 +3654,9 @@ export function OnboardingClientPage({
                                 }}
                                 onDoubleClick={() => openEditModal(row.initiative)}
                                 className="absolute inset-y-0 left-3 right-3 z-0 flex cursor-grab items-center justify-center rounded-[3px] px-1 text-center active:cursor-grabbing"
-                                title={writable ? "Arrastra para mover fechas. Doble clic para editar." : "Doble clic para ver detalle."}
+                                title={`${row.initiative.title} · ${formatDateRange(baseStart, baseEnd)}${
+                                  writable ? " — Arrastra para mover fechas. Doble clic para editar." : " — Doble clic para ver detalle."
+                                }`}
                               >
                                 <span className="truncate text-[8px] font-semibold leading-none">{row.initiative.title}</span>
                               </div>
@@ -3787,12 +3804,12 @@ export function OnboardingClientPage({
                       },
                       {
                         label: "Responsabilidades del cliente",
-                        value: summaryCatalogGroup?.completionOutcome || "",
+                        value: initiative.completion_outcome || summaryCatalogGroup?.completionOutcome || "",
                         fallback: "Sin resultado definido.",
                       },
                       {
                         label: "Criterio de Éxito",
-                        value: summaryCatalogGroup?.successMilestone || "",
+                        value: initiative.success_milestone || summaryCatalogGroup?.successMilestone || "",
                         fallback: "Sin criterio definido.",
                       },
                     ];
@@ -5129,22 +5146,52 @@ export function OnboardingClientPage({
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                     Criterio de éxito
                   </p>
-                  <RichTextDisplay
-                    value={currentCatalogGroup?.successMilestone ?? ""}
-                    fallback="Sin criterio de éxito definido."
-                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                  />
+                  {writable ? (
+                    <Textarea
+                      rows={3}
+                      value={draft.successMilestone}
+                      onChange={(event) => setDraft({ ...draft, successMilestone: event.target.value })}
+                      placeholder={
+                        currentCatalogGroup
+                          ? richTextToPlainText(currentCatalogGroup.successMilestone)
+                          : "Describe como se mide el exito de este caso de uso."
+                      }
+                      className="mt-3 resize-y rounded-none border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] shadow-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
+                    />
+                  ) : (
+                    <RichTextDisplay
+                      value={draft.successMilestone || currentCatalogGroup?.successMilestone || ""}
+                      fallback="Sin criterio de éxito definido."
+                      className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  )}
                 </section>
 
                 <section className="min-w-0 rounded-[4px] border border-[#dfe3eb] bg-[#fcfcfc] p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
                     Responsabilidades del cliente
                   </p>
-                  <RichTextDisplay
-                    value={currentCatalogGroup?.completionOutcome ?? ""}
-                    fallback="Sin responsabilidades del cliente definidas."
-                    className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
-                  />
+                  {writable ? (
+                    <Textarea
+                      rows={3}
+                      value={draft.completionOutcome}
+                      onChange={(event) => setDraft({ ...draft, completionOutcome: event.target.value })}
+                      placeholder={
+                        currentCatalogGroup
+                          ? richTextToPlainText(currentCatalogGroup.completionOutcome)
+                          : "Describe lo que el cliente debe completar de su lado."
+                      }
+                      className="mt-3 resize-y rounded-none border-[#cbd6e2] bg-white px-4 py-3 text-[13px] leading-6 text-[#33475b] shadow-none"
+                      style={{ borderRadius: 0, boxShadow: "none" }}
+                    />
+                  ) : (
+                    <RichTextDisplay
+                      value={draft.completionOutcome || currentCatalogGroup?.completionOutcome || ""}
+                      fallback="Sin responsabilidades del cliente definidas."
+                      className="mt-3 text-[13px] leading-relaxed text-[#33475b]"
+                    />
+                  )}
                 </section>
 
                 <section className="rounded-[4px] border border-[#dfe3eb] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
