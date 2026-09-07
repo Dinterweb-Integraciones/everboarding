@@ -19,6 +19,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
   contracted_credits: number;
   current_cycle_start_at: string;
+  current_cycle_end_at: string | null;
   credit_expiration_at: string | null;
 };
 
@@ -709,7 +710,7 @@ export default async function ReportsPage() {
     const latestGrant = latestGrantByClient.get(row.client_id);
     const currentCycleStartAt =
       latestPaidCycleStarts.get(row.client_id) ?? latestGrant?.grant_date ?? isoDateDaysAgo(30);
-    const creditExpirationAt = row.billing === "paquetes" ? latestGrant?.expires_at ?? null : null;
+    const creditExpirationAt = latestGrant?.expires_at ?? null;
 
     return {
       ...row,
@@ -726,6 +727,7 @@ export default async function ReportsPage() {
       validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
       contracted_credits: contractedCredits,
       current_cycle_start_at: currentCycleStartAt,
+      current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
       credit_expiration_at: creditExpirationAt,
     };
   }) satisfies ClientHealthReportRow[];

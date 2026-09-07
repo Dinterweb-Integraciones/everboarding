@@ -39,6 +39,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
   contracted_credits: number;
   current_cycle_start_at: string;
+  current_cycle_end_at: string | null;
   credit_expiration_at: string | null;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
@@ -105,10 +106,11 @@ type CreditHistoryReportRow = {
   billing: "paquetes" | "recurrencia";
   totalContractedCredits: number;
   availableCredits: number;
-  planningCredits: number;
-  executingCredits: number;
+  projectedNextMonthCredits: number;
+  committedCredits: number;
   completedCredits: number;
   cycleStartAt: string;
+  cycleEndAt: string | null;
   creditExpirationAt: string | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
@@ -181,6 +183,17 @@ function InfoTooltip({ children }: { children: ReactNode }) {
       </span>
     </span>
   );
+}
+
+function getElapsedCalendarDays(value: string | null) {
+  if (!value) return null;
+
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((todayStart.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(value: string) {
@@ -349,6 +362,7 @@ export function ReportsPanel({
         const availableCredits = Number(row.credits_remaining) || 0;
         const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
         const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
+        const daysElapsedInCycle = Math.max(1, getElapsedCalendarDays(row.current_cycle_start_at) ?? 1);
 
         return {
           clientId: row.client_id,
@@ -361,10 +375,11 @@ export function ReportsPanel({
               ? grantedCreditsByClient.get(row.client_id) ?? 0
               : row.contracted_credits,
           availableCredits,
-          planningCredits,
-          executingCredits,
+          projectedNextMonthCredits: Math.round((availableCredits / daysElapsedInCycle) * 30),
+          committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
+          cycleEndAt: row.current_cycle_end_at,
           creditExpirationAt: row.credit_expiration_at,
         };
       })
@@ -835,21 +850,22 @@ export function ReportsPanel({
 type CreditHistorySortKey =
   | "totalContractedCredits"
   | "availableCredits"
-  | "planningCredits"
-  | "executingCredits"
+  | "projectedNextMonthCredits"
+  | "committedCredits"
   | "completedCredits";
 
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
   { key: "cs", label: "CS" },
   { key: "client", label: "Cuenta" },
   { key: "billing", label: "Tipo de servicio" },
-  { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
-  { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
-  { key: "planning", label: "Créditos en Planificación", sortKey: "planningCredits" },
-  { key: "executing", label: "Créditos en Ejecución", sortKey: "executingCredits" },
-  { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
   { key: "cycleStart", label: "Fecha de inicio del ciclo" },
+  { key: "cycleEnd", label: "Fecha de finalización del ciclo" },
   { key: "creditExpiration", label: "Fecha de vencimiento de créditos" },
+  { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
+  { key: "projected", label: "Créditos proyectados siguiente mes", sortKey: "projectedNextMonthCredits" },
+  { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
+  { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
+  { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
 ];
 
 function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
@@ -906,16 +922,6 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
         return {
           ...group,
           clients,
-          recurringContracted: clients
-            .filter((row) => row.billing === "recurrencia")
-            .reduce((sum, row) => sum + row.totalContractedCredits, 0),
-          packageContracted: clients
-            .filter((row) => row.billing === "paquetes")
-            .reduce((sum, row) => sum + row.totalContractedCredits, 0),
-          availableTotal: clients.reduce((sum, row) => sum + row.availableCredits, 0),
-          planningTotal: clients.reduce((sum, row) => sum + row.planningCredits, 0),
-          executingTotal: clients.reduce((sum, row) => sum + row.executingCredits, 0),
-          completedTotal: clients.reduce((sum, row) => sum + row.completedCredits, 0),
         };
       })
       .sort((first, second) => first.csName.localeCompare(second.csName, "es"));
@@ -932,6 +938,8 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
             <InfoTooltip>
               Completados suma los créditos de casos terminados dentro del ciclo de facturación actual del
               cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
+              Comprometido suma lo planificado y lo en ejecución. Proyectados extrapola los créditos
+              disponibles al ritmo de los días transcurridos del ciclo para estimar un mes de 30 días.
               La fecha de inicio del ciclo marca desde cuándo se cuenta. La tabla agrupa a cada cliente bajo
               su Customer Success.
             </InfoTooltip>
@@ -995,7 +1003,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
       </div>
 
       <div className="max-h-[70vh] overflow-auto">
-        <table className="w-full min-w-[1520px] border-collapse text-left">
+        <table className="w-full min-w-[1720px] border-collapse text-left">
           <thead>
             <tr className="border-b-2 border-[#33475b]">
               {CREDIT_HISTORY_COLUMNS.map((column) => (
@@ -1047,38 +1055,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                         rowSpan={group.clients.length}
                         className={`border-r-2 border-r-[#33475b]/40 ${csCellBg} px-4 py-4 align-top`}
                       >
-                        <p className="text-sm font-black text-[#213343]">{group.csName}</p>
-                        <p className="mt-1 text-xs font-bold text-[#516f90]">
-                          {group.clients.length} {group.clients.length === 1 ? "cliente" : "clientes"}
-                        </p>
-                        <p className="mt-2 text-xs font-semibold text-[#516f90]">
-                          Recurrentes:{" "}
-                          <strong className="text-[#213343]">{formatNumber(group.recurringContracted)} CR</strong>
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-[#516f90]">
-                          Paquetes:{" "}
-                          <strong className="text-[#213343]">{formatNumber(group.packageContracted)} CR</strong>
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-[#516f90]">
-                          Total:{" "}
-                          <strong className="text-[#213343]">
-                            {formatNumber(group.recurringContracted + group.packageContracted)} CR
-                          </strong>
-                        </p>
-                        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[#e2e8f0] pt-2">
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Disp.: <strong className="text-[#213343]">{formatNumber(group.availableTotal)} CR</strong>
-                          </p>
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Planif.: <strong className="text-[#213343]">{formatNumber(group.planningTotal)} CR</strong>
-                          </p>
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Ejec.: <strong className="text-[#213343]">{formatNumber(group.executingTotal)} CR</strong>
-                          </p>
-                          <p className="text-[11px] font-semibold text-[#516f90]">
-                            Compl.: <strong className="text-[#213343]">{formatNumber(group.completedTotal)} CR</strong>
-                          </p>
-                        </div>
+                        <p className="text-sm font-bold text-[#213343]">{group.csName}</p>
                       </td>
                     ) : null}
                     <td className="px-4 py-4">
@@ -1098,8 +1075,20 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                         {row.billing === "paquetes" ? "Paquete" : "Recurrente"}
                       </span>
                     </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {formatDate(row.cycleStartAt)}
+                    </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {row.cycleEndAt ? formatDate(row.cycleEndAt) : "-"}
+                    </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
+                      {row.creditExpirationAt ? formatDate(row.creditExpirationAt) : "-"}
+                    </td>
                     <td className="px-4 py-4 text-sm font-black text-[#213343]">
                       {formatNumber(row.totalContractedCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.projectedNextMonthCredits)} CR
                     </td>
                     <td className="px-4 py-4">
                       <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
@@ -1107,19 +1096,10 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                       </span>
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.planningCredits)} CR
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.executingCredits)} CR
+                      {formatNumber(row.committedCredits)} CR
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.completedCredits)} CR
-                    </td>
-                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
-                      {formatDate(row.cycleStartAt)}
-                    </td>
-                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
-                      {row.creditExpirationAt ? formatDate(row.creditExpirationAt) : "-"}
                     </td>
                   </tr>
                 ))}
