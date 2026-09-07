@@ -135,8 +135,6 @@ export type OnboardingSnapshot = {
   catalogGroupCategories: CreditCatalogGroupCategory[];
   catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
-  catalogGroupClusters: CreditCatalogGroupCluster[];
-  catalogGroupClusterLinks: CreditCatalogGroupClusterLink[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
   northStarHistory: NorthStarHistoryRecord[];
