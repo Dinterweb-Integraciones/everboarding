@@ -375,7 +375,10 @@ export function ReportsPanel({
               ? grantedCreditsByClient.get(row.client_id) ?? 0
               : row.contracted_credits,
           availableCredits,
-          projectedNextMonthCredits: Math.round((availableCredits / daysElapsedInCycle) * 30),
+          projectedNextMonthCredits:
+            row.billing === "recurrencia"
+              ? row.contracted_credits
+              : Math.round((availableCredits / daysElapsedInCycle) * 30),
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -919,9 +922,25 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
           }
           return first.clientName.localeCompare(second.clientName, "es");
         });
+        const totals = clients.reduce(
+          (accumulator, client) => ({
+            projectedNextMonthCredits: accumulator.projectedNextMonthCredits + client.projectedNextMonthCredits,
+            availableCredits: accumulator.availableCredits + client.availableCredits,
+            committedCredits: accumulator.committedCredits + client.committedCredits,
+            completedCredits: accumulator.completedCredits + client.completedCredits,
+          }),
+          {
+            projectedNextMonthCredits: 0,
+            availableCredits: 0,
+            committedCredits: 0,
+            completedCredits: 0,
+          },
+        );
+
         return {
           ...group,
           clients,
+          totals,
         };
       })
       .sort((first, second) => first.csName.localeCompare(second.csName, "es"));
@@ -938,10 +957,11 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
             <InfoTooltip>
               Completados suma los créditos de casos terminados dentro del ciclo de facturación actual del
               cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
-              Comprometido suma lo planificado y lo en ejecución. Proyectados extrapola los créditos
+              Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Proyectados
+              muestra los créditos de su plan de recurrencia por ciclo; para paquetes, extrapola los créditos
               disponibles al ritmo de los días transcurridos del ciclo para estimar un mes de 30 días.
               La fecha de inicio del ciclo marca desde cuándo se cuenta. La tabla agrupa a cada cliente bajo
-              su Customer Success.
+              su Customer Success, con un total por CS al final de cada grupo.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
@@ -1103,6 +1123,20 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                     </td>
                   </tr>
                 ))}
+                <tr className={`border-b-2 border-[#33475b]/30 ${csCellBg} font-black text-[#213343]`}>
+                  <td colSpan={2} className="px-4 py-3 text-sm uppercase tracking-[0.06em]">
+                    Total {group.csName}
+                  </td>
+                  <td className="px-4 py-3 text-sm">-</td>
+                  <td className="px-4 py-3 text-sm">-</td>
+                  <td className="px-4 py-3 text-sm">-</td>
+                  <td className="px-4 py-3 text-sm">-</td>
+                  <td className="px-4 py-3 text-sm">-</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.projectedNextMonthCredits)} CR</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.committedCredits)} CR</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.completedCredits)} CR</td>
+                </tr>
               </Fragment>
               );
             })}
