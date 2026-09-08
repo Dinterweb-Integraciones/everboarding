@@ -641,6 +641,8 @@ export function buildCatalogModalGroups({
     );
 }
 
+export const ALL_CATALOG_CATEGORIES_ID = "all-categories";
+
 export function buildCatalogGroupOptions(
   groups: CatalogModalGroup[],
   categories: CreditCatalogGroupCategory[],
@@ -704,7 +706,24 @@ export function buildCatalogGroupOptions(
     }))
     .sort((left, right) => left.label.localeCompare(right.label, "es"));
 
-  return [...orderedCategoryTabs, ...legacyTabs] satisfies CatalogModalCategoryOption[];
+  const categoryTabs = [...orderedCategoryTabs, ...legacyTabs];
+
+  if (!categoryTabs.length) {
+    return [] satisfies CatalogModalCategoryOption[];
+  }
+
+  const allGroups = Array.from(
+    new Map(categoryTabs.flatMap((category) => category.groups).map((group) => [group.id, group])).values(),
+  );
+
+  const allTab: CatalogModalCategoryOption = {
+    id: ALL_CATALOG_CATEGORIES_ID,
+    label: "Todos",
+    sortOrder: -1,
+    groups: allGroups,
+  };
+
+  return [allTab, ...categoryTabs] satisfies CatalogModalCategoryOption[];
 }
 
 export function calculateInitiativeProgress(

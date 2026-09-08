@@ -644,21 +644,15 @@ export function OnboardingClientPage({
     [activeCatalogTab, catalogGroupOptions],
   );
 
-  const isGlobalCatalogSearch = catalogSearchQuery.trim().length > 0;
-
   const visibleCatalogGroups = useMemo(() => {
-    const sourceGroups = (isGlobalCatalogSearch || catalogTagFilter)
-      ? Array.from(
-        new Map(catalogGroupOptions.flatMap((category) => category.groups).map((group) => [group.id, group])).values(),
-      )
-      : (activeCatalogCategory?.groups ?? []);
+    const sourceGroups = activeCatalogCategory?.groups ?? [];
 
     return sourceGroups.filter(
       (group) =>
         matchesCatalogGroupSearch(group, catalogSearchQuery) &&
         (!catalogTagFilter || group.tags.includes(catalogTagFilter)),
     );
-  }, [activeCatalogCategory, catalogGroupOptions, catalogSearchQuery, catalogTagFilter, isGlobalCatalogSearch]);
+  }, [activeCatalogCategory, catalogSearchQuery, catalogTagFilter]);
 
   useEffect(() => {
     if (!isCatalogModalOpen) return;
