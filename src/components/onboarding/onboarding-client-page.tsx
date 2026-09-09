@@ -29,6 +29,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { UseCaseClusterGraph } from "@/components/cs/use-case-cluster-graph";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
@@ -36,6 +37,7 @@ import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text"
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
+import { computeGroupStatusForClient } from "@/lib/client-use-case-status";
 import {
   CS_UPSELL_CREDIT_OPTIONS,
   RISK_INACTIVE_DAYS,
@@ -71,6 +73,7 @@ import {
   setEvaluationValidationLabel,
   suggestPlanPrice,
   type CatalogModalGroup,
+  type CreditCatalogGroup,
   type CustomPlanBillingMode,
   type EvaluationValidationLabel,
   type PlanPeriodMonths,
@@ -496,6 +499,8 @@ export function OnboardingClientPage({
   const [selectedUpsellCredits, setSelectedUpsellCredits] = useState<number>(CS_UPSELL_CREDIT_OPTIONS[0]);
   const [customUpsellCredits, setCustomUpsellCredits] = useState("");
   const [upsellQuantity, setUpsellQuantity] = useState(0);
+  const [boardViewMode, setBoardViewMode] = useState<"tablero" | "mapa">("tablero");
+  const [addingMapGroupId, setAddingMapGroupId] = useState<string | null>(null);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
@@ -631,6 +636,16 @@ export function OnboardingClientPage({
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData]);
+
+  const catalogModalGroupById = useMemo(
+    () => new Map(catalogGroups.map((group) => [group.id, group])),
+    [catalogGroups],
+  );
+
+  const useCaseStatusByGroupId = useMemo(
+    () => computeGroupStatusForClient(initiatives, initialData.catalogGroups),
+    [initiatives, initialData.catalogGroups],
+  );
   const catalogTabs = useMemo(
     () => [
       { id: "wizard", label: "Guía de Activación" },
@@ -1817,6 +1832,18 @@ export function OnboardingClientPage({
       );
     } finally {
       setIsSavingInitiative(false);
+    }
+  }
+
+  async function addUseCaseFromMap(group: CreditCatalogGroup, status: "backlog" | "planned") {
+    const modalGroup = catalogModalGroupById.get(group.id);
+    if (!modalGroup) return;
+
+    setAddingMapGroupId(group.id);
+    try {
+      await addCatalogGroupInitiative(modalGroup, status);
+    } finally {
+      setAddingMapGroupId(null);
     }
   }
 
@@ -3091,6 +3118,48 @@ export function OnboardingClientPage({
         </section>
       ) : null}
 
+      <section className="flex items-center gap-2 border-b border-[#dfe3eb] bg-white px-6 py-3">
+        <div className="inline-flex rounded-[4px] border border-[#cbd6e2] bg-[#f5f8fa] p-1">
+          <button
+            type="button"
+            onClick={() => setBoardViewMode("tablero")}
+            className={`rounded-[3px] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
+              boardViewMode === "tablero"
+                ? "bg-white text-[#33475b] shadow-sm"
+                : "text-[#7c8da1] hover:text-[#516f90]"
+            }`}
+          >
+            Tablero
+          </button>
+          <button
+            type="button"
+            onClick={() => setBoardViewMode("mapa")}
+            className={`rounded-[3px] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
+              boardViewMode === "mapa"
+                ? "bg-white text-[#33475b] shadow-sm"
+                : "text-[#7c8da1] hover:text-[#516f90]"
+            }`}
+          >
+            Mapa
+          </button>
+        </div>
+      </section>
+
+      {boardViewMode === "mapa" ? (
+        <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
+          <UseCaseClusterGraph
+            groups={initialData.catalogGroups}
+            clusters={initialData.catalogGroupClusters}
+            clusterLinks={initialData.catalogGroupClusterLinks}
+            categories={initialData.catalogGroupCategories}
+            statusByGroupId={useCaseStatusByGroupId}
+            onAddToStage={(group, status) => void addUseCaseFromMap(group, status)}
+            addingGroupId={addingMapGroupId}
+          />
+        </section>
+      ) : null}
+
+      {boardViewMode === "tablero" ? (
       <section className="border-b border-[#dfe3eb] bg-[#f5f8fa] px-3 py-4">
         <div className="overflow-x-auto">
           <div className="flex min-h-[270px] min-w-max gap-4">
@@ -3506,6 +3575,7 @@ export function OnboardingClientPage({
           ) : null}
         </div>
       </section>
+      ) : null}
 
       <section className="bg-white px-6 py-10">
         <div className="mx-auto max-w-[1400px]">

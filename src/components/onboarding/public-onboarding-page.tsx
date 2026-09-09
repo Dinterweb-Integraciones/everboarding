@@ -404,6 +404,8 @@ export function PublicOnboardingPage({
               credits: initiative.credits,
               status: initiative.status,
               dateRange: formatDateRange(initiative.est_start_date, initiative.est_end_date),
+              estStartDate: initiative.est_start_date,
+              estEndDate: initiative.est_end_date,
               isBlocked: initiative.is_blocked,
               subitems: initiative.subitems.map((subitem) => ({
                 id: subitem.id,
@@ -2247,11 +2249,11 @@ export function PublicOnboardingPage({
       <PlanReportExportPages
         rootId="public-plan-report-export-root"
         pageIdPrefix="public-plan-report"
-        reportLabel={audience === "prospect" ? "Propuesta publica" : "Plan de trabajo"}
         clientName={initialData.client.name || (audience === "prospect" ? "Prospecto" : "Cliente")}
-        description={initialData.client.description || stageMeta.description}
         startDateLabel={formatLongDate(config.start_date)}
-        stageLabel={audience === "prospect" ? "Vista prospecto" : "Vista cliente"}
+        preparedByLabel={
+          prospectProposal?.sellerName ? `${prospectProposal.sellerName} · Dinterweb` : undefined
+        }
         metrics={{
           available: metrics.available,
           committed: metrics.reserved,
@@ -2263,6 +2265,9 @@ export function PublicOnboardingPage({
           cadenceLabel: getPlanCadenceLabel(config.custom_plan_period_months),
         }}
         groupedInitiatives={reportGroupedInitiatives}
+        publicPath={`/public/${audience}/${publicSlug}`}
+        proposalCode={publicSlug ? publicSlug.toUpperCase() : undefined}
+        isRecurringPlan={isRecurringPlan}
       />
 
       {activeInitiativePreview ? (

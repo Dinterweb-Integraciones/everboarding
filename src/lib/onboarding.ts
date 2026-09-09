@@ -135,6 +135,8 @@ export type OnboardingSnapshot = {
   catalogGroupCategories: CreditCatalogGroupCategory[];
   catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
+  catalogGroupClusters: CreditCatalogGroupCluster[];
+  catalogGroupClusterLinks: CreditCatalogGroupClusterLink[];
   shareLinks: ShareLinkRecord[];
   members: ClientMemberRecord[];
   northStarHistory: NorthStarHistoryRecord[];
@@ -158,6 +160,7 @@ export type PublicOnboardingSnapshot = {
     appliedCouponType: "package_override" | "percentage" | null;
     appliedCouponPercentageOff: number | null;
     extraPackageQuantity: number;
+    sellerName: string | null;
   } | null;
 };
 

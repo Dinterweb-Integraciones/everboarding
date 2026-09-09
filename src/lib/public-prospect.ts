@@ -176,6 +176,7 @@ export function buildPublicProspectSnapshotBase(
       appliedCouponType: proposal.appliedCouponType,
       appliedCouponPercentageOff: proposal.appliedCouponPercentageOff,
       extraPackageQuantity: proposal.prospectExtraPackageQuantity ?? 0,
+      sellerName: proposal.sellerName?.trim() || null,
     },
   };
 }

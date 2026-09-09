@@ -132,11 +132,15 @@ export default async function ClientDetailPage({
     { data: catalogGroupCategoryRows, error: catalogGroupCategoriesError },
     { data: catalogGroupCategoryLinkRows, error: catalogGroupCategoryLinksError },
     { data: catalogGroupMembershipRows, error: catalogGroupMembershipsError },
+    { data: catalogGroupClusterRows, error: catalogGroupClustersError },
+    { data: catalogGroupClusterLinkRows, error: catalogGroupClusterLinksError },
   ] = await Promise.all([
     admin.from("credit_catalog_groups").select("*").eq("is_active", true).order("sort_order").order("name"),
     admin.from("credit_catalog_group_categories").select("*").order("sort_order").order("name"),
     admin.from("credit_catalog_group_category_links").select("*").order("category_id").order("sort_order").order("created_at"),
     admin.from("credit_catalog_group_items").select("*").order("sort_order").order("created_at"),
+    admin.from("credit_catalog_group_clusters").select("*").order("sort_order").order("label"),
+    admin.from("credit_catalog_group_cluster_links").select("*").order("group_id").order("sort_order"),
   ]);
 
   if (subitemsError) {
@@ -171,6 +175,14 @@ export default async function ClientDetailPage({
     throw new Error("No pudimos cargar la relacion entre grupos y tareas.");
   }
 
+  if (catalogGroupClustersError) {
+    throw new Error("No pudimos cargar los clusteres del catalogo.");
+  }
+
+  if (catalogGroupClusterLinksError) {
+    throw new Error("No pudimos cargar la relacion entre grupos y clusteres.");
+  }
+
   const subitemRecords = (subitemRows ?? []) as Tables<"onboarding_initiative_subitems">[];
   const logRecords = (logRows ?? []) as Tables<"onboarding_activity_logs">[];
 
@@ -192,6 +204,9 @@ export default async function ClientDetailPage({
   const visibleCatalogGroupMembershipRows = (
     (catalogGroupMembershipRows ?? []) as Tables<"credit_catalog_group_items">[]
   ).filter((membership) => visibleCatalogGroupIds.has(membership.group_id));
+  const visibleCatalogGroupClusterLinkRows = (
+    (catalogGroupClusterLinkRows ?? []) as Tables<"credit_catalog_group_cluster_links">[]
+  ).filter((link) => visibleCatalogGroupIds.has(link.group_id));
 
   let members: ClientMemberRecord[] = [];
   let shareLinks: ShareLinkRecord[] = [];
@@ -292,6 +307,8 @@ export default async function ClientDetailPage({
         catalogGroupCategories: catalogGroupCategoryRows ?? [],
         catalogGroupCategoryLinks: visibleCatalogGroupCategoryLinkRows,
         catalogGroupMemberships: visibleCatalogGroupMembershipRows,
+        catalogGroupClusters: catalogGroupClusterRows ?? [],
+        catalogGroupClusterLinks: visibleCatalogGroupClusterLinkRows,
         shareLinks,
         members,
         northStarHistory: northStarHistoryRows ?? [],

@@ -993,6 +993,8 @@ export function SalesProposalWorkspace({
               credits: calculateSalesInitiativeCredits(initiative),
               status: initiative.status,
               dateRange: formatDateRange(initiative.estStartDate || null, initiative.estEndDate || null),
+              estStartDate: initiative.estStartDate || null,
+              estEndDate: initiative.estEndDate || null,
               isBlocked: initiative.isBlocked,
               subitems: initiative.subitems.map((subitem) => ({
                 id: subitem.id,
@@ -4093,11 +4095,9 @@ function mergeRecommendedGroups(
       <PlanReportExportPages
         rootId="sales-plan-report-export-root"
         pageIdPrefix="sales-plan-report"
-        reportLabel={proposal.workspaceVariant === "dinterweb" ? "Dinterweb Propuesta" : "HubSpot Propuesta"}
         clientName={proposal.clientName || proposal.clientCompany || proposal.title || "Prospecto"}
-        description={proposal.clientDescription || "Plan comercial detallado para el prospecto."}
         startDateLabel={formatDateRange(proposal.startDate || null, proposal.startDate || null)}
-        stageLabel="Vista vendedor"
+        preparedByLabel={proposal.sellerName ? `${proposal.sellerName} · Dinterweb` : undefined}
         metrics={{
           available: metrics.available,
           committed: metrics.committed,
@@ -4108,6 +4108,9 @@ function mergeRecommendedGroups(
           cadenceLabel: getPlanCadenceLabel(proposal.periodMonths),
         }}
         groupedInitiatives={reportGroupedInitiatives}
+        publicPath={proposal.slug ? `/public/prospect/${proposal.slug}` : undefined}
+        proposalCode={proposal.slug ? proposal.slug.toUpperCase() : undefined}
+        isRecurringPlan={proposal.billingMode === "subscription"}
       />
 
       {isGeneratingWizardPlan ? (
