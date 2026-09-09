@@ -1,18 +1,20 @@
 import { findCatalogGroupForInitiative, type CreditCatalogGroup, type InitiativeStatus } from "@/lib/onboarding";
 
-export type ClientUseCaseStatus = "completed" | "in_progress" | "evaluating";
+export type ClientUseCaseStatus = "completed" | "executing" | "planned" | "evaluating";
 export type ClientUseCaseDisplayStatus = ClientUseCaseStatus | "untouched";
 
 export const CLIENT_USE_CASE_STATUS_LABELS: Record<ClientUseCaseDisplayStatus, string> = {
   completed: "Completado",
-  in_progress: "En curso",
+  executing: "En ejecución",
+  planned: "Planificado",
   evaluating: "En evaluación",
   untouched: "No tocado",
 };
 
 export const CLIENT_USE_CASE_STATUS_COLORS: Record<ClientUseCaseDisplayStatus, { fill: string; text: string }> = {
-  completed: { fill: "#059669", text: "#ffffff" },
-  in_progress: { fill: "#0284c7", text: "#ffffff" },
+  completed: { fill: "#16a34a", text: "#ffffff" },
+  executing: { fill: "#16a34a", text: "#ffffff" },
+  planned: { fill: "#0f172a", text: "#ffffff" },
   evaluating: { fill: "#94a3b8", text: "#ffffff" },
   untouched: { fill: "#e2e8f0", text: "#334155" },
 };
@@ -25,14 +27,16 @@ export type ClientUseCaseInitiative = {
 };
 
 const STATUS_RANK: Record<ClientUseCaseStatus, number> = {
-  completed: 3,
-  in_progress: 2,
+  completed: 4,
+  executing: 3,
+  planned: 2,
   evaluating: 1,
 };
 
 function toClientUseCaseStatus(status: InitiativeStatus): ClientUseCaseStatus {
   if (status === "completed") return "completed";
-  if (status === "planned" || status === "executing") return "in_progress";
+  if (status === "executing") return "executing";
+  if (status === "planned") return "planned";
   return "evaluating";
 }
 
