@@ -185,7 +185,7 @@ function InfoTooltip({ children }: { children: ReactNode }) {
   );
 }
 
-function getElapsedCalendarDays(value: string | null) {
+function getRemainingCalendarDays(value: string | null) {
   if (!value) return null;
 
   const parsed = new Date(`${value}T00:00:00`);
@@ -193,7 +193,7 @@ function getElapsedCalendarDays(value: string | null) {
 
   const today = new Date();
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((todayStart.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((parsed.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(value: string) {
@@ -362,7 +362,7 @@ export function ReportsPanel({
         const availableCredits = Number(row.credits_remaining) || 0;
         const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
         const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
-        const daysElapsedInCycle = Math.max(1, getElapsedCalendarDays(row.current_cycle_start_at) ?? 1);
+        const daysUntilCreditExpiration = Math.max(1, getRemainingCalendarDays(row.credit_expiration_at) ?? 1);
 
         return {
           clientId: row.client_id,
@@ -378,7 +378,7 @@ export function ReportsPanel({
           projectedNextMonthCredits:
             row.billing === "recurrencia"
               ? row.contracted_credits
-              : Math.round((availableCredits / daysElapsedInCycle) * 30),
+              : Math.round((availableCredits / daysUntilCreditExpiration) * 30),
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -959,9 +959,9 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
               cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
               Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Proyectados
               muestra los créditos de su plan de recurrencia por ciclo; para paquetes, extrapola los créditos
-              disponibles al ritmo de los días transcurridos del ciclo para estimar un mes de 30 días.
-              La fecha de inicio del ciclo marca desde cuándo se cuenta. La tabla agrupa a cada cliente bajo
-              su Customer Success, con un total por CS al final de cada grupo.
+              disponibles al ritmo de los días que faltan hasta la fecha de vencimiento de créditos, para
+              estimar un mes de 30 días. La tabla agrupa a cada cliente bajo su Customer Success, con un
+              total por CS al final de cada grupo.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
