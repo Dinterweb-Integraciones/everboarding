@@ -131,6 +131,20 @@ export function roundGraphCoordinate(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+/** Deterministic per-id "randomness" so the star's irregularity stays stable across renders. */
+export function hashSeed(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+export function jitterFor(id: string, salt: string, spread: number) {
+  const seed = hashSeed(`${id}:${salt}`);
+  return ((seed % 1000) / 1000 - 0.5) * 2 * spread;
+}
+
 export function getArrowPath(source: PositionedNode, target: PositionedNode) {
   const deltaX = target.x - source.x;
   const deltaY = target.y - source.y;
@@ -194,115 +208,154 @@ export function buildUseCaseEdges(groups: CreditCatalogGroup[]) {
   return { edges: resolvedEdges, unresolvedReferences: unresolved };
 }
 
-export function layoutGraph(
-  groups: CreditCatalogGroup[],
-  edges: GraphEdge[],
-  primaryClusterByGroupId: Map<string, string>,
-  groupByClusters: boolean,
-) {
-  const groupIds = new Set(groups.map((group) => group.id));
-  const graphEdges = edges.filter(
-    (edge) => groupIds.has(edge.sourceId) && groupIds.has(edge.targetId) && edge.sourceId !== edge.targetId,
-  );
-  const sortedGroups = [...groups].sort(
-    (left, right) =>
-      safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
-      || left.name.localeCompare(right.name, "es"),
-  );
-  const width = Math.max(1440, Math.min(2200, 1040 + Math.sqrt(Math.max(1, groups.length)) * 115));
-  const height = Math.max(780, Math.min(1400, 610 + Math.sqrt(Math.max(1, groups.length)) * 88));
-  const clusterKeys = [...new Set(sortedGroups.map((group) => primaryClusterByGroupId.get(group.id) ?? WITHOUT_CLUSTER))];
-  const clusterCenters = new Map<string, { x: number; y: number }>();
-  const centerX = width / 2;
-  const centerY = height / 2;
+export type ClusterStarGroup = {
+  id: string;
+  label: string;
+  color: string;
+  groups: CreditCatalogGroup[];
+};
 
-  clusterKeys.forEach((clusterId, index) => {
-    const angle = clusterKeys.length === 1 ? 0 : (Math.PI * 2 * index) / clusterKeys.length - Math.PI / 2;
-    const spreadX = groupByClusters ? Math.min(width * 0.34, 150 + clusterKeys.length * 34) : 0;
-    const spreadY = groupByClusters ? Math.min(height * 0.3, 110 + clusterKeys.length * 25) : 0;
-    clusterCenters.set(clusterId, {
-      x: centerX + Math.cos(angle) * spreadX,
-      y: centerY + Math.sin(angle) * spreadY,
+export type ClusterStarHub = {
+  id: string;
+  label: string;
+  color: string;
+  x: number;
+  y: number;
+  memberCount: number;
+};
+
+export type ClusterStarSpoke = {
+  hubId: string;
+  groupId: string;
+  color: string;
+};
+
+export const HUB_RADIUS = 40;
+
+/** Node radius shrinks as a cluster grows so its star still fits on one ring. */
+function starNodeRadius(memberCount: number) {
+  if (memberCount <= 1) return 26;
+  if (memberCount <= 6) return 22;
+  if (memberCount <= 14) return 18;
+  if (memberCount <= 26) return 15;
+  return 12;
+}
+
+/** Ring radius grows with member count so nodes keep a roughly constant spacing. */
+function starRingRadius(memberCount: number, nodeRadius: number) {
+  if (memberCount <= 1) return HUB_RADIUS + nodeRadius + 22;
+  const spacing = nodeRadius * 2.7;
+  const circumferenceRadius = (memberCount * spacing) / (2 * Math.PI);
+  return Math.max(nodeRadius * 3.4, circumferenceRadius);
+}
+
+const GOLDEN_ANGLE = 2.399963229728653;
+
+/**
+ * Lays out one star per cluster: a central hub with its member use cases scattered,
+ * irregularly, around it on a single ring. Clusters themselves are scattered across
+ * the canvas along a sunflower spiral so bigger stars don't collide with their
+ * neighbors.
+ */
+export function layoutClusterStars(clusterGroups: ClusterStarGroup[]) {
+  const prepared = clusterGroups
+    .filter((cluster) => cluster.groups.length > 0)
+    .map((cluster) => {
+      const sortedMembers = [...cluster.groups].sort(
+        (left, right) =>
+          safeParseNumber(left.sort_order) - safeParseNumber(right.sort_order)
+          || left.name.localeCompare(right.name, "es"),
+      );
+      const nodeRadius = starNodeRadius(sortedMembers.length);
+      const ringRadius = starRingRadius(sortedMembers.length, nodeRadius);
+      const extent = ringRadius + nodeRadius + 50;
+      return { ...cluster, groups: sortedMembers, nodeRadius, ringRadius, extent };
+    })
+    .sort((left, right) => right.groups.length - left.groups.length);
+
+  const averageExtent =
+    prepared.reduce((sum, cluster) => sum + cluster.extent, 0) / Math.max(prepared.length, 1);
+  const hubSpacing = Math.max(240, averageExtent * 1.35);
+
+  const hubs: ClusterStarHub[] = [];
+  const nodes: PositionedNode[] = [];
+  const nodeRadiusById = new Map<string, number>();
+  const spokes: ClusterStarSpoke[] = [];
+
+  prepared.forEach((cluster, clusterIndex) => {
+    const angle = clusterIndex * GOLDEN_ANGLE;
+    const hubDistance = clusterIndex === 0 ? 0 : hubSpacing * Math.sqrt(clusterIndex);
+    const hubX = Math.cos(angle) * hubDistance;
+    const hubY = Math.sin(angle) * hubDistance;
+
+    hubs.push({
+      id: cluster.id,
+      label: cluster.label,
+      color: cluster.color,
+      x: hubX,
+      y: hubY,
+      memberCount: cluster.groups.length,
+    });
+
+    cluster.groups.forEach((group, memberIndex) => {
+      const baseAngleDeg = -90 + (360 / Math.max(cluster.groups.length, 1)) * memberIndex;
+      const memberAngle = ((baseAngleDeg + jitterFor(group.id, "angle", 11)) * Math.PI) / 180;
+      const jitteredRadius = cluster.ringRadius + jitterFor(group.id, "radius", cluster.ringRadius * 0.16);
+      nodes.push({
+        group,
+        x: roundGraphCoordinate(hubX + Math.cos(memberAngle) * jitteredRadius),
+        y: roundGraphCoordinate(hubY + Math.sin(memberAngle) * jitteredRadius),
+      });
+      nodeRadiusById.set(group.id, cluster.nodeRadius);
+      spokes.push({ hubId: cluster.id, groupId: group.id, color: cluster.color });
     });
   });
 
-  const clusterOffsets = new Map<string, number>();
-  const simulationNodes = sortedGroups.map((group, index) => {
-    const clusterId = primaryClusterByGroupId.get(group.id) ?? WITHOUT_CLUSTER;
-    const clusterIndex = clusterOffsets.get(clusterId) ?? 0;
-    clusterOffsets.set(clusterId, clusterIndex + 1);
-    const center = clusterCenters.get(clusterId) ?? { x: centerX, y: centerY };
-    const angle = clusterIndex * 2.3999632297 + index * 0.09;
-    const radius = 76 + Math.sqrt(clusterIndex) * 68;
-    return {
-      group,
-      x: center.x + Math.cos(angle) * radius,
-      y: center.y + Math.sin(angle) * radius,
-      velocityX: 0,
-      velocityY: 0,
-    };
+  const PADDING = 140;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  hubs.forEach((hub) => {
+    minX = Math.min(minX, hub.x - HUB_RADIUS - 30);
+    maxX = Math.max(maxX, hub.x + HUB_RADIUS + 30);
+    minY = Math.min(minY, hub.y - HUB_RADIUS - 30);
+    maxY = Math.max(maxY, hub.y + HUB_RADIUS + 30);
   });
-  const simulationById = new Map(simulationNodes.map((node) => [node.group.id, node]));
+  nodes.forEach((node) => {
+    const radius = nodeRadiusById.get(node.group.id) ?? 18;
+    minX = Math.min(minX, node.x - radius - 60);
+    maxX = Math.max(maxX, node.x + radius + 60);
+    minY = Math.min(minY, node.y - radius - 10);
+    maxY = Math.max(maxY, node.y + radius + 42);
+  });
 
-  for (let iteration = 0; iteration < 150; iteration += 1) {
-    for (let leftIndex = 0; leftIndex < simulationNodes.length; leftIndex += 1) {
-      const left = simulationNodes[leftIndex];
-      for (let rightIndex = leftIndex + 1; rightIndex < simulationNodes.length; rightIndex += 1) {
-        const right = simulationNodes[rightIndex];
-        const deltaX = right.x - left.x || 0.1;
-        const deltaY = right.y - left.y || 0.1;
-        const distance = Math.max(1, Math.hypot(deltaX, deltaY));
-        if (distance > 188) continue;
-        const force = (188 - distance) * 0.009;
-        const forceX = (deltaX / distance) * force;
-        const forceY = (deltaY / distance) * force;
-        left.velocityX -= forceX;
-        left.velocityY -= forceY;
-        right.velocityX += forceX;
-        right.velocityY += forceY;
-      }
-    }
-
-    graphEdges.forEach((edge) => {
-      const source = simulationById.get(edge.sourceId);
-      const target = simulationById.get(edge.targetId);
-      if (!source || !target) return;
-      const deltaX = target.x - source.x;
-      const deltaY = target.y - source.y;
-      const distance = Math.max(1, Math.hypot(deltaX, deltaY));
-      const force = (distance - 218) * 0.0038;
-      const forceX = (deltaX / distance) * force;
-      const forceY = (deltaY / distance) * force;
-      source.velocityX += forceX;
-      source.velocityY += forceY;
-      target.velocityX -= forceX;
-      target.velocityY -= forceY;
-    });
-
-    simulationNodes.forEach((node) => {
-      const clusterId = primaryClusterByGroupId.get(node.group.id) ?? WITHOUT_CLUSTER;
-      const center = clusterCenters.get(clusterId) ?? { x: centerX, y: centerY };
-      node.velocityX += (center.x - node.x) * (groupByClusters ? 0.0012 : 0.00055);
-      node.velocityY += (center.y - node.y) * (groupByClusters ? 0.0012 : 0.00055);
-      node.velocityX *= 0.84;
-      node.velocityY *= 0.84;
-      node.x = Math.max(80, Math.min(width - 220, node.x + node.velocityX));
-      node.y = Math.max(75, Math.min(height - 75, node.y + node.velocityY));
-    });
+  if (!Number.isFinite(minX)) {
+    minX = 0;
+    minY = 0;
+    maxX = 400;
+    maxY = 400;
   }
 
-  // Server and browser floating-point calculations can differ by tiny fractions.
-  // Quantizing prevents React hydration mismatches in SVG transform attributes.
-  const positionedNodes: PositionedNode[] = simulationNodes.map(({ group, x, y }) => ({
-    group,
-    x: roundGraphCoordinate(x),
-    y: roundGraphCoordinate(y),
-  }));
+  const offsetX = PADDING - minX;
+  const offsetY = PADDING - minY;
+
+  hubs.forEach((hub) => {
+    hub.x = roundGraphCoordinate(hub.x + offsetX);
+    hub.y = roundGraphCoordinate(hub.y + offsetY);
+  });
+  nodes.forEach((node) => {
+    node.x = roundGraphCoordinate(node.x + offsetX);
+    node.y = roundGraphCoordinate(node.y + offsetY);
+  });
 
   return {
-    nodes: positionedNodes,
-    edges: graphEdges,
-    width: Math.round(width),
-    height: Math.round(height),
+    hubs,
+    nodes,
+    nodeRadiusById,
+    spokes,
+    width: Math.round(maxX - minX + PADDING * 2),
+    height: Math.round(maxY - minY + PADDING * 2),
   };
 }
