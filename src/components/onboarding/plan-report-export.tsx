@@ -206,7 +206,9 @@ export async function exportPlanReportPdf(rootId: string, filename: string) {
   const pdfWidth = pdf.internal.pageSize.getWidth();
   const pdfHeight = pdf.internal.pageSize.getHeight();
 
-  for (const [index, page] of pages.entries()) {
+  let isFirstPdfPage = true;
+
+  for (const page of pages) {
     const canvas = await html2canvas(page, {
       scale: 2,
       backgroundColor: "#ffffff",
@@ -221,38 +223,109 @@ export async function exportPlanReportPdf(rootId: string, filename: string) {
       },
     });
 
-    const imageData = canvas.toDataURL("image/png");
-    const ratio = Math.min(pdfWidth / canvas.width, pdfHeight / canvas.height);
-    const renderWidth = canvas.width * ratio;
+    // Every report page is meant to render at the full PDF page width. A
+    // page whose live content grows past PAGE_HEIGHT (a long use-case
+    // description, for example — pages use minHeight, not height, so they
+    // can grow) used to get uniformly shrunk to fit the page's height,
+    // which also narrowed its width and left empty side margins. Instead,
+    // always scale to fill the width and, if that leaves the image taller
+    // than one physical page, spill the overflow onto extra pages.
+    const ratio = pdfWidth / canvas.width;
     const renderHeight = canvas.height * ratio;
-    const offsetX = (pdfWidth - renderWidth) / 2;
-    const offsetY = (pdfHeight - renderHeight) / 2;
-
-    if (index > 0) {
-      pdf.addPage();
-    }
-
-    pdf.addImage(imageData, "PNG", offsetX, offsetY, renderWidth, renderHeight);
 
     // The page itself is a flat raster image — any <a href> inside it is
     // otherwise inert. Overlay a real clickable PDF link annotation at the
     // same spot so buttons like "Ver plan de trabajo en linea" still work.
     const pageRect = page.getBoundingClientRect();
-    const mmPerPx = pageRect.width > 0 ? renderWidth / pageRect.width : 0;
-    if (mmPerPx > 0) {
-      const linkEls = Array.from(page.querySelectorAll<HTMLElement>('[data-pdf-link="true"]'));
-      for (const linkEl of linkEls) {
-        const href = linkEl.getAttribute("href");
-        if (!href) continue;
-        const elRect = linkEl.getBoundingClientRect();
-        pdf.link(
-          offsetX + (elRect.left - pageRect.left) * mmPerPx,
-          offsetY + (elRect.top - pageRect.top) * mmPerPx,
-          elRect.width * mmPerPx,
-          elRect.height * mmPerPx,
-          { url: href },
-        );
+    const mmPerPx = pageRect.width > 0 ? pdfWidth / pageRect.width : 0;
+    const linkEls = Array.from(page.querySelectorAll<HTMLElement>('[data-pdf-link="true"]'));
+
+    if (renderHeight <= pdfHeight + 0.01) {
+      if (!isFirstPdfPage) pdf.addPage();
+      isFirstPdfPage = false;
+
+      const offsetY = (pdfHeight - renderHeight) / 2;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, offsetY, pdfWidth, renderHeight);
+
+      if (mmPerPx > 0) {
+        for (const linkEl of linkEls) {
+          const href = linkEl.getAttribute("href");
+          if (!href) continue;
+          const elRect = linkEl.getBoundingClientRect();
+          pdf.link(
+            (elRect.left - pageRect.left) * mmPerPx,
+            offsetY + (elRect.top - pageRect.top) * mmPerPx,
+            elRect.width * mmPerPx,
+            elRect.height * mmPerPx,
+            { url: href },
+          );
+        }
       }
+      continue;
+    }
+
+    // Overflowed page: slice the tall canvas into consecutive full-width
+    // physical pages. A raw fixed-height cut can slice straight through the
+    // middle of a use-case card, so instead we snap each cut to the nearest
+    // gap between "atoms" (cards marked data-report-atom) at or before the
+    // ideal cut line — a card only moves to the next page whole, it never
+    // gets split in half.
+    const maxSliceDomPx = mmPerPx > 0 ? pdfHeight / mmPerPx : Infinity;
+    const pageContentDomPx = pageRect.height;
+    const scaleFactor = pageRect.height > 0 ? canvas.height / pageRect.height : 1;
+    const atomEdges = Array.from(page.querySelectorAll<HTMLElement>('[data-report-atom="true"]'))
+      .map((atom) => atom.getBoundingClientRect().bottom - pageRect.top)
+      .filter((edge) => edge > 0 && edge <= pageContentDomPx)
+      .sort((a, b) => a - b);
+
+    let sliceTopDomPx = 0;
+
+    while (sliceTopDomPx < pageContentDomPx) {
+      const idealBottomDomPx = sliceTopDomPx + maxSliceDomPx;
+      let sliceBottomDomPx = Math.min(idealBottomDomPx, pageContentDomPx);
+
+      if (idealBottomDomPx < pageContentDomPx) {
+        const bestEdge = atomEdges.filter((edge) => edge > sliceTopDomPx && edge <= idealBottomDomPx).pop();
+        // No atom edge fits inside one page's worth of height — a single
+        // card is taller than a whole page. Fall back to a hard cut; there's
+        // no way to keep it in one piece without shrinking the content.
+        if (bestEdge !== undefined) {
+          sliceBottomDomPx = bestEdge;
+        }
+      }
+
+      const sliceTopPx = Math.round(sliceTopDomPx * scaleFactor);
+      const sliceBottomPx = Math.min(canvas.height, Math.round(sliceBottomDomPx * scaleFactor));
+      const thisSliceHeightPx = Math.max(1, sliceBottomPx - sliceTopPx);
+
+      const sliceCanvas = document.createElement("canvas");
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = thisSliceHeightPx;
+      const ctx = sliceCanvas.getContext("2d");
+      ctx?.drawImage(canvas, 0, sliceTopPx, canvas.width, thisSliceHeightPx, 0, 0, canvas.width, thisSliceHeightPx);
+
+      if (!isFirstPdfPage) pdf.addPage();
+      isFirstPdfPage = false;
+      pdf.addImage(sliceCanvas.toDataURL("image/png"), "PNG", 0, 0, pdfWidth, thisSliceHeightPx * ratio);
+
+      if (mmPerPx > 0) {
+        for (const linkEl of linkEls) {
+          const href = linkEl.getAttribute("href");
+          if (!href) continue;
+          const elRect = linkEl.getBoundingClientRect();
+          const elTopDomPx = elRect.top - pageRect.top;
+          if (elTopDomPx < sliceTopDomPx || elTopDomPx >= sliceBottomDomPx) continue;
+          pdf.link(
+            (elRect.left - pageRect.left) * mmPerPx,
+            (elTopDomPx - sliceTopDomPx) * mmPerPx,
+            elRect.width * mmPerPx,
+            elRect.height * mmPerPx,
+            { url: href },
+          );
+        }
+      }
+
+      sliceTopDomPx = sliceBottomDomPx;
     }
   }
 
@@ -881,6 +954,7 @@ export function PlanReportExportPages({
               {pageItems.map((initiative, itemIndex) => (
                 <div
                   key={initiative.id}
+                  data-report-atom="true"
                   style={{
                     width: "100%",
                     boxSizing: "border-box",
@@ -916,20 +990,34 @@ export function PlanReportExportPages({
                       {getBreakdownCreditsLabel(initiative)}
                     </p>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr" }}>
-                    <div style={{ padding: "16px 20px", borderRight: `1px solid ${C.n150}` }}>
+                  <div style={{ display: "flex", alignItems: "stretch" }}>
+                    <div
+                      style={{
+                        flex: "0 0 37.5%",
+                        boxSizing: "border-box",
+                        padding: "16px 20px",
+                        borderRight: `1px solid ${C.n150}`,
+                      }}
+                    >
                       <FieldLabel>Alcance</FieldLabel>
                       <p style={{ fontSize: 12.5, lineHeight: 1.6, color: C.n700, margin: 0 }}>
                         {initiative.description || "Sin descripcion detallada."}
                       </p>
                     </div>
-                    <div style={{ padding: "16px 20px", borderRight: `1px solid ${C.n150}` }}>
+                    <div
+                      style={{
+                        flex: "0 0 31.25%",
+                        boxSizing: "border-box",
+                        padding: "16px 20px",
+                        borderRight: `1px solid ${C.n150}`,
+                      }}
+                    >
                       <FieldLabel>Responsabilidades del cliente</FieldLabel>
                       <p style={{ fontSize: 12.5, lineHeight: 1.6, color: C.n700, margin: 0 }}>
                         {initiative.completionOutcome || "Sin responsabilidades definidas."}
                       </p>
                     </div>
-                    <div style={{ padding: "16px 20px" }}>
+                    <div style={{ flex: "0 0 31.25%", boxSizing: "border-box", padding: "16px 20px" }}>
                       <FieldLabel>Criterio de exito</FieldLabel>
                       <p style={{ fontSize: 12.5, lineHeight: 1.6, color: C.n700, margin: 0 }}>
                         {initiative.successMilestone || "Sin criterio de exito definido."}
@@ -1033,14 +1121,14 @@ export function PlanReportExportPages({
               alignItems: "center",
               justifyContent: "space-between",
               gap: 24,
-              flexWrap: "wrap",
+              flexWrap: "nowrap",
               background: C.red050,
               borderRadius: 16,
               padding: "18px 22px",
               marginBottom: 18,
             }}
           >
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: C.n950, margin: 0, maxWidth: "30em" }}>
+            <p style={{ flex: "1 1 auto", minWidth: 0, fontSize: 13.5, lineHeight: 1.6, color: C.n950, margin: 0, maxWidth: "30em" }}>
               El plan de trabajo esta disponible en linea, junto con el catalogo completo de casos de uso.
               Desde ahi tambien se activa el servicio y se agenda la sesion inicial de Kickoff.
             </p>
