@@ -33,6 +33,7 @@ import { UseCaseClusterGraph } from "@/components/cs/use-case-cluster-graph";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
+import { TimelineScrollbar } from "@/components/onboarding/timeline-scrollbar";
 import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -552,6 +553,7 @@ export function OnboardingClientPage({
   const isNorthStarEditorOpenRef = useRef(false);
   const draftSubitemDateInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   const writable = canEdit(initialData.accessRole);
   const stageMeta = STAGE_META[activeStage];
@@ -720,9 +722,12 @@ export function OnboardingClientPage({
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const ganttTimeline = useMemo(() => {
-    const today = new Date();
-    const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const today = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    // The board defaults to showing last month + this month + the upcoming
+    // months, but still needs a scrollable strip further back whenever an
+    // initiative was actually scheduled earlier than that.
+    const minimumWindowStart = startOfCalendarMonth(addCalendarMonths(today, -1));
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(today, 3), 1);
 
     const datedRows = initiatives
       .map((initiative) => {
@@ -767,6 +772,16 @@ export function OnboardingClientPage({
         return left.start.getTime() - right.start.getTime();
       });
 
+    const earliestScheduledStart = datedRows.reduce<Date | null>((earliest, row) => {
+      if (!row.start) return earliest;
+      if (!earliest || row.start < earliest) return row.start;
+      return earliest;
+    }, null);
+    const windowStart =
+      earliestScheduledStart && earliestScheduledStart < minimumWindowStart
+        ? startOfCalendarMonth(earliestScheduledStart)
+        : minimumWindowStart;
+
     const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
       if (!row.end) return latest;
       if (!latest || row.end > latest) return row.end;
@@ -793,6 +808,7 @@ export function OnboardingClientPage({
       };
     });
     const todayOffset = diffCalendarDays(windowStart, today);
+    const currentMonthOffset = diffCalendarDays(windowStart, startOfCalendarMonth(today));
     const visibleRows = datedRows
       .filter((row) => row.start && row.end)
       .map((row) => {
@@ -818,12 +834,31 @@ export function OnboardingClientPage({
       dayMarkers,
       timelineDays,
       todayOffset,
+      currentMonthOffset,
       rows: visibleRows,
       undatedRows: datedRows.filter((row) => !row.start || !row.end).map((row) => row.initiative),
       windowStart,
       windowEnd,
     };
   }, [initiatives]);
+
+  const timelineScrollTarget = ganttTimeline.currentMonthOffset * ganttTimeline.dayWidth;
+
+  useEffect(() => {
+    // Land on the start of the current month by default — the board now
+    // also renders last month (and any earlier scheduled dates) so it's
+    // reachable by dragging the scrollbar left, but it shouldn't be the
+    // first thing a user sees. Depending only on the computed target (not
+    // on every render) is deliberate: an earlier version with no dependency
+    // array re-ran on every unrelated re-render of this large component and
+    // kept fighting the user's own drags on the scrollbar. This only
+    // re-applies when the target itself actually changes (e.g. once
+    // initiatives finish loading and the window shifts further back).
+    const container = timelineScrollRef.current;
+    if (!container) return;
+    container.scrollLeft = timelineScrollTarget;
+  }, [timelineScrollTarget]);
+
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
 
@@ -3600,10 +3635,10 @@ export function OnboardingClientPage({
             </Button>
           </div>
 
-          <div className="mt-6 overflow-x-auto pb-2">
-            <div className="min-w-[1160px] overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+          <div className="mt-6 rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+            <div ref={timelineScrollRef} className="timeline-scrollbar overflow-x-auto">
               <div
-                className="grid min-w-[1120px]"
+                className="grid min-w-[1160px]"
                 style={{
                   gridTemplateColumns: `0px minmax(${ganttTimeline.timelineDays * ganttTimeline.dayWidth}px, 1fr)`,
                 }}
@@ -3805,34 +3840,38 @@ export function OnboardingClientPage({
               </div>
             </div>
 
-            {ganttTimeline.undatedRows.length ? (
-              <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                    Iniciativas sin rango
-                  </h3>
-                  <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
-                    {ganttTimeline.undatedRows.length} pendientes
-                  </span>
-                </div>
-                <p className="mt-2 text-[12px] text-[#8aa0b4]">
-                  Aun no entran al calendario porque les falta fecha de inicio o fin.
-                </p>
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {ganttTimeline.undatedRows.map((initiative) => (
-                    <button
-                      key={initiative.id}
-                      type="button"
-                      onClick={() => openEditModal(initiative)}
-                      className="rounded-full border border-[#d7e0ea] bg-white px-4 py-2 text-[11px] text-[#33475b] shadow-[0_1px_2px_rgba(51,71,91,0.05)]"
-                    >
-                      <span className="font-bold">{initiative.title}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+            <div className="border-t border-[#dfe3eb] px-4 py-3">
+              <TimelineScrollbar containerRef={timelineScrollRef} dayWidth={ganttTimeline.dayWidth} />
+            </div>
           </div>
+
+          {ganttTimeline.undatedRows.length ? (
+            <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                  Iniciativas sin rango
+                </h3>
+                <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
+                  {ganttTimeline.undatedRows.length} pendientes
+                </span>
+              </div>
+              <p className="mt-2 text-[12px] text-[#8aa0b4]">
+                Aun no entran al calendario porque les falta fecha de inicio o fin.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {ganttTimeline.undatedRows.map((initiative) => (
+                  <button
+                    key={initiative.id}
+                    type="button"
+                    onClick={() => openEditModal(initiative)}
+                    className="rounded-full border border-[#d7e0ea] bg-white px-4 py-2 text-[11px] text-[#33475b] shadow-[0_1px_2px_rgba(51,71,91,0.05)]"
+                  >
+                    <span className="font-bold">{initiative.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
         <div className="mt-10 space-y-4">
           <h3 className="text-[13px] font-bold text-[#33475b]">

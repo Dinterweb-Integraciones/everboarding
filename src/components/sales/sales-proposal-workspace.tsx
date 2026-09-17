@@ -10,6 +10,7 @@ import {
   exportPlanReportPdf,
   type PlanReportInitiative,
 } from "@/components/onboarding/plan-report-export";
+import { TimelineScrollbar } from "@/components/onboarding/timeline-scrollbar";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { RichTextDisplay, RichTextTextarea, richTextToPlainText } from "@/components/ui/rich-text";
 import { reorderBoardItems, type DropPosition } from "@/lib/board-order";
@@ -861,6 +862,7 @@ export function SalesProposalWorkspace({
   const pendingProposalSlugRef = useRef<string | null>(initialDraft.slug ?? null);
   const persistProposalRef = useRef<((draftOverride?: SalesProposalDraft, options?: { mergeWithCurrent?: boolean }) => Promise<SalesProposalDraft>) | null>(null);
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   function applyDinterwebCommercialTerms(
     monthlyCredits: number,
@@ -1015,9 +1017,12 @@ export function SalesProposalWorkspace({
   const metrics = useMemo(() => calculateSalesProposalMetrics(proposal), [proposal]);
 
   const timelineRows = useMemo(() => {
-    const today = new Date();
-    const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const today = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    // The board defaults to showing last month + this month + the upcoming
+    // months, but still needs a scrollable strip further back whenever an
+    // initiative was actually scheduled earlier than that.
+    const minimumWindowStart = startOfCalendarMonth(addCalendarMonths(today, -1));
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(today, 3), 1);
 
     const datedRows = proposal.initiatives
       .map((initiative) => {
@@ -1031,6 +1036,16 @@ export function SalesProposalWorkspace({
         if (!right.start) return -1;
         return left.start.getTime() - right.start.getTime();
       });
+
+    const earliestScheduledStart = datedRows.reduce<Date | null>((earliest, row) => {
+      if (!row.start) return earliest;
+      if (!earliest || row.start < earliest) return row.start;
+      return earliest;
+    }, null);
+    const windowStart =
+      earliestScheduledStart && earliestScheduledStart < minimumWindowStart
+        ? startOfCalendarMonth(earliestScheduledStart)
+        : minimumWindowStart;
 
     const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
       if (!row.end) return latest;
@@ -1059,6 +1074,7 @@ export function SalesProposalWorkspace({
     });
 
     const todayOffset = diffCalendarDays(windowStart, today);
+    const currentMonthOffset = diffCalendarDays(windowStart, startOfCalendarMonth(today));
     const visibleRows = datedRows
       .filter((row) => row.start && row.end)
       .map((row) => {
@@ -1085,12 +1101,30 @@ export function SalesProposalWorkspace({
       dayMarkers,
       timelineDays,
       todayOffset,
+      currentMonthOffset,
       rows: visibleRows,
       undatedRows: datedRows.filter((row) => !row.start || !row.end).map((row) => row.initiative),
       windowStart,
       windowEnd,
     };
   }, [proposal.initiatives]);
+
+  const timelineScrollTarget = timelineRows.currentMonthOffset * timelineRows.dayWidth;
+
+  useEffect(() => {
+    // Land on the start of the current month by default — the board now
+    // also renders last month (and any earlier scheduled dates) so it's
+    // reachable by dragging the scrollbar left, but it shouldn't be the
+    // first thing a user sees. Depending only on the computed target (not
+    // on every render) is deliberate: an earlier version with no dependency
+    // array re-ran on every unrelated re-render of this large component and
+    // kept fighting the user's own drags on the scrollbar. This only
+    // re-applies when the target itself actually changes (e.g. once
+    // initiatives finish loading and the window shifts further back).
+    const container = timelineScrollRef.current;
+    if (!container) return;
+    container.scrollLeft = timelineScrollTarget;
+  }, [timelineScrollTarget]);
 
   useEffect(() => {
     if (!isGeneratingWizardPlan) {
@@ -3762,10 +3796,10 @@ function mergeRecommendedGroups(
             </p>
           </div>
 
-          <div className="mt-6 overflow-x-auto pb-2">
-            <div className="min-w-[1160px] overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+          <div className="mt-6 rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+            <div ref={timelineScrollRef} className="timeline-scrollbar overflow-x-auto">
               <div
-                className="grid min-w-[1120px]"
+                className="grid min-w-[1160px]"
                 style={{
                   gridTemplateColumns: `0px minmax(${timelineRows.timelineDays * timelineRows.dayWidth}px, 1fr)`,
                 }}
@@ -3969,6 +4003,10 @@ function mergeRecommendedGroups(
                   })
                 )}
               </div>
+            </div>
+
+            <div className="border-t border-[#dfe3eb] px-4 py-3">
+              <TimelineScrollbar containerRef={timelineScrollRef} dayWidth={timelineRows.dayWidth} />
             </div>
           </div>
 

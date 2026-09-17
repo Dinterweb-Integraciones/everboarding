@@ -38,3 +38,16 @@ textarea {
 ::selection {
   background: color-mix(in oklab, var(--accent) 24%, white);
 }
+
+/* A native horizontal scrollbar is inconsistent across OS/browser (thin,
+   OS-themed, sometimes hidden until hover) — the "Plan de trabajo" gantt
+   boards pair this container with a custom, always-visible slider
+   (TimelineScrollbar) instead, so the native one is hidden to avoid two
+   different-looking scrollbars stacked on top of each other. */
+.timeline-scrollbar {
+  scrollbar-width: none;
+}
+
+.timeline-scrollbar::-webkit-scrollbar {
+  display: none;
+}

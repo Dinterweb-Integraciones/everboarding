@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
+import { TimelineScrollbar } from "@/components/onboarding/timeline-scrollbar";
 import {
   PlanReportExportPages,
   exportPlanReportPdf,
@@ -297,6 +298,7 @@ export function PublicOnboardingPage({
   const [activeInitiativePreview, setActiveInitiativePreview] = useState<InitiativeRecord | null>(null);
   const northStarStatusRef = useRef(config.north_star_status);
   const catalogContentRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   const stage = resolveStageFromPublicAudience(audience);
   const stageMeta = STAGE_META[stage];
@@ -713,9 +715,12 @@ export function PublicOnboardingPage({
   }
 
   const timeline = useMemo(() => {
-    const today = new Date();
-    const windowStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(windowStart, 3), 1);
+    const today = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    // The board defaults to showing last month + this month + the upcoming
+    // months, but still needs a scrollable strip further back whenever an
+    // initiative was actually scheduled earlier than that.
+    const minimumWindowStart = startOfCalendarMonth(addCalendarMonths(today, -1));
+    const minimumWindowEnd = addCalendarDays(addRollingCalendarMonths(today, 3), 1);
 
     const datedRows = initiatives
       .map((initiative) => {
@@ -759,6 +764,16 @@ export function PublicOnboardingPage({
         return left.start.getTime() - right.start.getTime();
       });
 
+    const earliestScheduledStart = datedRows.reduce<Date | null>((earliest, row) => {
+      if (!row.start) return earliest;
+      if (!earliest || row.start < earliest) return row.start;
+      return earliest;
+    }, null);
+    const windowStart =
+      earliestScheduledStart && earliestScheduledStart < minimumWindowStart
+        ? startOfCalendarMonth(earliestScheduledStart)
+        : minimumWindowStart;
+
     const latestScheduledEnd = datedRows.reduce<Date | null>((latest, row) => {
       if (!row.end) return latest;
       if (!latest || row.end > latest) return row.end;
@@ -785,6 +800,7 @@ export function PublicOnboardingPage({
       };
     });
     const todayOffset = diffCalendarDays(windowStart, today);
+    const currentMonthOffset = diffCalendarDays(windowStart, startOfCalendarMonth(today));
     const rows = datedRows
       .filter((row) => row.start && row.end)
       .map((row) => {
@@ -810,12 +826,30 @@ export function PublicOnboardingPage({
       dayMarkers,
       timelineDays,
       todayOffset,
+      currentMonthOffset,
       rows,
       undatedRows: datedRows.filter((row) => !row.start || !row.end).map((row) => row.initiative),
       windowStart,
       windowEnd,
     };
   }, [initiatives]);
+
+  const timelineScrollTarget = timeline.currentMonthOffset * timeline.dayWidth;
+
+  useEffect(() => {
+    // Land on the start of the current month by default — the board now
+    // also renders last month (and any earlier scheduled dates) so it's
+    // reachable by dragging the scrollbar left, but it shouldn't be the
+    // first thing a user sees. Depending only on the computed target (not
+    // on every render) is deliberate: an earlier version with no dependency
+    // array re-ran on every unrelated re-render of this large component and
+    // kept fighting the user's own drags on the scrollbar. This only
+    // re-applies when the target itself actually changes (e.g. once
+    // initiatives finish loading and the window shifts further back).
+    const container = timelineScrollRef.current;
+    if (!container) return;
+    container.scrollLeft = timelineScrollTarget;
+  }, [timelineScrollTarget]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2013,10 +2047,10 @@ export function PublicOnboardingPage({
               </p>
             </div>
 
-            <div className="mt-6 overflow-x-auto pb-2">
-              <div className="min-w-[1160px] overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+            <div className="mt-6 rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
+              <div ref={timelineScrollRef} className="timeline-scrollbar overflow-x-auto">
                 <div
-                  className="grid min-w-[1120px]"
+                  className="grid min-w-[1160px]"
                   style={{
                     gridTemplateColumns: `0px minmax(${timeline.timelineDays * timeline.dayWidth}px, 1fr)`,
                   }}
@@ -2115,32 +2149,36 @@ export function PublicOnboardingPage({
                 </div>
               </div>
 
-              {timeline.undatedRows.length ? (
-                <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
-                      Iniciativas sin rango
-                    </h3>
-                    <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
-                      {timeline.undatedRows.length} pendientes
-                    </span>
-                  </div>
-                  <p className="mt-2 text-[12px] text-[#8aa0b4]">
-                    Aun no entran al calendario porque les falta fecha de inicio o fin.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    {timeline.undatedRows.map((initiative) => (
-                      <span
-                        key={`undated-${initiative.id}`}
-                        className="rounded-full border border-[#d7e0ea] bg-white px-4 py-2 text-[11px] text-[#33475b] shadow-[0_1px_2px_rgba(51,71,91,0.05)]"
-                      >
-                        <span className="font-bold">{initiative.title}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+              <div className="border-t border-[#dfe3eb] px-4 py-3">
+                <TimelineScrollbar containerRef={timelineScrollRef} dayWidth={timeline.dayWidth} />
+              </div>
             </div>
+
+            {timeline.undatedRows.length ? (
+              <div className="mt-6 rounded-[6px] border border-dashed border-[#cbd6e2] bg-[#f8fbfd] px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#516f90]">
+                    Iniciativas sin rango
+                  </h3>
+                  <span className="rounded-full bg-[#f5f8fa] px-3 py-1 text-[10px] font-bold text-[#516f90]">
+                    {timeline.undatedRows.length} pendientes
+                  </span>
+                </div>
+                <p className="mt-2 text-[12px] text-[#8aa0b4]">
+                  Aun no entran al calendario porque les falta fecha de inicio o fin.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {timeline.undatedRows.map((initiative) => (
+                    <span
+                      key={`undated-${initiative.id}`}
+                      className="rounded-full border border-[#d7e0ea] bg-white px-4 py-2 text-[11px] text-[#33475b] shadow-[0_1px_2px_rgba(51,71,91,0.05)]"
+                    >
+                      <span className="font-bold">{initiative.title}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
