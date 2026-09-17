@@ -38,6 +38,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   evaluation_cases_count: number;
   validated_evaluation_cases_count: number;
   contracted_credits: number;
+  contracted_credits_period_months: number;
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
   credit_expiration_at: string | null;
@@ -107,6 +108,7 @@ type CreditHistoryReportRow = {
   totalContractedCredits: number;
   availableCredits: number;
   projectedNextMonthCredits: number;
+  weeklyConsumptionRate: number | null;
   committedCredits: number;
   completedCredits: number;
   cycleStartAt: string;
@@ -174,6 +176,10 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
 }
 
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 }).format(value);
+}
+
 function InfoTooltip({ children }: { children: ReactNode }) {
   return (
     <span className="group relative inline-flex cursor-help align-middle">
@@ -185,15 +191,15 @@ function InfoTooltip({ children }: { children: ReactNode }) {
   );
 }
 
-function getRemainingCalendarDays(value: string | null) {
+function parseDateOnly(value: string | null) {
   if (!value) return null;
 
   const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((parsed.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24));
+function daysBetweenDates(start: Date, end: Date) {
+  return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(value: string) {
@@ -357,12 +363,43 @@ export function ReportsPanel({
       );
     });
 
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
     return rows
       .map((row) => {
         const availableCredits = Number(row.credits_remaining) || 0;
         const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
         const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
-        const daysUntilCreditExpiration = Math.max(1, getRemainingCalendarDays(row.credit_expiration_at) ?? 1);
+        // contracted_credits es el total del plan completo (puede ser mensual, trimestral o
+        // semestral); se divide entre su duración en meses para obtener el equivalente mensual.
+        const recurringPeriodMonths = Math.max(1, row.contracted_credits_period_months || 1);
+        const totalContractedCredits =
+          row.billing === "paquetes"
+            ? grantedCreditsByClient.get(row.client_id) ?? 0
+            : Math.round(row.contracted_credits / recurringPeriodMonths);
+
+        let projectedNextMonthCredits: number;
+        let weeklyConsumptionRate: number | null = null;
+
+        if (row.billing === "recurrencia") {
+          // Se renueva al mismo monto cada ciclo: no requiere cálculo de tasa de consumo.
+          projectedNextMonthCredits = totalContractedCredits;
+        } else {
+          // Tasa de consumo semanal = lo consumido desde el inicio del ciclo hasta hoy
+          // (o hasta el fin del ciclo, lo que ocurra antes), sin importar si ya se
+          // agotaron los créditos disponibles: sirve para proyectar aunque el saldo sea 0.
+          const cycleStart = parseDateOnly(row.current_cycle_start_at);
+          const cycleEnd = parseDateOnly(row.current_cycle_end_at);
+          const elapsedEnd = cycleEnd && cycleEnd < todayStart ? cycleEnd : todayStart;
+          const elapsedDays = cycleStart ? Math.max(0, daysBetweenDates(cycleStart, elapsedEnd)) : 0;
+          const elapsedWeeks = elapsedDays / 7;
+          const consumedCredits = Math.max(0, totalContractedCredits - availableCredits);
+          weeklyConsumptionRate = elapsedWeeks > 0 ? consumedCredits / elapsedWeeks : 0;
+
+          // Un mes equivale a 4 semanas: proyectados = tasa semanal x 4.
+          projectedNextMonthCredits = weeklyConsumptionRate * 4;
+        }
 
         return {
           clientId: row.client_id,
@@ -370,15 +407,11 @@ export function ReportsPanel({
           customerSuccessId: row.customer_success_id,
           customerSuccessName: row.customer_success_name,
           billing: row.billing,
-          totalContractedCredits:
-            row.billing === "paquetes"
-              ? grantedCreditsByClient.get(row.client_id) ?? 0
-              : row.contracted_credits,
+          totalContractedCredits,
           availableCredits,
-          projectedNextMonthCredits:
-            row.billing === "recurrencia"
-              ? row.contracted_credits
-              : Math.round((availableCredits / daysUntilCreditExpiration) * 30),
+          projectedNextMonthCredits: Math.round(projectedNextMonthCredits),
+          weeklyConsumptionRate:
+            weeklyConsumptionRate === null ? null : Math.round(weeklyConsumptionRate * 10) / 10,
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -865,6 +898,7 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
   { key: "cycleEnd", label: "Fecha de finalización del ciclo" },
   { key: "creditExpiration", label: "Fecha de vencimiento de créditos" },
   { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
+  { key: "weeklyRate", label: "Tasa de consumo semanal" },
   { key: "projected", label: "Créditos proyectados siguiente mes", sortKey: "projectedNextMonthCredits" },
   { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
   { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
@@ -957,11 +991,14 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
             <InfoTooltip>
               Completados suma los créditos de casos terminados dentro del ciclo de facturación actual del
               cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
-              Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Proyectados
-              muestra los créditos de su plan de recurrencia por ciclo; para paquetes, extrapola los créditos
-              disponibles al ritmo de los días que faltan hasta la fecha de vencimiento de créditos, para
-              estimar un mes de 30 días. La tabla agrupa a cada cliente bajo su Customer Success, con un
-              total por CS al final de cada grupo.
+              Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Contratados y
+              Proyectados dividen los créditos del plan (mensual, trimestral o semestral) entre su duración
+              en meses, para mostrar solo el equivalente de un mes — no el total del contrato completo, ya
+              que se renueva igual cada ciclo. Para paquetes, la Tasa de consumo semanal se calcula con lo
+              consumido desde el inicio del ciclo hasta hoy (o hasta el fin del ciclo, lo que ocurra antes),
+              incluso si ya no quedan créditos disponibles. Proyectados multiplica esa tasa por 4 semanas
+              (equivalente a un mes). La tabla agrupa a cada cliente bajo su
+              Customer Success, con un total por CS al final de cada grupo.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
@@ -1107,6 +1144,11 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                     <td className="px-4 py-4 text-sm font-black text-[#213343]">
                       {formatNumber(row.totalContractedCredits)} CR
                     </td>
+                    <td className="px-4 py-4 text-sm font-semibold text-[#516f90]">
+                      {row.weeklyConsumptionRate === null
+                        ? "-"
+                        : `${formatDecimal(row.weeklyConsumptionRate)} CR/sem`}
+                    </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.projectedNextMonthCredits)} CR
                     </td>
@@ -1127,6 +1169,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                   <td colSpan={2} className="px-4 py-3 text-sm uppercase tracking-[0.06em]">
                     Total {group.csName}
                   </td>
+                  <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">-</td>

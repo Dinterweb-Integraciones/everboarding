@@ -18,6 +18,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   evaluation_cases_count: number;
   validated_evaluation_cases_count: number;
   contracted_credits: number;
+  contracted_credits_period_months: number;
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
   credit_expiration_at: string | null;
@@ -726,6 +727,7 @@ export default async function ReportsPage() {
       evaluation_cases_count: evaluationCasesCounts.get(row.client_id) ?? 0,
       validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
       contracted_credits: contractedCredits,
+      contracted_credits_period_months: periodMonths,
       current_cycle_start_at: currentCycleStartAt,
       current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
       credit_expiration_at: creditExpirationAt,
