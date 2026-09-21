@@ -378,25 +378,33 @@ export function ReportsPanel({
             ? grantedCreditsByClient.get(row.client_id) ?? 0
             : Math.round(row.contracted_credits / recurringPeriodMonths);
 
-        // Tasa de consumo semanal = lo consumido desde el inicio del ciclo hasta hoy
-        // (o hasta el fin del ciclo, lo que ocurra antes), sin importar si ya se
-        // agotaron los créditos disponibles: sirve para proyectar aunque el saldo sea 0.
-        const cycleStart = parseDateOnly(row.current_cycle_start_at);
-        const cycleEnd = parseDateOnly(row.current_cycle_end_at);
-        const elapsedEnd = cycleEnd && cycleEnd < todayStart ? cycleEnd : todayStart;
-        const elapsedDays = cycleStart ? Math.max(0, daysBetweenDates(cycleStart, elapsedEnd)) : 0;
-        const elapsedWeeks = elapsedDays / 7;
-        const consumedCredits = Math.max(0, totalContractedCredits - availableCredits);
-        const weeklyConsumptionRate = elapsedWeeks > 0 ? consumedCredits / elapsedWeeks : 0;
-
-        // Sin continuidad el contrato no se renueva: se proyecta la tasa semanal por 4
-        // semanas, pero el cliente no puede consumir más de lo que le queda disponible.
-        const projectedWithoutContinuity = Math.min(
-          availableCredits,
-          Math.round(weeklyConsumptionRate * 4),
-        );
-        // Con continuidad el consumo mensual lo define el caudal comercial, tal cual.
         const flowCredits = row.flow_credits;
+        let projectedWithoutContinuity: number;
+        let projectedWithContinuity: number | null;
+
+        if (row.billing === "recurrencia") {
+          // Se renueva al mismo monto cada ciclo: con o sin continuidad es el
+          // equivalente mensual de la recurrencia, sin tasa ni caudal de por medio.
+          projectedWithoutContinuity = totalContractedCredits;
+          projectedWithContinuity = totalContractedCredits;
+        } else {
+          // Tasa de consumo semanal = lo consumido desde el inicio del ciclo hasta hoy
+          // (o hasta el fin del ciclo, lo que ocurra antes), sin importar si ya se
+          // agotaron los créditos disponibles: sirve para proyectar aunque el saldo sea 0.
+          const cycleStart = parseDateOnly(row.current_cycle_start_at);
+          const cycleEnd = parseDateOnly(row.current_cycle_end_at);
+          const elapsedEnd = cycleEnd && cycleEnd < todayStart ? cycleEnd : todayStart;
+          const elapsedDays = cycleStart ? Math.max(0, daysBetweenDates(cycleStart, elapsedEnd)) : 0;
+          const elapsedWeeks = elapsedDays / 7;
+          const consumedCredits = Math.max(0, totalContractedCredits - availableCredits);
+          const weeklyConsumptionRate = elapsedWeeks > 0 ? consumedCredits / elapsedWeeks : 0;
+
+          // Sin continuidad el contrato no se renueva: se proyecta la tasa semanal por 4
+          // semanas, pero el cliente no puede consumir más de lo que le queda disponible.
+          projectedWithoutContinuity = Math.min(availableCredits, Math.round(weeklyConsumptionRate * 4));
+          // Con continuidad el consumo mensual lo define el caudal comercial, tal cual.
+          projectedWithContinuity = flowCredits;
+        }
 
         return {
           clientId: row.client_id,
@@ -408,7 +416,7 @@ export function ReportsPanel({
           flowCredits,
           availableCredits,
           projectedWithoutContinuity,
-          projectedWithContinuity: flowCredits,
+          projectedWithContinuity,
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -1022,10 +1030,12 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
               divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
               para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
               renueva igual cada ciclo. Caudal es el consumo mensual definido comercialmente para el
-              cliente; si aún no está definido, se muestra sin dato. Proyectados sin continuidad asume que
-              el contrato no se renueva: toma la tasa de consumo semanal del ciclo (lo consumido desde su
-              inicio hasta hoy, o hasta el fin del ciclo si ya terminó) por 4 semanas, limitada por los
-              créditos que todavía quedan disponibles. Proyectados con continuidad es el caudal tal cual.
+              cliente; si aún no está definido, se muestra sin dato. Para clientes recurrentes, ambos
+              Proyectados son el equivalente mensual de la recurrencia, ya que se renueva igual cada ciclo.
+              Para paquetes, Proyectados sin continuidad asume que el contrato no se renueva: toma la tasa
+              de consumo semanal del ciclo (lo consumido desde su inicio hasta hoy, o hasta el fin del
+              ciclo si ya terminó) por 4 semanas, limitada por los créditos que todavía quedan disponibles;
+              Proyectados con continuidad es el caudal tal cual.
               La tabla agrupa a cada cliente bajo su Customer Success, con un total por CS al final de cada
               grupo.
             </InfoTooltip>
