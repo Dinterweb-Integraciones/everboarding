@@ -328,6 +328,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     assignedCsmUserId: normalized.assignedCsmUserId,
     startDate: normalized.startDate,
     contractedCredits: normalized.contractedCredits,
+    flowCredits: normalized.flowCredits,
     quotedPrice: normalized.quotedPrice,
     currency: normalized.currency,
     billingMode: normalized.billingMode,
@@ -890,6 +891,15 @@ export function SalesProposalWorkspace({
         quotedPrice: normalizedMonthlyPrice * multiplier,
       });
     });
+  }
+
+  // Caudal: consumo mensual de creditos acordado. Opcional, vacio = sin definir.
+  function applyProposalFlowCredits(value: string) {
+    setProposal((current) => ({
+      ...current,
+      flowCredits:
+        value.trim() === "" ? null : Math.max(0, Math.floor(safeParseNumber(value))),
+    }));
   }
 
   const catalogOptions = useMemo(() => {
@@ -3061,6 +3071,26 @@ function mergeRecommendedGroups(
                   </div>
                 </div>
               ) : null}
+
+              <div className="border-t border-[#dfe3eb] px-3 py-3">
+                <label className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
+                    Creditos de caudal
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="Opcional"
+                    value={proposal.flowCredits === null ? "" : String(proposal.flowCredits)}
+                    onChange={(event) => applyProposalFlowCredits(event.target.value)}
+                    disabled={isProposalCheckoutLocked}
+                    className="h-9 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                  <span className="block text-[10px] font-semibold leading-relaxed text-[#9cb1c6]">
+                    Consumo mensual de creditos acordado con el cliente. Dejalo vacio si aun no se define.
+                  </span>
+                </label>
+              </div>
 
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <div className="flex flex-col items-center gap-2.5">

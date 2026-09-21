@@ -167,6 +167,8 @@ export async function resolveLiveSalesProposalRecords(proposals: SalesProposalRe
         0,
         safeParseNumber(config?.custom_plan_credits ?? config?.base_capacity ?? proposal.contractedCredits),
       ),
+      // El caudal vigente del cliente manda sobre el acordado en la propuesta.
+      flowCredits: config?.flow_credits ?? proposal.flowCredits,
       quotedPrice: Math.max(0, safeParseNumber(config?.custom_plan_price ?? proposal.quotedPrice)),
       billingMode: config?.custom_plan_billing_mode ?? proposal.billingMode,
       periodMonths: normalizePeriodMonths(config?.custom_plan_period_months, proposal.periodMonths),

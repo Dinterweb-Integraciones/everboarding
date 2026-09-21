@@ -1221,6 +1221,8 @@ async function activateSalesProposalWithPaymentContext(
       custom_plan_type: proposal.billingMode === "subscription" ? "mensual" : "proyecto",
       custom_plan_billing_mode: proposal.billingMode,
       custom_plan_period_months: proposal.periodMonths,
+      // El caudal acordado en la propuesta arranca como el caudal del cliente.
+      flow_credits: proposal.flowCredits,
       current_stage: "cs",
       credit_validity_days: proposal.creditValidityDays,
       sales_cleared: true,

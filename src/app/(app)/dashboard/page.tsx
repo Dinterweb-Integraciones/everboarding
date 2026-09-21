@@ -93,7 +93,11 @@ export default async function DashboardPage() {
   }
 
   const customerSuccessOptions = canSeeAllClients
-    ? (customerSuccessRows ?? []).map((profile) => ({
+    ? ((customerSuccessRows ?? []) as Array<{
+        id: string;
+        full_name: string | null;
+        email: string;
+      }>).map((profile) => ({
         id: profile.id,
         name: profile.full_name || profile.email || "Sin nombre",
       }))

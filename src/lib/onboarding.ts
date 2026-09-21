@@ -265,6 +265,7 @@ export function createDefaultConfig(clientId: string): OnboardingConfig {
     custom_plan_type: null,
     custom_plan_billing_mode: "subscription",
     custom_plan_period_months: 1,
+    flow_credits: null,
     current_stage: "cs",
     credit_validity_days: 60,
     show_all_completed: false,

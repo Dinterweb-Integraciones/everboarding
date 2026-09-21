@@ -81,6 +81,8 @@ create table if not exists public.sales_proposals (
   currency text not null default 'usd',
   billing_mode public.custom_plan_billing_mode not null default 'subscription',
   plan_period_months integer not null default 1 check (plan_period_months in (1, 3, 6, 12)),
+  -- Caudal: créditos de consumo mensual definidos comercialmente. Opcional.
+  flow_credits integer check (flow_credits is null or flow_credits >= 0),
   credit_validity_days integer not null default 60 check (credit_validity_days > 0),
   status public.sales_proposal_status not null default 'draft',
   payment_method public.sales_payment_method not null default 'stripe',
@@ -338,6 +340,8 @@ create table if not exists public.onboarding_configs (
   custom_plan_type public.custom_plan_type,
   custom_plan_billing_mode public.custom_plan_billing_mode not null default 'subscription',
   custom_plan_period_months integer not null default 1 check (custom_plan_period_months in (1, 3, 6, 12)),
+  -- Caudal: créditos de consumo mensual definidos comercialmente. Opcional.
+  flow_credits integer check (flow_credits is null or flow_credits >= 0),
   current_stage public.project_stage not null default 'cs',
   credit_validity_days integer not null default 60 check (credit_validity_days > 0),
   show_all_completed boolean not null default false,
@@ -361,6 +365,12 @@ create table if not exists public.onboarding_configs (
 
 alter table public.onboarding_configs
 add column if not exists custom_plan_period_months integer not null default 1;
+
+alter table public.onboarding_configs
+add column if not exists flow_credits integer;
+
+alter table public.sales_proposals
+add column if not exists flow_credits integer;
 
 alter table public.onboarding_configs
 add column if not exists custom_plan_billing_mode public.custom_plan_billing_mode not null default 'subscription';
@@ -1769,6 +1779,7 @@ begin
         'custom_plan_type', null,
         'custom_plan_billing_mode', 'subscription',
         'custom_plan_period_months', 1,
+        'flow_credits', null,
         'current_stage', 'cs',
         'credit_validity_days', 60,
         'show_all_completed', false,

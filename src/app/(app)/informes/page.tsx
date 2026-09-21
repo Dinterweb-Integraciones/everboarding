@@ -19,6 +19,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   validated_evaluation_cases_count: number;
   contracted_credits: number;
   contracted_credits_period_months: number;
+  flow_credits: number | null;
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
   credit_expiration_at: string | null;
@@ -97,6 +98,7 @@ type CustomerSuccessConfigRow = {
   base_capacity: number;
   custom_plan_credits: number | null;
   custom_plan_period_months: number;
+  flow_credits: number | null;
   north_star_text: string | null;
   north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed";
   north_star_lifecycle_status: "active" | "inactive" | "fulfilled";
@@ -387,7 +389,7 @@ export default async function ReportsPage() {
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
         .from("onboarding_configs")
-        .select("client_id, base_capacity, custom_plan_credits, custom_plan_period_months, north_star_text, north_star_status, north_star_lifecycle_status")
+        .select("client_id, base_capacity, custom_plan_credits, custom_plan_period_months, flow_credits, north_star_text, north_star_status, north_star_lifecycle_status")
         .in("client_id", clientIds)
     : { data: [] as CustomerSuccessConfigRow[], error: null };
 
@@ -728,6 +730,7 @@ export default async function ReportsPage() {
       validated_evaluation_cases_count: validatedEvaluationCasesCounts.get(row.client_id) ?? 0,
       contracted_credits: contractedCredits,
       contracted_credits_period_months: periodMonths,
+      flow_credits: config?.flow_credits ?? null,
       current_cycle_start_at: currentCycleStartAt,
       current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
       credit_expiration_at: creditExpirationAt,

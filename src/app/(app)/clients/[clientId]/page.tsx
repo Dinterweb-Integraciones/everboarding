@@ -281,7 +281,11 @@ export default async function ClientDetailPage({
     throw new Error("No pudimos cargar los créditos próximos a vencer.");
   }
 
-  const expiringSoonCredits = (expiringCreditGrantRows ?? []).reduce(
+  const expiringSoonCredits = ((expiringCreditGrantRows ?? []) as Array<{
+    granted_credits: number;
+    used_credits: number;
+    expired_credits: number;
+  }>).reduce(
     (total, grant) =>
       total + Math.max(0, grant.granted_credits - grant.used_credits - grant.expired_credits),
     0,

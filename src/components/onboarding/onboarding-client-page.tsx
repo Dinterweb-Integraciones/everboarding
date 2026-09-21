@@ -518,12 +518,15 @@ export function OnboardingClientPage({
     billingMode: CustomPlanBillingMode;
     periodMonths: PlanPeriodMonths;
     validityDays: number;
+    // Caudal: vacío mientras no se defina un consumo mensual.
+    flowCredits: string;
   }>({
     credits: config.custom_plan_credits ?? config.base_capacity,
     price: getEffectivePlanPrice(config),
     billingMode: config.custom_plan_billing_mode ?? "subscription",
     periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
     validityDays: config.credit_validity_days,
+    flowCredits: config.flow_credits === null ? "" : String(config.flow_credits),
   });
   const [quickAddSelections, setQuickAddSelections] = useState<Record<InitiativeStatus, string>>({
     backlog: "",
@@ -1194,6 +1197,7 @@ export function OnboardingClientPage({
       billingMode: config.custom_plan_billing_mode ?? (config.custom_plan_type === "proyecto" ? "one_time" : "subscription"),
       periodMonths: (config.custom_plan_period_months ?? 1) as PlanPeriodMonths,
       validityDays: config.credit_validity_days,
+      flowCredits: config.flow_credits === null ? "" : String(config.flow_credits),
     });
     setIsOfferModalOpen(true);
   }
@@ -1212,6 +1216,11 @@ export function OnboardingClientPage({
       custom_plan_billing_mode: offerDraft.billingMode,
       custom_plan_period_months: offerDraft.periodMonths,
       credit_validity_days: Math.max(1, offerDraft.validityDays),
+      // El caudal es opcional: si se deja vacío el cliente queda sin caudal definido.
+      flow_credits:
+        offerDraft.flowCredits.trim() === ""
+          ? null
+          : Math.max(0, Math.floor(safeParseNumber(offerDraft.flowCredits))),
     }));
     setIsOfferModalOpen(false);
     showSuccess("Oferta configurada. Recuerda guardar los ajustes.");
@@ -4970,6 +4979,25 @@ export function OnboardingClientPage({
                     }))
                   }
                 />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Creditos de caudal</span>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="Opcional"
+                  value={offerDraft.flowCredits}
+                  onChange={(event) =>
+                    setOfferDraft((current) => ({
+                      ...current,
+                      flowCredits: event.target.value,
+                    }))
+                  }
+                />
+                <span className="block text-xs font-medium text-slate-500">
+                  Consumo mensual de creditos acordado. Dejalo vacio si aun no se define.
+                </span>
               </label>
 
               <label className="space-y-2">

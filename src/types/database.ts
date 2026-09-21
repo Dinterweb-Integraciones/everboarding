@@ -145,6 +145,7 @@ export type Database = {
           currency: string;
           billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months: number;
+          flow_credits: number | null;
           credit_validity_days: number;
           status: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method: Database["public"]["Enums"]["sales_payment_method"];
@@ -190,6 +191,7 @@ export type Database = {
           currency?: string;
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
+          flow_credits?: number | null;
           credit_validity_days?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method?: Database["public"]["Enums"]["sales_payment_method"];
@@ -235,6 +237,7 @@ export type Database = {
           currency?: string;
           billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           plan_period_months?: number;
+          flow_credits?: number | null;
           credit_validity_days?: number;
           status?: Database["public"]["Enums"]["sales_proposal_status"];
           payment_method?: Database["public"]["Enums"]["sales_payment_method"];
@@ -412,6 +415,7 @@ export type Database = {
           custom_plan_type: Database["public"]["Enums"]["custom_plan_type"] | null;
           custom_plan_billing_mode: Database["public"]["Enums"]["custom_plan_billing_mode"];
           custom_plan_period_months: number;
+          flow_credits: number | null;
           current_stage: Database["public"]["Enums"]["project_stage"];
           credit_validity_days: number;
           show_all_completed: boolean;
@@ -440,6 +444,7 @@ export type Database = {
           custom_plan_type?: Database["public"]["Enums"]["custom_plan_type"] | null;
           custom_plan_billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           custom_plan_period_months?: number;
+          flow_credits?: number | null;
           current_stage?: Database["public"]["Enums"]["project_stage"];
           credit_validity_days?: number;
           show_all_completed?: boolean;
@@ -468,6 +473,7 @@ export type Database = {
           custom_plan_type?: Database["public"]["Enums"]["custom_plan_type"] | null;
           custom_plan_billing_mode?: Database["public"]["Enums"]["custom_plan_billing_mode"];
           custom_plan_period_months?: number;
+          flow_credits?: number | null;
           current_stage?: Database["public"]["Enums"]["project_stage"];
           credit_validity_days?: number;
           show_all_completed?: boolean;

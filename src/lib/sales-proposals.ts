@@ -71,6 +71,8 @@ export type SalesProposalDraft = {
   assignedCsmUserId: string;
   startDate: string;
   contractedCredits: number;
+  // Caudal: consumo mensual de créditos acordado. Opcional mientras no se defina.
+  flowCredits: number | null;
   quotedPrice: number;
   currency: string;
   billingMode: "subscription" | "one_time";
@@ -137,6 +139,7 @@ type CompactSalesProposalSnapshot = {
   cb?: number | null;
   pe?: number | null;
   cv?: number | null;
+  fc?: number | null;
   i?: CompactSalesProposalInitiativeSnapshot[];
 };
 
@@ -150,6 +153,7 @@ function createCompactSalesProposalSnapshot(
     | "couponBaseQuotedPrice"
     | "prospectExtraPackageQuantity"
     | "creditValidityDays"
+    | "flowCredits"
     | "initiatives"
   >,
 ): CompactSalesProposalSnapshot {
@@ -161,6 +165,7 @@ function createCompactSalesProposalSnapshot(
     cb: draft.couponBaseQuotedPrice,
     pe: draft.prospectExtraPackageQuantity,
     cv: draft.creditValidityDays,
+    fc: draft.flowCredits,
     i: draft.initiatives.map((initiative) => [
       initiative.id,
       initiative.title,
@@ -212,6 +217,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     assignedCsmUserId: "",
     startDate: toIsoDate(),
     contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
+    flowCredits: null,
     quotedPrice: SALES_PROPOSAL_BASE_PRICE,
     currency: "usd",
     billingMode: "one_time",
@@ -243,6 +249,19 @@ export function normalizeSalesPaymentMethod(value: unknown): SalesProposalPaymen
 
 export function getDefaultSalesCreditValidityDays(billingMode: SalesProposalDraft["billingMode"]) {
   return billingMode === "one_time" ? 90 : 60;
+}
+
+// El caudal es opcional: sin valor definido se conserva en null.
+export function normalizeSalesFlowCredits(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value !== "number" && typeof value !== "string") {
+    return null;
+  }
+
+  return Math.max(0, Math.floor(safeParseNumber(value)));
 }
 
 export function normalizeSalesCreditValidityDays(
@@ -652,6 +671,7 @@ export function normalizeSalesProposalDraft(
       billingMode,
     ),
     contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
+    flowCredits: normalizeSalesFlowCredits(input.flowCredits ?? input.fc),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
     initiatives,
   };
@@ -685,6 +705,9 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     startDate: String(row.start_date ?? snapshot.startDate ?? toIsoDate()),
     contractedCredits: safeParseNumber(
       (row.contracted_credits as string | number | null | undefined) ?? snapshot.contractedCredits,
+    ),
+    flowCredits: normalizeSalesFlowCredits(
+      (row.flow_credits as string | number | null | undefined) ?? snapshot.flowCredits,
     ),
     quotedPrice: safeParseNumber(
       (row.quoted_price as string | number | null | undefined) ?? snapshot.quotedPrice,
@@ -755,6 +778,7 @@ export function serializeSalesProposalDraft(draft: SalesProposalDraft) {
     assigned_csm_user_id: normalized.assignedCsmUserId || null,
     start_date: normalized.startDate || toIsoDate(),
     contracted_credits: normalized.contractedCredits,
+    flow_credits: normalized.flowCredits,
     quoted_price: normalized.quotedPrice,
     currency: normalized.currency.toLowerCase(),
     billing_mode: normalized.billingMode,

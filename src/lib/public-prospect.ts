@@ -68,6 +68,7 @@ function createProspectConfig(proposal: SalesProposalRecord): OnboardingConfig {
     custom_plan_type: proposal.billingMode === "subscription" ? "mensual" : "proyecto",
     custom_plan_billing_mode: proposal.billingMode,
     custom_plan_period_months: proposal.periodMonths,
+    flow_credits: proposal.flowCredits,
     current_stage: "sales",
     credit_validity_days: proposal.creditValidityDays,
     show_all_completed: false,
