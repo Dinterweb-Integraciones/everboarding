@@ -154,6 +154,8 @@ export type PublicOnboardingSnapshot = {
   catalogGroupCategoryLinks: CreditCatalogGroupCategoryLink[];
   catalogGroupMemberships: CreditCatalogGroupItem[];
   paymentEmail: string | null;
+  // Vencimiento más lejano de los créditos otorgados; al recargar un paquete se extiende.
+  packageExpirationDate?: string | null;
   prospectProposal?: {
     workspaceVariant: "hubspot" | "dinterweb";
     appliedCouponCode: string;

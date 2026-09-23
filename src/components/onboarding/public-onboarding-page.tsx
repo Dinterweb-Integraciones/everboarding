@@ -231,6 +231,71 @@ function getDaysUntil(date: string | null) {
   );
 }
 
+const PACKAGE_EXPIRATION_WARNING_DAYS = 8;
+
+// Los créditos siguen vigentes durante todo el día de expires_at.
+function getPackageExpirationDeadline(date: string) {
+  const deadline = new Date(`${date}T00:00:00`);
+  deadline.setDate(deadline.getDate() + 1);
+  return deadline.getTime();
+}
+
+function isPackageExpirationWarningActive(date: string | null) {
+  if (!date) return false;
+  const remainingMs = getPackageExpirationDeadline(date) - new Date().getTime();
+  return remainingMs > 0 && remainingMs <= PACKAGE_EXPIRATION_WARNING_DAYS * 86_400_000;
+}
+
+function PackageExpirationCountdown({ expirationDate }: { expirationDate: string }) {
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    // La hora se toma solo en el cliente para no desalinear la hidratación.
+    const tick = () => setNow(Date.now());
+    const firstTick = window.setTimeout(tick, 0);
+    const interval = window.setInterval(tick, 1000);
+    return () => {
+      window.clearTimeout(firstTick);
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const totalSeconds =
+    now === null ? null : Math.max(0, Math.floor((getPackageExpirationDeadline(expirationDate) - now) / 1000));
+  const days = totalSeconds === null ? null : Math.floor(totalSeconds / 86_400);
+  const units = [
+    { label: "Días", value: days },
+    { label: "Horas", value: totalSeconds === null ? null : Math.floor((totalSeconds % 86_400) / 3600) },
+    { label: "Min", value: totalSeconds === null ? null : Math.floor((totalSeconds % 3600) / 60) },
+    { label: "Seg", value: totalSeconds === null ? null : totalSeconds % 60 },
+  ];
+  const daysLabel = days === null ? "pocos días" : days === 1 ? "1 día" : `${days} días`;
+
+  return (
+    <div className="flex h-full w-full flex-col rounded-[6px] border border-[#ffcdbf] bg-[#fff6f3] shadow-sm">
+      <div className="border-b border-[#ffcdbf] px-4 py-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ea580c]">Paquete por vencer</p>
+      </div>
+      <div className="flex flex-1 flex-wrap items-center gap-3 px-4 py-3">
+        <div className="grid shrink-0 grid-cols-4 gap-1.5">
+          {units.map((unit) => (
+            <div key={unit.label} className="min-w-[44px] rounded-[4px] border border-[#ffe1d8] bg-white px-1.5 py-1.5 text-center">
+              <p className="text-[18px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
+                {unit.value === null ? "--" : String(unit.value).padStart(2, "0")}
+              </p>
+              <p className="mt-1 text-[8px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">{unit.label}</p>
+            </div>
+          ))}
+        </div>
+        <p className="min-w-[160px] flex-1 text-[12px] leading-5 text-[#516f90]">
+          Para evitar que su cuenta sea reasignada en <strong className="text-[#ea580c]">{daysLabel}</strong>, debe
+          recargar un nuevo paquete de créditos.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function getPublicInitiativeSpanLabel(
   startDate: string | null,
   endDate: string | null,
@@ -550,6 +615,13 @@ export function PublicOnboardingPage({
       : paymentAmount + prospectExtraPackageDraftPrice;
   const extraPackageResultingCredits = metrics.total + clientExpansionPackage.credits;
   const isRecurringPlan = config.custom_plan_billing_mode !== "one_time";
+  const showPackageExpirationCountdown = useMemo(
+    () =>
+      audience === "client" &&
+      !isRecurringPlan &&
+      isPackageExpirationWarningActive(initialData.packageExpirationDate ?? null),
+    [audience, initialData.packageExpirationDate, isRecurringPlan],
+  );
   const paymentAmountLabel = isRecurringPlan
     ? `Inversión ${getPlanCadenceLabel(config.custom_plan_period_months)}`
     : "Inversión total";
@@ -1543,9 +1615,13 @@ export function PublicOnboardingPage({
               </div>
 
               <div
-                className={`flex w-full flex-col gap-3 ${
-                  audience === "prospect" || audience === "client" ? "max-w-[520px]" : "max-w-[360px]"
-                }`}
+                className={
+                  showPackageExpirationCountdown
+                    ? "grid w-full max-w-[1052px] gap-3 sm:grid-cols-2"
+                    : `flex w-full flex-col gap-3 ${
+                        audience === "prospect" || audience === "client" ? "max-w-[520px]" : "max-w-[360px]"
+                      }`
+                }
               >
                 {audience === "prospect" ? (
                   isProspectAwaitingClientActivation ? (
@@ -1677,11 +1753,18 @@ export function PublicOnboardingPage({
                   </div>
                   )
                 ) : null}
-                <div className="rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90]">
+                <div
+                  className={`rounded-[14px] border border-[#dfe3eb] bg-[#f8fbfd] px-4 py-3 text-[13px] text-[#516f90] ${
+                    showPackageExpirationCountdown ? "sm:col-start-2" : ""
+                  }`}
+                >
                   {audience === "client"
                     ? "Puedes proponer nuevas iniciativas solo en En evaluacion."
                     : "Puedes proponer nuevas iniciativas, pero solo entraran en En evaluacion."}
                 </div>
+                {showPackageExpirationCountdown && initialData.packageExpirationDate ? (
+                  <PackageExpirationCountdown expirationDate={initialData.packageExpirationDate} />
+                ) : null}
                 {audience === "client" ? (
                   <div className="w-full rounded-[6px] border border-[#cbd6e2] bg-white shadow-sm transition hover:shadow-md">
                     <div className="border-b border-[#dfe3eb] px-4 py-2">

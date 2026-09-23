@@ -230,6 +230,13 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     p_client_id: data.client.id,
   } as never);
   const billingRow = (billingResult as { data: ClientBillingStatus | null }).data ?? null;
+  const { data: latestGrantRow } = (await admin
+    .from("client_credit_grants")
+    .select("expires_at")
+    .eq("client_id", data.client.id)
+    .order("expires_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()) as { data: { expires_at: string } | null };
 
   const snapshot: PublicOnboardingSnapshot = {
     client: data.client,
@@ -285,6 +292,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       sort_order: Number(membership.sort_order ?? 0),
     })),
     paymentEmail: data.payment_email,
+    packageExpirationDate: latestGrantRow?.expires_at ?? null,
   };
 
   return (
