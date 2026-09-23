@@ -740,6 +740,7 @@ export default async function ReportsPage() {
   return (
     <ReportsPanel
       canAuditNorths={!isCsm}
+      isCustomerSuccess={isCsm}
       rows={rows}
       initiatives={initiatives}
       operationalTasks={reportSubitems}

@@ -283,6 +283,7 @@ export function ReportsPanel({
   northStarHistory,
   northStarAudits,
   canAuditNorths = true,
+  isCustomerSuccess = false,
 }: {
   rows: ClientHealthReportRow[];
   initiatives: InitiativeReportRow[];
@@ -294,8 +295,11 @@ export function ReportsPanel({
   northStarHistory: NorthHistoryRow[];
   northStarAudits: Array<Record<string, unknown>>;
   canAuditNorths?: boolean;
+  isCustomerSuccess?: boolean;
 }) {
-  const [selectedPanelKey, setSelectedPanelKey] = useState<PanelKey>("clients");
+  const [panelKeyState, setSelectedPanelKey] = useState<PanelKey>("clients");
+  // Customer Success solo ve el panel de clientes.
+  const selectedPanelKey: PanelKey = isCustomerSuccess ? "clients" : panelKeyState;
   const [searchTerm, setSearchTerm] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("days_without_progress");
   const [filters, setFilters] = useState<FilterState>(initialFilters);
@@ -485,6 +489,7 @@ export function ReportsPanel({
             <h1 className="mt-2 text-2xl font-black text-[#213343]">Paneles</h1>
           </div>
 
+          {isCustomerSuccess ? null : (
           <div className="inline-flex rounded-[4px] border border-[#cbd6e2] bg-white p-1" aria-label="Paneles de informes">
             {[...panels]
               .sort((first, second) =>
@@ -505,6 +510,7 @@ export function ReportsPanel({
               </button>
               ))}
           </div>
+          )}
         </div>
 
         <section className="border border-[#dfe3eb] bg-[#eef3f7]">
@@ -530,6 +536,11 @@ export function ReportsPanel({
 
           {selectedPanelKey === "clients" ? (
             <div className="grid gap-4 p-4 xl:grid-cols-2">
+              {isCustomerSuccess ? (
+                <div className="xl:col-span-2">
+                  <CreditHistoryReport rows={creditHistoryRows} />
+                </div>
+              ) : (
               <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm xl:col-span-2">
               <div className="border-b border-[#dfe3eb] p-4">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -758,6 +769,7 @@ export function ReportsPanel({
             </div>
               ) : null}
               </article>
+              )}
 
               <KickoffWindowReport
                 rows={clientReportRows}
