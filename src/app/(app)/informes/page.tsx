@@ -22,7 +22,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   flow_credits: number | null;
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
-  credit_expiration_at: string | null;
+  is_active: boolean;
 };
 
 type InitiativeSourceRow = {
@@ -56,10 +56,11 @@ type InitiativeSubitemReportRow = {
   updated_at: string;
 };
 
-type ActiveClientMilestoneRow = {
+type ClientMilestoneRow = {
   id: string;
   created_at: string;
   csm_user_id: string | null;
+  is_active: boolean;
 };
 
 type PaidBillingCycleRow = {
@@ -242,35 +243,40 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar los perfiles de Customer Success.");
   }
 
-  const { data: activeClientRows, error: activeClientsError } = await admin
+  // Se cargan también los clientes inactivos: el informe de Operaciones los sigue
+  // mostrando mientras tengan créditos disponibles o comprometidos. El resto de
+  // paneles recibe solo clientes activos.
+  const { data: clientRecords, error: clientsError } = await admin
     .from("clients")
-    .select("id, created_at, csm_user_id")
-    .eq("is_active", true);
+    .select("id, created_at, csm_user_id, is_active");
 
-  if (activeClientsError) {
-    throw new Error("No pudimos cargar los clientes activos para informes.");
+  if (clientsError) {
+    throw new Error("No pudimos cargar los clientes para informes.");
   }
 
-  const allActiveClients = (activeClientRows ?? []) as ActiveClientMilestoneRow[];
-  const activeClients = isCsm
-    ? allActiveClients.filter(
+  const allClients = (clientRecords ?? []) as ClientMilestoneRow[];
+  const reportClients = isCsm
+    ? allClients.filter(
         (client) =>
           client.csm_user_id === user.id ||
           membershipRecords.some(
             (membership) => membership.client_id === client.id && membership.profile_role === "csm",
           ),
       )
-    : allActiveClients;
-  const activeClientIds = activeClients.map((client) => client.id);
+    : allClients;
+  const reportClientIds = reportClients.map((client) => client.id);
+  const activeClientIds = new Set(
+    reportClients.filter((client) => client.is_active).map((client) => client.id),
+  );
   const clientCreatedAtByClientId = new Map(
-    activeClients.map((client) => [client.id, client.created_at]),
+    reportClients.map((client) => [client.id, client.created_at]),
   );
 
-  const { data, error } = activeClientIds.length
+  const { data, error } = reportClientIds.length
     ? await admin
         .from("client_health_report")
         .select("*")
-        .in("client_id", activeClientIds)
+        .in("client_id", reportClientIds)
         .order("client_name", { ascending: true })
     : { data: [] as Views<"client_health_report">[], error: null };
 
@@ -713,7 +719,6 @@ export default async function ReportsPage() {
     const latestGrant = latestGrantByClient.get(row.client_id);
     const currentCycleStartAt =
       latestPaidCycleStarts.get(row.client_id) ?? latestGrant?.grant_date ?? isoDateDaysAgo(30);
-    const creditExpirationAt = latestGrant?.expires_at ?? null;
 
     return {
       ...row,
@@ -733,19 +738,26 @@ export default async function ReportsPage() {
       flow_credits: config?.flow_credits ?? null,
       current_cycle_start_at: currentCycleStartAt,
       current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
-      credit_expiration_at: creditExpirationAt,
+      is_active: activeClientIds.has(row.client_id),
     };
   }) satisfies ClientHealthReportRow[];
+  const activeRows = rows.filter((row) => row.is_active);
+  const activeInitiatives = initiatives.filter((initiative) => activeClientIds.has(initiative.client_id));
+  const activeInitiativeIds = new Set(activeInitiatives.map((initiative) => initiative.id));
+  const creditGrants = (customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[];
 
   return (
     <ReportsPanel
       canAuditNorths={!isCsm}
       isCustomerSuccess={isCsm}
-      rows={rows}
-      initiatives={initiatives}
-      operationalTasks={reportSubitems}
+      rows={activeRows}
+      initiatives={activeInitiatives}
+      operationsRows={rows}
+      operationsInitiatives={initiatives}
+      operationsCreditGrants={creditGrants}
+      operationalTasks={reportSubitems.filter((subitem) => activeInitiativeIds.has(subitem.initiative_id))}
       operationalTransitionClients={[
-        ...rows.map((row) => ({
+        ...activeRows.map((row) => ({
           id: row.client_id,
           client_id: row.client_id,
           client_name: row.client_name,
@@ -768,10 +780,14 @@ export default async function ReportsPage() {
             assigned_at: null,
           })),
       ]}
-      customerSuccessConfigs={(customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]}
-      customerSuccessCreditGrants={(customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]}
+      customerSuccessConfigs={((customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]).filter(
+        (config) => activeClientIds.has(config.client_id),
+      )}
+      customerSuccessCreditGrants={creditGrants.filter((grant) => activeClientIds.has(grant.client_id))}
       customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}
-      northStarHistory={(northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>}
+      northStarHistory={((northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>).filter(
+        (north) => activeClientIds.has(north.client_id),
+      )}
       northStarAudits={(northAuditRows ?? []) as Array<Record<string, unknown>>}
     />
   );

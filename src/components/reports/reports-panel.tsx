@@ -43,7 +43,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   flow_credits: number | null;
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
-  credit_expiration_at: string | null;
+  is_active: boolean;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
 type PanelKey = "clients" | "credit_history" | "customer_success" | "operational" | "norths";
@@ -107,16 +107,15 @@ type CreditHistoryReportRow = {
   customerSuccessId: string | null;
   customerSuccessName: string | null;
   billing: "paquetes" | "recurrencia";
+  isActive: boolean;
   totalContractedCredits: number;
-  flowCredits: number | null;
+  flowCredits: number;
   availableCredits: number;
   projectedWithoutContinuity: number;
-  projectedWithContinuity: number | null;
   committedCredits: number;
   completedCredits: number;
   cycleStartAt: string;
   cycleEndAt: string | null;
-  creditExpirationAt: string | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -275,6 +274,9 @@ function sortRows(rows: ClientHealthReportRow[], sortKey: SortKey) {
 export function ReportsPanel({
   rows,
   initiatives,
+  operationsRows,
+  operationsInitiatives,
+  operationsCreditGrants,
   operationalTasks,
   operationalTransitionClients,
   customerSuccessConfigs,
@@ -285,8 +287,13 @@ export function ReportsPanel({
   canAuditNorths = true,
   isCustomerSuccess = false,
 }: {
+  // Solo clientes activos; alimenta todos los paneles salvo Operaciones.
   rows: ClientHealthReportRow[];
   initiatives: InitiativeReportRow[];
+  // Clientes activos e inactivos, con sus casos de uso y créditos, para Operaciones.
+  operationsRows: ClientHealthReportRow[];
+  operationsInitiatives: InitiativeReportRow[];
+  operationsCreditGrants: CustomerSuccessCreditGrantRow[];
   operationalTasks: OperationalTaskRow[];
   operationalTransitionClients: OperationalTransitionClientRow[];
   customerSuccessConfigs: CustomerSuccessConfigRow[];
@@ -326,12 +333,14 @@ export function ReportsPanel({
     [rows],
   );
   const initiativeCreditTotals = useMemo(() => {
-    const windowStartByClientId = new Map(rows.map((row) => [row.client_id, row.current_cycle_start_at]));
+    const windowStartByClientId = new Map(
+      operationsRows.map((row) => [row.client_id, row.current_cycle_start_at]),
+    );
     const completedByClient = new Map<string, number>();
     const planningByClient = new Map<string, number>();
     const executingByClient = new Map<string, number>();
 
-    initiatives.forEach((initiative) => {
+    operationsInitiatives.forEach((initiative) => {
       const credits = Number(initiative.credits) || 0;
 
       // "Completados" refleja producción reciente (ciclo actual o últimos 30 días),
@@ -356,10 +365,10 @@ export function ReportsPanel({
     });
 
     return { completedByClient, planningByClient, executingByClient };
-  }, [initiatives, rows]);
+  }, [operationsInitiatives, operationsRows]);
   const creditHistoryRows = useMemo(() => {
     const grantedCreditsByClient = new Map<string, number>();
-    customerSuccessCreditGrants.forEach((grant) => {
+    operationsCreditGrants.forEach((grant) => {
       grantedCreditsByClient.set(
         grant.client_id,
         (grantedCreditsByClient.get(grant.client_id) ?? 0) + Number(grant.granted_credits),
@@ -369,7 +378,7 @@ export function ReportsPanel({
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    return rows
+    return operationsRows
       .map((row) => {
         const availableCredits = Number(row.credits_remaining) || 0;
         const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
@@ -382,15 +391,12 @@ export function ReportsPanel({
             ? grantedCreditsByClient.get(row.client_id) ?? 0
             : Math.round(row.contracted_credits / recurringPeriodMonths);
 
-        const flowCredits = row.flow_credits;
         let projectedWithoutContinuity: number;
-        let projectedWithContinuity: number | null;
 
         if (row.billing === "recurrencia") {
-          // Se renueva al mismo monto cada ciclo: con o sin continuidad es el
-          // equivalente mensual de la recurrencia, sin tasa ni caudal de por medio.
+          // Se renueva al mismo monto cada ciclo: se proyecta el equivalente
+          // mensual de la recurrencia, sin tasa de consumo de por medio.
           projectedWithoutContinuity = totalContractedCredits;
-          projectedWithContinuity = totalContractedCredits;
         } else {
           // Tasa de consumo semanal = lo consumido desde el inicio del ciclo hasta hoy
           // (o hasta el fin del ciclo, lo que ocurra antes), sin importar si ya se
@@ -406,8 +412,6 @@ export function ReportsPanel({
           // Sin continuidad el contrato no se renueva: se proyecta la tasa semanal por 4
           // semanas, pero el cliente no puede consumir más de lo que le queda disponible.
           projectedWithoutContinuity = Math.min(availableCredits, Math.round(weeklyConsumptionRate * 4));
-          // Con continuidad el consumo mensual lo define el caudal comercial, tal cual.
-          projectedWithContinuity = flowCredits;
         }
 
         return {
@@ -416,18 +420,21 @@ export function ReportsPanel({
           customerSuccessId: row.customer_success_id,
           customerSuccessName: row.customer_success_name,
           billing: row.billing,
+          isActive: row.is_active,
           totalContractedCredits,
-          flowCredits,
+          // Sin caudal definido se toma el paquete contratado para este ciclo.
+          flowCredits: row.flow_credits ?? totalContractedCredits,
           availableCredits,
           projectedWithoutContinuity,
-          projectedWithContinuity,
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
           cycleEndAt: row.current_cycle_end_at,
-          creditExpirationAt: row.credit_expiration_at,
         };
       })
+      // Un cliente inactivo sigue en Operaciones mientras tenga créditos
+      // disponibles o comprometidos por ejecutar.
+      .filter((row) => row.isActive || row.availableCredits > 0 || row.committedCredits > 0)
       .sort(
         (first, second) =>
           (first.customerSuccessName ?? "Sin asignar").localeCompare(
@@ -436,7 +443,7 @@ export function ReportsPanel({
           )
           || first.clientName.localeCompare(second.clientName, "es"),
       ) satisfies CreditHistoryReportRow[];
-  }, [customerSuccessCreditGrants, initiativeCreditTotals, rows]);
+  }, [initiativeCreditTotals, operationsCreditGrants, operationsRows]);
 
   const panelSummary = useMemo(() => {
     if (selectedPanelKey === "credit_history") {
@@ -905,13 +912,11 @@ type CreditHistorySortKey =
   | "flowCredits"
   | "availableCredits"
   | "projectedWithoutContinuity"
-  | "projectedWithContinuity"
   | "committedCredits"
   | "completedCredits";
 
-// Los clientes sin caudal definido quedan al final del orden descendente.
 function creditHistorySortValue(row: CreditHistoryReportRow, key: CreditHistorySortKey) {
-  return row[key] ?? -1;
+  return row[key];
 }
 
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
@@ -920,18 +925,13 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
   { key: "billing", label: "Tipo de servicio" },
   { key: "cycleStart", label: "Fecha de inicio del ciclo" },
   { key: "cycleEnd", label: "Fecha de finalización del ciclo" },
-  { key: "creditExpiration", label: "Fecha de vencimiento de créditos" },
+  { key: "activeService", label: "Servicio activo" },
   { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
   { key: "flow", label: "Créditos de caudal", sortKey: "flowCredits" },
   {
     key: "projectedWithoutContinuity",
     label: "Créditos proyectados sin continuidad",
     sortKey: "projectedWithoutContinuity",
-  },
-  {
-    key: "projectedWithContinuity",
-    label: "Créditos proyectados con continuidad",
-    sortKey: "projectedWithContinuity",
   },
   { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
   { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
@@ -992,26 +992,16 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
         });
         const totals = clients.reduce(
           (accumulator, client) => ({
-            // Caudal y proyectado con continuidad suman solo a los clientes que ya
-            // tienen caudal definido; si ninguno lo tiene, el total queda sin dato.
-            flowCredits:
-              client.flowCredits === null
-                ? accumulator.flowCredits
-                : (accumulator.flowCredits ?? 0) + client.flowCredits,
+            flowCredits: accumulator.flowCredits + client.flowCredits,
             projectedWithoutContinuity:
               accumulator.projectedWithoutContinuity + client.projectedWithoutContinuity,
-            projectedWithContinuity:
-              client.projectedWithContinuity === null
-                ? accumulator.projectedWithContinuity
-                : (accumulator.projectedWithContinuity ?? 0) + client.projectedWithContinuity,
             availableCredits: accumulator.availableCredits + client.availableCredits,
             committedCredits: accumulator.committedCredits + client.committedCredits,
             completedCredits: accumulator.completedCredits + client.completedCredits,
           }),
           {
-            flowCredits: null as number | null,
+            flowCredits: 0,
             projectedWithoutContinuity: 0,
-            projectedWithContinuity: null as number | null,
             availableCredits: 0,
             committedCredits: 0,
             completedCredits: 0,
@@ -1042,12 +1032,13 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
               divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
               para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
               renueva igual cada ciclo. Caudal es el consumo mensual definido comercialmente para el
-              cliente; si aún no está definido, se muestra sin dato. Para clientes recurrentes, ambos
-              Proyectados son el equivalente mensual de la recurrencia, ya que se renueva igual cada ciclo.
-              Para paquetes, Proyectados sin continuidad asume que el contrato no se renueva: toma la tasa
-              de consumo semanal del ciclo (lo consumido desde su inicio hasta hoy, o hasta el fin del
-              ciclo si ya terminó) por 4 semanas, limitada por los créditos que todavía quedan disponibles;
-              Proyectados con continuidad es el caudal tal cual.
+              cliente; si aún no está definido, se muestra el paquete contratado para el ciclo. Servicio
+              activo indica si el cliente sigue activo en la plataforma. Para clientes recurrentes, Proyectados
+              sin continuidad es el equivalente mensual de la recurrencia, ya que se renueva igual cada ciclo.
+              Para paquetes, asume que el contrato no se renueva: toma la tasa de consumo semanal del ciclo
+              (lo consumido desde su inicio hasta hoy, o hasta el fin del ciclo si ya terminó) por 4 semanas,
+              limitada por los créditos que todavía quedan disponibles. Los clientes inactivos se siguen
+              mostrando mientras tengan créditos disponibles o comprometidos.
               La tabla agrupa a cada cliente bajo su Customer Success, con un total por CS al final de cada
               grupo.
             </InfoTooltip>
@@ -1111,7 +1102,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
       </div>
 
       <div className="max-h-[70vh] overflow-auto">
-        <table className="w-full min-w-[2040px] border-collapse text-left">
+        <table className="w-full min-w-[1880px] border-collapse text-left">
           <thead>
             <tr className="border-b-2 border-[#33475b]">
               {CREDIT_HISTORY_COLUMNS.map((column) => (
@@ -1189,22 +1180,23 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                     <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
                       {row.cycleEndAt ? formatDate(row.cycleEndAt) : "-"}
                     </td>
-                    <td className="px-4 py-4 text-sm font-semibold text-[#33475b]">
-                      {row.creditExpirationAt ? formatDate(row.creditExpirationAt) : "-"}
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${
+                          row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {row.isActive ? "Sí" : "No"}
+                      </span>
                     </td>
                     <td className="px-4 py-4 text-sm font-black text-[#213343]">
                       {formatNumber(row.totalContractedCredits)} CR
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {row.flowCredits === null ? "-" : `${formatNumber(row.flowCredits)} CR`}
+                      {formatNumber(row.flowCredits)} CR
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.projectedWithoutContinuity)} CR
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {row.projectedWithContinuity === null
-                        ? "-"
-                        : `${formatNumber(row.projectedWithContinuity)} CR`}
                     </td>
                     <td className="px-4 py-4">
                       <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
@@ -1228,18 +1220,9 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                   <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">-</td>
-                  <td className="px-4 py-3 text-sm">
-                    {group.totals.flowCredits === null
-                      ? "-"
-                      : `${formatNumber(group.totals.flowCredits)} CR`}
-                  </td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.flowCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">
                     {formatNumber(group.totals.projectedWithoutContinuity)} CR
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {group.totals.projectedWithContinuity === null
-                      ? "-"
-                      : `${formatNumber(group.totals.projectedWithContinuity)} CR`}
                   </td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.committedCredits)} CR</td>
