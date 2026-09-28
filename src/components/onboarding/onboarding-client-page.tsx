@@ -126,6 +126,7 @@ type WizardRecommendationResponse = {
 };
 
 const boardStatuses: InitiativeStatus[] = ["backlog", "planned", "executing", "completed"];
+const BOARD_UNCATEGORIZED_FILTER = "__uncategorized__";
 const summaryStatuses: InitiativeStatus[] = ["executing", "planned", "backlog", "completed"];
 const mobileBoardStatusOrderClasses: Record<InitiativeStatus, string> = {
   executing: "order-1",
@@ -501,6 +502,7 @@ export function OnboardingClientPage({
   const [customUpsellCredits, setCustomUpsellCredits] = useState("");
   const [upsellQuantity, setUpsellQuantity] = useState(0);
   const [boardViewMode, setBoardViewMode] = useState<"tablero" | "mapa">("tablero");
+  const [boardCategoryFilter, setBoardCategoryFilter] = useState("all");
   const [addingMapGroupId, setAddingMapGroupId] = useState<string | null>(null);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
@@ -641,6 +643,62 @@ export function OnboardingClientPage({
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
   }, [catalogGroups, initialData]);
+
+  // Categorías del catálogo por caso de uso, resueltas por coincidencia con el grupo del catálogo.
+  const boardCategoryIdsByInitiativeId = useMemo(() => {
+    const categoryIdsByGroupId = new Map<string, Set<string>>();
+    catalogGroupOptions.forEach((option) => {
+      option.groups.forEach((group) => {
+        const categoryIds = categoryIdsByGroupId.get(group.id) ?? new Set<string>();
+        categoryIds.add(option.id);
+        categoryIdsByGroupId.set(group.id, categoryIds);
+      });
+    });
+
+    return new Map(
+      initiatives.map((initiative) => {
+        const group = findCatalogGroupForInitiative(initiative, catalogGroups);
+        return [initiative.id, group ? categoryIdsByGroupId.get(group.id) ?? new Set<string>() : new Set<string>()];
+      }),
+    );
+  }, [catalogGroupOptions, catalogGroups, initiatives]);
+
+  const boardCategoryFilterOptions = useMemo(() => {
+    const countByCategoryId = new Map<string, number>();
+    let uncategorizedCount = 0;
+    boardCategoryIdsByInitiativeId.forEach((categoryIds) => {
+      if (!categoryIds.size) uncategorizedCount += 1;
+      categoryIds.forEach((categoryId) =>
+        countByCategoryId.set(categoryId, (countByCategoryId.get(categoryId) ?? 0) + 1),
+      );
+    });
+
+    return {
+      categories: catalogGroupOptions
+        .filter((option) => countByCategoryId.has(option.id))
+        .map((option) => ({ id: option.id, label: option.label, count: countByCategoryId.get(option.id) ?? 0 })),
+      uncategorizedCount,
+    };
+  }, [boardCategoryIdsByInitiativeId, catalogGroupOptions]);
+
+  const boardInitiatives = useMemo(() => {
+    if (boardCategoryFilter === "all") return groupedInitiatives;
+
+    const matchesFilter = (initiative: InitiativeRecord) => {
+      const categoryIds = boardCategoryIdsByInitiativeId.get(initiative.id);
+      return boardCategoryFilter === BOARD_UNCATEGORIZED_FILTER
+        ? !categoryIds?.size
+        : Boolean(categoryIds?.has(boardCategoryFilter));
+    };
+
+    return boardStatuses.reduce(
+      (accumulator, status) => {
+        accumulator[status] = groupedInitiatives[status].filter(matchesFilter);
+        return accumulator;
+      },
+      {} as Record<InitiativeStatus, InitiativeRecord[]>,
+    );
+  }, [boardCategoryFilter, boardCategoryIdsByInitiativeId, groupedInitiatives]);
 
   const catalogModalGroupById = useMemo(
     () => new Map(catalogGroups.map((group) => [group.id, group])),
@@ -3187,6 +3245,26 @@ export function OnboardingClientPage({
             Mapa
           </button>
         </div>
+        {boardViewMode === "tablero" ? (
+          <select
+            value={boardCategoryFilter}
+            onChange={(event) => setBoardCategoryFilter(event.target.value)}
+            className="ml-auto h-9 max-w-64 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#516f90] outline-none focus:border-[#00a4bd]"
+            aria-label="Filtrar casos de uso por categoría"
+          >
+            <option value="all">Todas las categorías</option>
+            {boardCategoryFilterOptions.categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.label} ({category.count})
+              </option>
+            ))}
+            {boardCategoryFilterOptions.uncategorizedCount ? (
+              <option value={BOARD_UNCATEGORIZED_FILTER}>
+                Sin categoría ({boardCategoryFilterOptions.uncategorizedCount})
+              </option>
+            ) : null}
+          </select>
+        ) : null}
       </section>
 
       {boardViewMode === "mapa" ? (
@@ -3210,9 +3288,9 @@ export function OnboardingClientPage({
             {boardStatuses.map((status) => {
               const visibleItems =
                 status === "completed" && !showAllCompleted
-                  ? groupedInitiatives[status].slice(0, 6)
-                  : groupedInitiatives[status];
-              const totalCredits = groupedInitiatives[status].reduce(
+                  ? boardInitiatives[status].slice(0, 6)
+                  : boardInitiatives[status];
+              const totalCredits = boardInitiatives[status].reduce(
                 (sum, initiative) => sum + initiative.credits,
                 0,
               );
@@ -3585,7 +3663,7 @@ export function OnboardingClientPage({
                           : "Anadir Caso de Uso Directo"}
                       </Button>
                     ) : null}
-                    {status === "completed" && groupedInitiatives.completed.length > 6 ? (
+                    {status === "completed" && boardInitiatives.completed.length > 6 ? (
                       <Button
                         variant="ghost"
                         className="rounded-[3px] px-2 py-2 text-[10px] font-bold text-[#516f90]"
