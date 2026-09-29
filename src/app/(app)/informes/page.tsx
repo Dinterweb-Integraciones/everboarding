@@ -757,6 +757,7 @@ export default async function ReportsPage() {
     <ReportsPanel
       canAuditNorths={!isCsm}
       isCustomerSuccess={isCsm}
+      canEditObservations={platformRole === "superadmin"}
       rows={activeRows}
       initiatives={activeInitiatives}
       operationsRows={rows}

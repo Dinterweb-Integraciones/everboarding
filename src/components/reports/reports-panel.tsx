@@ -12,7 +12,9 @@ import {
   ChevronUp,
   CircleAlert,
   CircleHelp,
+  MessageSquarePlus,
   MessageSquareText,
+  Pencil,
   Search,
   Table2,
   Target,
@@ -113,7 +115,7 @@ type CreditHistoryReportRow = {
   totalContractedCredits: number;
   flowCredits: number;
   availableCredits: number;
-  projectedWithoutContinuity: number;
+  flowWithContinuityCredits: number;
   committedCredits: number;
   completedCredits: number;
   cycleStartAt: string;
@@ -190,17 +192,6 @@ function InfoTooltip({ children }: { children: ReactNode }) {
       </span>
     </span>
   );
-}
-
-function parseDateOnly(value: string | null) {
-  if (!value) return null;
-
-  const parsed = new Date(`${value}T00:00:00`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function daysBetweenDates(start: Date, end: Date) {
-  return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(value: string) {
@@ -289,6 +280,7 @@ export function ReportsPanel({
   northStarAudits,
   canAuditNorths = true,
   isCustomerSuccess = false,
+  canEditObservations = false,
 }: {
   // Solo clientes activos; alimenta todos los paneles salvo Operaciones.
   rows: ClientHealthReportRow[];
@@ -306,6 +298,8 @@ export function ReportsPanel({
   northStarAudits: Array<Record<string, unknown>>;
   canAuditNorths?: boolean;
   isCustomerSuccess?: boolean;
+  // Solo superadmin edita las observaciones del cliente desde Operaciones.
+  canEditObservations?: boolean;
 }) {
   const [panelKeyState, setSelectedPanelKey] = useState<PanelKey>("clients");
   // Customer Success solo ve el panel de clientes.
@@ -378,9 +372,6 @@ export function ReportsPanel({
       );
     });
 
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
     return operationsRows
       .map((row) => {
         const availableCredits = Number(row.credits_remaining) || 0;
@@ -394,28 +385,10 @@ export function ReportsPanel({
             ? grantedCreditsByClient.get(row.client_id) ?? 0
             : Math.round(row.contracted_credits / recurringPeriodMonths);
 
-        let projectedWithoutContinuity: number;
-
-        if (row.billing === "recurrencia") {
-          // Se renueva al mismo monto cada ciclo: se proyecta el equivalente
-          // mensual de la recurrencia, sin tasa de consumo de por medio.
-          projectedWithoutContinuity = totalContractedCredits;
-        } else {
-          // Tasa de consumo semanal = lo consumido desde el inicio del ciclo hasta hoy
-          // (o hasta el fin del ciclo, lo que ocurra antes), sin importar si ya se
-          // agotaron los créditos disponibles: sirve para proyectar aunque el saldo sea 0.
-          const cycleStart = parseDateOnly(row.current_cycle_start_at);
-          const cycleEnd = parseDateOnly(row.current_cycle_end_at);
-          const elapsedEnd = cycleEnd && cycleEnd < todayStart ? cycleEnd : todayStart;
-          const elapsedDays = cycleStart ? Math.max(0, daysBetweenDates(cycleStart, elapsedEnd)) : 0;
-          const elapsedWeeks = elapsedDays / 7;
-          const consumedCredits = Math.max(0, totalContractedCredits - availableCredits);
-          const weeklyConsumptionRate = elapsedWeeks > 0 ? consumedCredits / elapsedWeeks : 0;
-
-          // Sin continuidad el contrato no se renueva: se proyecta la tasa semanal por 4
-          // semanas, pero el cliente no puede consumir más de lo que le queda disponible.
-          projectedWithoutContinuity = Math.min(availableCredits, Math.round(weeklyConsumptionRate * 4));
-        }
+        // Caudal del cliente; sin caudal definido se toma el paquete contratado para este ciclo.
+        const contractedFlowCredits = row.flow_credits ?? totalContractedCredits;
+        // Sin continuidad (cliente inactivo) no hay caudal real.
+        const flowCredits = row.is_active ? contractedFlowCredits : 0;
 
         return {
           clientId: row.client_id,
@@ -425,10 +398,11 @@ export function ReportsPanel({
           billing: row.billing,
           isActive: row.is_active,
           totalContractedCredits,
-          // Sin caudal definido se toma el paquete contratado para este ciclo.
-          flowCredits: row.flow_credits ?? totalContractedCredits,
+          flowCredits,
           availableCredits,
-          projectedWithoutContinuity,
+          // Simulación: si el cliente tuviera continuidad, conservaría lo disponible y
+          // sumaría su caudal, aunque hoy no tenga continuidad.
+          flowWithContinuityCredits: contractedFlowCredits + availableCredits,
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -549,7 +523,7 @@ export function ReportsPanel({
             <div className="grid gap-4 p-4 xl:grid-cols-2">
               {isCustomerSuccess ? (
                 <div className="xl:col-span-2">
-                  <CreditHistoryReport rows={creditHistoryRows} />
+                  <CreditHistoryReport rows={creditHistoryRows} canEditObservations={canEditObservations} />
                 </div>
               ) : (
               <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm xl:col-span-2">
@@ -877,7 +851,7 @@ export function ReportsPanel({
               />
             </div>
           ) : selectedPanelKey === "credit_history" ? (
-            <CreditHistoryReport rows={creditHistoryRows} />
+            <CreditHistoryReport rows={creditHistoryRows} canEditObservations={canEditObservations} />
           ) : selectedPanelKey === "customer_success" ? (
             <CustomerSuccessDashboard
               rows={rows}
@@ -915,7 +889,7 @@ type CreditHistorySortKey =
   | "totalContractedCredits"
   | "flowCredits"
   | "availableCredits"
-  | "projectedWithoutContinuity"
+  | "flowWithContinuityCredits"
   | "committedCredits"
   | "completedCredits";
 
@@ -929,13 +903,13 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
   { key: "billing", label: "Tipo de servicio" },
   { key: "cycleStart", label: "Fecha de inicio del ciclo" },
   { key: "cycleEnd", label: "Fecha de finalización del ciclo" },
-  { key: "activeService", label: "Servicio activo" },
+  { key: "activeService", label: "Continuidad" },
   { key: "contracted", label: "Créditos contratados", sortKey: "totalContractedCredits" },
   { key: "flow", label: "Créditos de caudal", sortKey: "flowCredits" },
   {
-    key: "projectedWithoutContinuity",
-    label: "Créditos proyectados sin continuidad",
-    sortKey: "projectedWithoutContinuity",
+    key: "flowWithContinuity",
+    label: "Créditos de caudal con continuidad",
+    sortKey: "flowWithContinuityCredits",
   },
   { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
   { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
@@ -943,52 +917,82 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
 ];
 
 const OBSERVATIONS_POPOVER_WIDTH = 340;
+const OBSERVATIONS_MAX_LENGTH = 5000;
 
 // Indicador discreto junto al nombre de la cuenta; al hacer clic muestra las
 // observaciones internas en una tarjeta flotante. Usa posición fija para no
-// quedar recortada por el scroll de la tabla.
+// quedar recortada por el scroll de la tabla. Con canEdit (superadmin) se
+// pueden editar desde la misma tarjeta.
 function ClientObservationsPopover({
+  clientId,
   clientName,
   observations,
+  canEdit,
+  onSaved,
 }: {
+  clientId: string;
   clientName: string;
   observations: string;
+  canEdit: boolean;
+  onSaved: (clientId: string, observations: string) => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; placeAbove: boolean } | null>(
     null,
   );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isEditing = draft !== null;
+  const hasObservations = observations.trim().length > 0;
 
   useEffect(() => {
     if (!position) return;
 
-    const close = () => setPosition(null);
+    const close = () => {
+      setPosition(null);
+      setDraft(null);
+      setError(null);
+    };
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      // Mientras se edita no se descarta el borrador por un clic accidental fuera.
+      if (isEditing) return;
       close();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape" && !isSaving) close();
+    };
+    const handleScroll = (event: Event) => {
+      if (isEditing) return;
+      if (panelRef.current?.contains(event.target as Node)) return;
+      close();
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("resize", close);
 
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [position]);
+  }, [isEditing, isSaving, position]);
+
+  function closePanel() {
+    setPosition(null);
+    setDraft(null);
+    setError(null);
+  }
 
   function toggle() {
     if (position) {
-      setPosition(null);
+      if (!isSaving) closePanel();
       return;
     }
 
@@ -1000,13 +1004,42 @@ function ClientObservationsPopover({
       Math.max(gutter, rect.left - 12),
       window.innerWidth - OBSERVATIONS_POPOVER_WIDTH - gutter,
     );
-    const placeAbove = window.innerHeight - rect.bottom < 240 && rect.top > 240;
+    const placeAbove = window.innerHeight - rect.bottom < 320 && rect.top > 320;
 
     setPosition({
       top: placeAbove ? rect.top - 8 : rect.bottom + 8,
       left,
       placeAbove,
     });
+    // Sin nota todavía, el superadmin entra directo a escribirla.
+    if (canEdit && !hasObservations) setDraft("");
+  }
+
+  async function save() {
+    if (draft === null || isSaving) return;
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/cs/clients/${clientId}/observations`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observations: draft }),
+      });
+      const payload = (await response.json()) as { observations?: string; message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos guardar las observaciones.");
+      }
+
+      onSaved(clientId, payload.observations ?? "");
+      setDraft(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No pudimos guardar las observaciones.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -1016,15 +1049,23 @@ function ClientObservationsPopover({
         type="button"
         onClick={toggle}
         aria-expanded={Boolean(position)}
-        aria-label={`Ver observaciones de ${clientName}`}
-        title="Ver observaciones"
+        aria-label={
+          hasObservations ? `Ver observaciones de ${clientName}` : `Agregar observaciones a ${clientName}`
+        }
+        title={hasObservations ? "Ver observaciones" : "Agregar observaciones"}
         className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition ${
           position
             ? "border-[#ffbca6] bg-[#fff3ee] text-[#ff7a59]"
-            : "border-transparent text-[#9cb1c6] hover:border-[#ffd6c7] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
+            : hasObservations
+              ? "border-transparent text-[#9cb1c6] hover:border-[#ffd6c7] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
+              : "border-transparent text-[#cbd6e2] opacity-0 hover:border-[#ffd6c7] hover:bg-[#fff7f3] hover:text-[#ff7a59] focus-visible:opacity-100 group-hover/client:opacity-100"
         }`}
       >
-        <MessageSquareText className="h-3.5 w-3.5" />
+        {hasObservations ? (
+          <MessageSquareText className="h-3.5 w-3.5" />
+        ) : (
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+        )}
       </button>
       {position ? (
         <div
@@ -1046,26 +1087,96 @@ function ClientObservationsPopover({
               </p>
               <p className="truncate text-xs font-bold text-[#213343]">{clientName}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setPosition(null)}
-              aria-label="Cerrar observaciones"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#9cb1c6] transition hover:bg-white hover:text-[#516f90]"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              {canEdit && !isEditing ? (
+                <button
+                  type="button"
+                  onClick={() => setDraft(observations)}
+                  aria-label="Editar observaciones"
+                  title="Editar"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#9cb1c6] transition hover:bg-white hover:text-[#ff7a59]"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={closePanel}
+                disabled={isSaving}
+                aria-label="Cerrar observaciones"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#9cb1c6] transition hover:bg-white hover:text-[#516f90] disabled:opacity-50"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-          <p className="max-h-64 overflow-y-auto whitespace-pre-line break-words px-4 py-3 text-[13px] font-medium leading-6 text-[#33475b]">
-            {observations}
-          </p>
+          {isEditing ? (
+            <div className="space-y-2 px-4 py-3">
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                maxLength={OBSERVATIONS_MAX_LENGTH}
+                rows={5}
+                autoFocus
+                placeholder="Deja observaciones sobre el cliente para el equipo."
+                className="w-full resize-y rounded-[6px] border border-[#cbd6e2] bg-white px-3 py-2 text-[13px] font-medium leading-6 text-[#33475b] outline-none transition placeholder:text-[#9cb1c6] focus:border-[#ff7a59] focus:ring-2 focus:ring-[#ff7a59]/15"
+              />
+              {error ? <p className="text-xs font-semibold text-[#d9534f]">{error}</p> : null}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold text-[#9cb1c6]">
+                  {draft.length}/{OBSERVATIONS_MAX_LENGTH}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => (hasObservations ? setDraft(null) : closePanel())}
+                    disabled={isSaving}
+                    className="h-8 rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[11px] font-bold text-[#516f90] transition hover:border-[#9cb1c6] disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void save()}
+                    disabled={isSaving}
+                    className="h-8 rounded-[4px] bg-[#00bda5] px-3 text-[11px] font-bold text-white transition hover:bg-[#00a894] disabled:opacity-60"
+                  >
+                    {isSaving ? "Guardando..." : "Guardar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="max-h-64 overflow-y-auto whitespace-pre-line break-words px-4 py-3 text-[13px] font-medium leading-6 text-[#33475b]">
+              {hasObservations ? (
+                observations
+              ) : (
+                <span className="text-[#9cb1c6]">Sin observaciones sobre este cliente.</span>
+              )}
+            </p>
+          )}
         </div>
       ) : null}
     </>
   );
 }
 
-function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
+function CreditHistoryReport({
+  rows,
+  canEditObservations,
+}: {
+  rows: CreditHistoryReportRow[];
+  canEditObservations: boolean;
+}) {
   const [searchTerm, setSearchTerm] = useState("");
+  // Notas editadas en esta sesión; se superponen a las que llegaron del servidor.
+  const [observationOverrides, setObservationOverrides] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+
+  function handleObservationsSaved(clientId: string, observations: string) {
+    setObservationOverrides((current) => new Map(current).set(clientId, observations));
+  }
   const [csFilter, setCsFilter] = useState("all");
   const [billingFilter, setBillingFilter] = useState<"all" | CreditHistoryReportRow["billing"]>("all");
   const [sort, setSort] = useState<{ key: CreditHistorySortKey; direction: "asc" | "desc" } | null>(null);
@@ -1119,15 +1230,15 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
         const totals = clients.reduce(
           (accumulator, client) => ({
             flowCredits: accumulator.flowCredits + client.flowCredits,
-            projectedWithoutContinuity:
-              accumulator.projectedWithoutContinuity + client.projectedWithoutContinuity,
+            flowWithContinuityCredits:
+              accumulator.flowWithContinuityCredits + client.flowWithContinuityCredits,
             availableCredits: accumulator.availableCredits + client.availableCredits,
             committedCredits: accumulator.committedCredits + client.committedCredits,
             completedCredits: accumulator.completedCredits + client.completedCredits,
           }),
           {
             flowCredits: 0,
-            projectedWithoutContinuity: 0,
+            flowWithContinuityCredits: 0,
             availableCredits: 0,
             committedCredits: 0,
             completedCredits: 0,
@@ -1284,19 +1395,26 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                       </td>
                     ) : null}
                     <td className="px-4 py-4">
-                      <div className="flex items-center gap-2">
+                      <div className="group/client flex items-center gap-2">
                         <a
                           href={`/clients/${row.clientId}`}
                           className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
                         >
                           {row.clientName}
                         </a>
-                        {row.observations ? (
-                          <ClientObservationsPopover
-                            clientName={row.clientName}
-                            observations={row.observations}
-                          />
-                        ) : null}
+                        {(() => {
+                          const observations =
+                            observationOverrides.get(row.clientId) ?? row.observations ?? "";
+                          return observations.trim() || canEditObservations ? (
+                            <ClientObservationsPopover
+                              clientId={row.clientId}
+                              clientName={row.clientName}
+                              observations={observations}
+                              canEdit={canEditObservations}
+                              onSaved={handleObservationsSaved}
+                            />
+                          ) : null;
+                        })()}
                       </div>
                     </td>
                     <td className="px-4 py-4">
@@ -1330,7 +1448,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                       {formatNumber(row.flowCredits)} CR
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.projectedWithoutContinuity)} CR
+                      {formatNumber(row.flowWithContinuityCredits)} CR
                     </td>
                     <td className="px-4 py-4">
                       <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
@@ -1356,7 +1474,7 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                   <td className="px-4 py-3 text-sm">-</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.flowCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">
-                    {formatNumber(group.totals.projectedWithoutContinuity)} CR
+                    {formatNumber(group.totals.flowWithContinuityCredits)} CR
                   </td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.committedCredits)} CR</td>
