@@ -1053,7 +1053,7 @@ export function OnboardingClientPage({
 
       setObservations(payload.observations ?? "");
       setObservationsDraft(null);
-      showSuccess(payload.message || "Observaciones guardadas.");
+      showSuccess("Notas guardadas.");
     } catch (caughtError) {
       showError(formatUserError(caughtError, "No pudimos guardar las observaciones."));
     } finally {
@@ -3325,7 +3325,7 @@ export function OnboardingClientPage({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ff7a59]">
-                    Observaciones
+                    Notas
                   </p>
                   <span className="rounded-[3px] border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
                     Solo equipo
@@ -3337,23 +3337,25 @@ export function OnboardingClientPage({
                     className="shrink-0 rounded-[4px] border-[#cbd6e2] bg-white px-4 py-2 text-[11px] font-bold text-[#516f90]"
                     onClick={() => setObservationsDraft(observations)}
                   >
-                    {observations ? "Editar observaciones" : "Agregar observaciones"}
+                    {observations ? "Ver / editar notas" : "Agregar notas"}
                   </Button>
                 ) : null}
               </div>
 
               {observationsDraft === null ? (
-                <p className="line-clamp-3 whitespace-pre-line text-[13px] leading-6 text-[#33475b]">
-                  {observations || (
-                    <span className="text-[#9cb1c6]">Sin observaciones sobre este cliente.</span>
-                  )}
+                // El contenido no se muestra en el board porque la pantalla a veces se
+                // comparte con el cliente en sesiones: solo se ve al editar.
+                <p className="text-[13px] leading-6 text-[#9cb1c6]">
+                  {observations
+                    ? "Hay notas guardadas. Ábrelas para verlas o editarlas."
+                    : "Sin notas sobre este cliente."}
                 </p>
               ) : (
                 <>
                   <Textarea
                     value={observationsDraft}
                     onChange={(event) => setObservationsDraft(event.target.value)}
-                    placeholder="Deja observaciones sobre el cliente para el equipo."
+                    placeholder="Deja notas sobre el cliente para el equipo."
                     maxLength={5000}
                     rows={4}
                     autoFocus
@@ -3373,7 +3375,7 @@ export function OnboardingClientPage({
                       onClick={saveObservations}
                       disabled={isSavingObservations}
                     >
-                      {isSavingObservations ? "Guardando..." : "Guardar observaciones"}
+                      {isSavingObservations ? "Guardando..." : "Guardar notas"}
                     </Button>
                   </div>
                 </>
