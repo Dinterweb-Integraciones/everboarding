@@ -61,16 +61,56 @@ export default async function DashboardPage() {
     membershipRecords.map((membership) => [membership.client_id, membership.access_role]),
   );
 
-  const visibleClientRecords =
+  const roleClientRecords =
     platformRole === "csm"
-      ? activeClientRecords.filter(
+      ? clientRecords.filter(
           (client) =>
             client.csm_user_id === user.id ||
             membershipRecords.some(
               (membership) => membership.client_id === client.id && membership.profile_role === "csm",
             ),
         )
-      : activeClientRecords;
+      : clientRecords;
+
+  // Igual que en Operaciones: un cliente inactivo sigue visible mientras tenga
+  // créditos disponibles o comprometidos (iniciativas planificadas o en ejecución).
+  const inactiveClientIds = roleClientRecords
+    .filter((client) => !client.is_active)
+    .map((client) => client.id);
+  const clientsWithPendingCredits = new Set<string>();
+
+  if (inactiveClientIds.length > 0) {
+    const admin = createSupabaseAdminClient();
+    const [
+      { data: healthRows, error: healthError },
+      { data: committedRows, error: committedError },
+    ] = await Promise.all([
+      admin
+        .from("client_health_report")
+        .select("client_id, credits_remaining")
+        .in("client_id", inactiveClientIds),
+      admin
+        .from("onboarding_initiatives")
+        .select("client_id")
+        .in("client_id", inactiveClientIds)
+        .in("status", ["planned", "executing"]),
+    ]);
+
+    if (healthError || committedError) {
+      throw new Error("No pudimos cargar los créditos de los clientes inactivos.");
+    }
+
+    ((healthRows ?? []) as Array<{ client_id: string; credits_remaining: number }>).forEach((row) => {
+      if (Number(row.credits_remaining) > 0) clientsWithPendingCredits.add(row.client_id);
+    });
+    ((committedRows ?? []) as Array<{ client_id: string }>).forEach((row) => {
+      clientsWithPendingCredits.add(row.client_id);
+    });
+  }
+
+  const visibleClientRecords = roleClientRecords.filter(
+    (client) => client.is_active || clientsWithPendingCredits.has(client.id),
+  );
 
   const customerSuccessIds = Array.from(
     new Set(
@@ -103,8 +143,9 @@ export default async function DashboardPage() {
       }))
     : [];
 
+  // Las observaciones internas no se usan aquí: no se envían al navegador.
   const clients: ClientSummary[] = visibleClientRecords.map((client) => ({
-    ...client,
+    ...omitObservations(client),
     access_role: client.owner_user_id === user.id ? "owner" : membershipMap.get(client.id) ?? "viewer",
   }));
 
@@ -115,4 +156,11 @@ export default async function DashboardPage() {
       showCustomerSuccessFilter={canSeeAllClients}
     />
   );
+}
+
+function omitObservations(client: Tables<"clients">) {
+  // clients.observations no está en database.ts (ver límite de complejidad de tipos).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { observations, ...rest } = client as Tables<"clients"> & { observations?: string | null };
+  return rest;
 }

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { OnboardingClientPage } from "@/components/onboarding/onboarding-client-page";
 import { requireUser } from "@/lib/auth";
+import { isClientStaffRole } from "@/lib/client-staff-access";
 import { fetchClientMembership } from "@/lib/membership-access";
 import { canViewPrivateCatalogGroups } from "@/lib/platform-access";
 import {
@@ -292,11 +293,19 @@ export default async function ClientDetailPage({
   );
   const billingStatus = billingRow ?? createDefaultBillingStatus(configRecord);
 
+  // Las observaciones son internas: solo viajan al navegador del equipo
+  // (CS/admin/superadmin). La columna no está en database.ts (ver límite de
+  // complejidad de tipos), por eso se lee con un cast.
+  const isClientStaff = isClientStaffRole(platformRole);
+  const { observations: rawObservations, ...clientWithoutObservations } =
+    clientRecord as Tables<"clients"> & { observations?: string | null };
+  const clientObservations = isClientStaff ? rawObservations ?? "" : null;
+
   return (
     <OnboardingClientPage
       initialData={{
         client: {
-          ...clientRecord,
+          ...clientWithoutObservations,
           access_role: accessRole,
         },
         accessRole,
@@ -320,6 +329,8 @@ export default async function ClientDetailPage({
       initialStage={initialStage}
       userId={user.id}
       canSharePublicLinks={accessRole === "owner" || platformRole === "superadmin"}
+      canToggleClientActive={isClientStaff}
+      clientObservations={clientObservations}
     />
   );
 }

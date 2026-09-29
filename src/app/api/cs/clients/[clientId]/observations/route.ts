@@ -5,59 +5,71 @@ import { canManageClientAsStaff, isClientStaffRole } from "@/lib/client-staff-ac
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 
+const MAX_OBSERVATIONS_LENGTH = 5000;
+
 export async function PUT(
   request: Request,
   context: { params: Promise<{ clientId: string }> },
 ) {
   try {
-    const { user, platformProfile } = await requireUser("/cs/clientes");
+    const { user, platformProfile } = await requireUser("/dashboard");
     const platformRole = platformProfile?.platform_role ?? null;
 
     if (!isClientStaffRole(platformRole)) {
       return NextResponse.json(
-        { message: "Solo administradores y Customer Success pueden cambiar el estado de clientes." },
+        { message: "Solo Customer Success puede editar las observaciones del cliente." },
         { status: 403 },
       );
     }
 
     const { clientId } = await context.params;
-    const body = (await request.json()) as { isActive?: unknown };
+    const body = (await request.json()) as { observations?: unknown };
 
     if (!clientId) {
       return NextResponse.json({ message: "El cliente no es valido." }, { status: 400 });
     }
 
-    if (typeof body.isActive !== "boolean") {
-      return NextResponse.json({ message: "Selecciona un estado valido." }, { status: 400 });
+    if (typeof body.observations !== "string") {
+      return NextResponse.json({ message: "Las observaciones no son validas." }, { status: 400 });
+    }
+
+    const observations = body.observations.trim();
+
+    if (observations.length > MAX_OBSERVATIONS_LENGTH) {
+      return NextResponse.json(
+        { message: `Las observaciones no pueden superar ${MAX_OBSERVATIONS_LENGTH} caracteres.` },
+        { status: 400 },
+      );
     }
 
     const adminClient = createSupabaseAdminClient();
 
     if (!(await canManageClientAsStaff(adminClient, platformRole, user.id, clientId))) {
       return NextResponse.json(
-        { message: "Solo puedes cambiar el estado de los clientes que atiendes." },
+        { message: "Solo puedes editar las observaciones de los clientes que atiendes." },
         { status: 403 },
       );
     }
 
+    // clients.observations no está en database.ts (ver límite de complejidad de tipos).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = adminClient as any;
-    const { data: updatedClient, error: updateError } = await admin
+    const { data: savedRow, error: saveError } = await admin
       .from("clients")
-      .update({ is_active: body.isActive })
+      .update({ observations: observations || null })
       .eq("id", clientId)
-      .select("*")
+      .select("observations")
       .single();
 
-    if (updateError) throw updateError;
+    if (saveError) throw saveError;
 
     return NextResponse.json({
-      ...updatedClient,
-      message: body.isActive ? "Cliente activado correctamente." : "Cliente pausado correctamente.",
+      observations: (savedRow.observations as string | null) ?? "",
+      message: "Observaciones guardadas.",
     });
   } catch (caughtError) {
     return NextResponse.json(
-      { message: formatUserError(caughtError, "No pudimos actualizar el estado del cliente.") },
+      { message: formatUserError(caughtError, "No pudimos guardar las observaciones.") },
       { status: 400 },
     );
   }

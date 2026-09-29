@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownAZ,
@@ -12,6 +12,7 @@ import {
   ChevronUp,
   CircleAlert,
   CircleHelp,
+  MessageSquareText,
   Search,
   Table2,
   Target,
@@ -44,6 +45,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
   is_active: boolean;
+  observations: string | null;
 };
 type HealthColor = ClientHealthReportRow["health_color"];
 type PanelKey = "clients" | "credit_history" | "customer_success" | "operational" | "norths";
@@ -116,6 +118,7 @@ type CreditHistoryReportRow = {
   completedCredits: number;
   cycleStartAt: string;
   cycleEndAt: string | null;
+  observations: string | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -430,6 +433,7 @@ export function ReportsPanel({
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
           cycleEndAt: row.current_cycle_end_at,
+          observations: row.observations,
         };
       })
       // Un cliente inactivo sigue en Operaciones mientras tenga créditos
@@ -938,6 +942,128 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
   { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
 ];
 
+const OBSERVATIONS_POPOVER_WIDTH = 340;
+
+// Indicador discreto junto al nombre de la cuenta; al hacer clic muestra las
+// observaciones internas en una tarjeta flotante. Usa posición fija para no
+// quedar recortada por el scroll de la tabla.
+function ClientObservationsPopover({
+  clientName,
+  observations,
+}: {
+  clientName: string;
+  observations: string;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number; placeAbove: boolean } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!position) return;
+
+    const close = () => setPosition(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [position]);
+
+  function toggle() {
+    if (position) {
+      setPosition(null);
+      return;
+    }
+
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const gutter = 16;
+    const left = Math.min(
+      Math.max(gutter, rect.left - 12),
+      window.innerWidth - OBSERVATIONS_POPOVER_WIDTH - gutter,
+    );
+    const placeAbove = window.innerHeight - rect.bottom < 240 && rect.top > 240;
+
+    setPosition({
+      top: placeAbove ? rect.top - 8 : rect.bottom + 8,
+      left,
+      placeAbove,
+    });
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        aria-expanded={Boolean(position)}
+        aria-label={`Ver observaciones de ${clientName}`}
+        title="Ver observaciones"
+        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition ${
+          position
+            ? "border-[#ffbca6] bg-[#fff3ee] text-[#ff7a59]"
+            : "border-transparent text-[#9cb1c6] hover:border-[#ffd6c7] hover:bg-[#fff7f3] hover:text-[#ff7a59]"
+        }`}
+      >
+        <MessageSquareText className="h-3.5 w-3.5" />
+      </button>
+      {position ? (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label={`Observaciones de ${clientName}`}
+          style={{
+            top: position.top,
+            left: position.left,
+            width: OBSERVATIONS_POPOVER_WIDTH,
+            transform: position.placeAbove ? "translateY(-100%)" : undefined,
+          }}
+          className="fixed z-50 overflow-hidden rounded-[8px] border border-[#dfe3eb] bg-white text-left shadow-[0_12px_32px_rgba(33,51,67,0.16)]"
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-[#edf1f5] bg-[#fffaf5] px-4 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#ff7a59]">
+                Observaciones
+              </p>
+              <p className="truncate text-xs font-bold text-[#213343]">{clientName}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPosition(null)}
+              aria-label="Cerrar observaciones"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#9cb1c6] transition hover:bg-white hover:text-[#516f90]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p className="max-h-64 overflow-y-auto whitespace-pre-line break-words px-4 py-3 text-[13px] font-medium leading-6 text-[#33475b]">
+            {observations}
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [csFilter, setCsFilter] = useState("all");
@@ -1158,12 +1284,20 @@ function CreditHistoryReport({ rows }: { rows: CreditHistoryReportRow[] }) {
                       </td>
                     ) : null}
                     <td className="px-4 py-4">
-                      <a
-                        href={`/clients/${row.clientId}`}
-                        className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
-                      >
-                        {row.clientName}
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`/clients/${row.clientId}`}
+                          className="text-sm font-black text-[#213343] hover:text-[#00a4bd]"
+                        >
+                          {row.clientName}
+                        </a>
+                        {row.observations ? (
+                          <ClientObservationsPopover
+                            clientName={row.clientName}
+                            observations={row.observations}
+                          />
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-4">
                       <span

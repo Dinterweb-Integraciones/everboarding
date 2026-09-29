@@ -23,6 +23,7 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   current_cycle_start_at: string;
   current_cycle_end_at: string | null;
   is_active: boolean;
+  observations: string | null;
 };
 
 type InitiativeSourceRow = {
@@ -61,6 +62,8 @@ type ClientMilestoneRow = {
   created_at: string;
   csm_user_id: string | null;
   is_active: boolean;
+  // clients.observations no está en database.ts (ver límite de complejidad de tipos).
+  observations: string | null;
 };
 
 type PaidBillingCycleRow = {
@@ -248,13 +251,13 @@ export default async function ReportsPage() {
   // paneles recibe solo clientes activos.
   const { data: clientRecords, error: clientsError } = await admin
     .from("clients")
-    .select("id, created_at, csm_user_id, is_active");
+    .select("id, created_at, csm_user_id, is_active, observations");
 
   if (clientsError) {
     throw new Error("No pudimos cargar los clientes para informes.");
   }
 
-  const allClients = (clientRecords ?? []) as ClientMilestoneRow[];
+  const allClients = (clientRecords ?? []) as unknown as ClientMilestoneRow[];
   const reportClients = isCsm
     ? allClients.filter(
         (client) =>
@@ -270,6 +273,9 @@ export default async function ReportsPage() {
   );
   const clientCreatedAtByClientId = new Map(
     reportClients.map((client) => [client.id, client.created_at]),
+  );
+  const observationsByClientId = new Map(
+    reportClients.map((client) => [client.id, client.observations?.trim() || null]),
   );
 
   const { data, error } = reportClientIds.length
@@ -739,6 +745,7 @@ export default async function ReportsPage() {
       current_cycle_start_at: currentCycleStartAt,
       current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
       is_active: activeClientIds.has(row.client_id),
+      observations: observationsByClientId.get(row.client_id) ?? null,
     };
   }) satisfies ClientHealthReportRow[];
   const activeRows = rows.filter((row) => row.is_active);

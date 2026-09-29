@@ -93,6 +93,9 @@ type OnboardingClientPageProps = {
   initialStage?: ProjectStage;
   userId: string;
   canSharePublicLinks: boolean;
+  canToggleClientActive: boolean;
+  // Solo llega para el equipo (CS/admin/superadmin); null oculta el panel.
+  clientObservations: string | null;
 };
 
 function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
@@ -470,6 +473,8 @@ export function OnboardingClientPage({
   initialStage = "cs",
   userId,
   canSharePublicLinks,
+  canToggleClientActive,
+  clientObservations,
 }: OnboardingClientPageProps) {
   const supabase = createSupabaseBrowserClient();
   const [client, setClient] = useState(initialData.client);
@@ -490,6 +495,10 @@ export function OnboardingClientPage({
     message: string;
   } | null>(null);
   const [isSavingMeta, setIsSavingMeta] = useState(false);
+  const [isTogglingClientActive, setIsTogglingClientActive] = useState(false);
+  const [observations, setObservations] = useState(clientObservations ?? "");
+  const [observationsDraft, setObservationsDraft] = useState<string | null>(null);
+  const [isSavingObservations, setIsSavingObservations] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [isSavingInitiative, setIsSavingInitiative] = useState(false);
   const [isClearingBoard, setIsClearingBoard] = useState(false);
@@ -1022,6 +1031,62 @@ export function OnboardingClientPage({
 
   function showSuccess(message: string) {
     setFeedback({ tone: "success", message });
+  }
+
+  async function saveObservations() {
+    if (observationsDraft === null || isSavingObservations) return;
+
+    setIsSavingObservations(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/cs/clients/${client.id}/observations`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observations: observationsDraft }),
+      });
+      const payload = (await response.json()) as { observations?: string; message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos guardar las observaciones.");
+      }
+
+      setObservations(payload.observations ?? "");
+      setObservationsDraft(null);
+      showSuccess(payload.message || "Observaciones guardadas.");
+    } catch (caughtError) {
+      showError(formatUserError(caughtError, "No pudimos guardar las observaciones."));
+    } finally {
+      setIsSavingObservations(false);
+    }
+  }
+
+  async function toggleClientActive() {
+    if (!canToggleClientActive || isTogglingClientActive) return;
+
+    const nextStatus = !client.is_active;
+    setIsTogglingClientActive(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/cs/clients/${client.id}/active`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: nextStatus }),
+      });
+      const payload = (await response.json()) as { is_active?: boolean; message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos actualizar el estado del cliente.");
+      }
+
+      setClient((current) => ({ ...current, is_active: Boolean(payload.is_active) }));
+      showSuccess(payload.message || "Estado actualizado.");
+    } catch (caughtError) {
+      showError(formatUserError(caughtError, "No pudimos actualizar el estado del cliente."));
+    } finally {
+      setIsTogglingClientActive(false);
+    }
   }
 
   function requiresPaidCycle(status: InitiativeStatus) {
@@ -2877,6 +2942,36 @@ export function OnboardingClientPage({
         )
     : false;
 
+  const clientActiveToggle = canToggleClientActive ? (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={client.is_active}
+      onClick={toggleClientActive}
+      disabled={isTogglingClientActive}
+      title={client.is_active ? "Inactivar cliente" : "Activar cliente"}
+      className={`inline-flex h-10 items-center gap-2 rounded-[8px] border px-3 text-[12px] font-semibold transition disabled:opacity-60 ${
+        client.is_active
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300"
+          : "border-[#cbd6e2] bg-[#f5f8fa] text-[#516f90] hover:border-[#9cb1c6]"
+      }`}
+    >
+      <span
+        className={`relative inline-flex h-4 w-7 shrink-0 rounded-full transition ${
+          client.is_active ? "bg-emerald-500" : "bg-[#cbd6e2]"
+        }`}
+        aria-hidden="true"
+      >
+        <span
+          className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all ${
+            client.is_active ? "left-3.5" : "left-0.5"
+          }`}
+        />
+      </span>
+      {isTogglingClientActive ? "Guardando..." : client.is_active ? "Cliente activo" : "Cliente inactivo"}
+    </button>
+  ) : null;
+
   return (
     <div className="space-y-6" id="onboarding-export-root">
       <div className="overflow-hidden border-b border-[#dfe3eb] bg-white">
@@ -2964,6 +3059,7 @@ export function OnboardingClientPage({
               activeStage === "cs" ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold text-[#516f90]">
                   <div className="flex items-center gap-3">
+                    {clientActiveToggle}
                     {canSharePublicLinks ? (
                       <Button
                         variant="secondary"
@@ -2987,6 +3083,7 @@ export function OnboardingClientPage({
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
+                  {clientActiveToggle}
                   {canSharePublicLinks ? (
                     <>
                       <Button
@@ -3041,7 +3138,8 @@ export function OnboardingClientPage({
                 </div>
               )
             ) : (
-              <div className="flex items-center justify-end">
+              <div className="flex items-center justify-end gap-3">
+                {clientActiveToggle}
                 <span className="rounded-[3px] bg-[#f5f8fa] px-3 py-2 text-[11px] font-bold text-[#516f90]">
                   Vista de seguimiento
                 </span>
@@ -3186,7 +3284,11 @@ export function OnboardingClientPage({
       ) : null}
 
       {activeStage === "cs" ? (
-        <section className="border-b border-[#dfe3eb] bg-white px-6 py-4">
+        <section
+          className={`grid gap-4 border-b border-[#dfe3eb] bg-white px-6 py-4 ${
+            clientObservations !== null ? "lg:grid-cols-2" : ""
+          }`}
+        >
           <div className="flex flex-col gap-4 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbff] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -3217,6 +3319,67 @@ export function OnboardingClientPage({
               {config.north_star_text?.trim() ? "Ver / editar El Norte" : "Definir El Norte"}
             </Button>
           </div>
+
+          {clientObservations !== null ? (
+            <div className="flex flex-col gap-3 rounded-[6px] border border-[#dfe3eb] bg-[#fffaf5] px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#ff7a59]">
+                    Observaciones
+                  </p>
+                  <span className="rounded-[3px] border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#516f90]">
+                    Solo equipo
+                  </span>
+                </div>
+                {observationsDraft === null ? (
+                  <Button
+                    variant="secondary"
+                    className="shrink-0 rounded-[4px] border-[#cbd6e2] bg-white px-4 py-2 text-[11px] font-bold text-[#516f90]"
+                    onClick={() => setObservationsDraft(observations)}
+                  >
+                    {observations ? "Editar observaciones" : "Agregar observaciones"}
+                  </Button>
+                ) : null}
+              </div>
+
+              {observationsDraft === null ? (
+                <p className="line-clamp-3 whitespace-pre-line text-[13px] leading-6 text-[#33475b]">
+                  {observations || (
+                    <span className="text-[#9cb1c6]">Sin observaciones sobre este cliente.</span>
+                  )}
+                </p>
+              ) : (
+                <>
+                  <Textarea
+                    value={observationsDraft}
+                    onChange={(event) => setObservationsDraft(event.target.value)}
+                    placeholder="Deja observaciones sobre el cliente para el equipo."
+                    maxLength={5000}
+                    rows={4}
+                    autoFocus
+                    className="text-[13px]"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      className="rounded-[4px] border-[#cbd6e2] bg-white px-4 py-2 text-[11px] font-bold text-[#516f90]"
+                      onClick={() => setObservationsDraft(null)}
+                      disabled={isSavingObservations}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      className="rounded-[4px] bg-[#00bda5] px-4 py-2 text-[11px] font-bold text-white hover:bg-[#00a894]"
+                      onClick={saveObservations}
+                      disabled={isSavingObservations}
+                    >
+                      {isSavingObservations ? "Guardando..." : "Guardar observaciones"}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -3233,7 +3396,7 @@ export function OnboardingClientPage({
           >
             Tablero
           </button>
-          <button
+          <button 
             type="button"
             onClick={() => setBoardViewMode("mapa")}
             className={`rounded-[3px] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
