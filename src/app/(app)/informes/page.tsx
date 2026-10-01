@@ -495,10 +495,14 @@ export default async function ReportsPage() {
   const evaluationCasesCounts = new Map<string, number>();
   const validatedEvaluationCasesCounts = new Map<string, number>();
   const creditsByInitiative = new Map<string, number>();
+  const todayIsoDate = isoDateDaysAgo(0);
   ((paidBillingCycleRows ?? []) as PaidBillingCycleRow[]).forEach((cycle) => {
     if (!firstPaidDates.has(cycle.client_id)) {
       firstPaidDates.set(cycle.client_id, cycle.paid_at);
     }
+
+    // Un ciclo pagado por adelantado que aún no empieza no es el ciclo actual.
+    if (cycle.cycle_start_date > todayIsoDate) return;
 
     const currentCycleEnd = latestPaidCycleEnds.get(cycle.client_id);
     if (!currentCycleEnd || cycle.cycle_end_date > currentCycleEnd) {
@@ -712,6 +716,7 @@ export default async function ReportsPage() {
   );
   const latestGrantByClient = new Map<string, CustomerSuccessCreditGrantRow>();
   ((customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[]).forEach((grant) => {
+    if (grant.grant_date > todayIsoDate) return;
     const currentLatest = latestGrantByClient.get(grant.client_id);
     if (!currentLatest || grant.grant_date > currentLatest.grant_date) {
       latestGrantByClient.set(grant.client_id, grant);

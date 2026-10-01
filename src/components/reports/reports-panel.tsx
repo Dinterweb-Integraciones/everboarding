@@ -98,6 +98,7 @@ type CustomerSuccessCreditGrantRow = {
   granted_credits: number;
   used_credits: number;
   expired_credits: number;
+  grant_date: string;
   expires_at: string;
 };
 type CustomerSuccessProfileRow = {
@@ -376,29 +377,62 @@ export function ReportsPanel({
     return { completedByClient, evaluationByClient, planningByClient, executingByClient };
   }, [operationsInitiatives, operationsRows]);
   const creditHistoryRows = useMemo(() => {
+    const todayIsoDate = new Date().toISOString().slice(0, 10);
     const grantedCreditsByClient = new Map<string, number>();
+    // Saldo de grants cuyo ciclo aún no empieza (pagados por adelantado): no está disponible todavía.
+    const futureRemainingByClient = new Map<string, number>();
+    // Créditos que otorga el grant del ciclo vigente (el último que ya empezó).
+    const currentGrantByClient = new Map<string, CustomerSuccessCreditGrantRow>();
     operationsCreditGrants.forEach((grant) => {
       grantedCreditsByClient.set(
         grant.client_id,
         (grantedCreditsByClient.get(grant.client_id) ?? 0) + Number(grant.granted_credits),
       );
+
+      if (grant.grant_date > todayIsoDate) {
+        const remaining = Math.max(
+          0,
+          Number(grant.granted_credits) - Number(grant.used_credits) - Number(grant.expired_credits),
+        );
+        futureRemainingByClient.set(
+          grant.client_id,
+          (futureRemainingByClient.get(grant.client_id) ?? 0) + remaining,
+        );
+        return;
+      }
+
+      const currentGrant = currentGrantByClient.get(grant.client_id);
+      if (!currentGrant || grant.grant_date > currentGrant.grant_date) {
+        currentGrantByClient.set(grant.client_id, grant);
+      }
     });
 
     return operationsRows
       .map((row) => {
-        const availableCredits = Number(row.credits_remaining) || 0;
+        const hasFutureGrant = futureRemainingByClient.has(row.client_id);
+        const availableCredits = Math.max(
+          0,
+          (Number(row.credits_remaining) || 0) - (futureRemainingByClient.get(row.client_id) ?? 0),
+        );
         const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
         const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
         // contracted_credits es el total del plan completo (puede ser mensual, trimestral o
         // semestral); se divide entre su duración en meses para obtener el equivalente mensual.
+        // Si ya pagó ciclos por adelantado se muestra el plan completo contratado.
         const recurringPeriodMonths = Math.max(1, row.contracted_credits_period_months || 1);
         const totalContractedCredits =
           row.billing === "paquetes"
             ? grantedCreditsByClient.get(row.client_id) ?? 0
-            : Math.round(row.contracted_credits / recurringPeriodMonths);
+            : hasFutureGrant
+              ? row.contracted_credits
+              : Math.round(row.contracted_credits / recurringPeriodMonths);
 
         // Caudal del cliente; sin caudal definido se toma el paquete contratado para este ciclo.
-        const contractedFlowCredits = row.flow_credits ?? totalContractedCredits;
+        // Con ciclos pagados por adelantado, lo que otorga el grant del ciclo vigente.
+        const currentGrant = currentGrantByClient.get(row.client_id);
+        const contractedFlowCredits =
+          row.flow_credits
+          ?? (hasFutureGrant && currentGrant ? Number(currentGrant.granted_credits) : totalContractedCredits);
         // Sin continuidad (cliente inactivo) no hay caudal real.
         const flowCredits = row.is_active ? contractedFlowCredits : 0;
 
@@ -922,7 +956,7 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
   { key: "flow", label: "Créditos de caudal", sortKey: "flowCredits" },
   {
     key: "flowWithContinuity",
-    label: "Créditos de caudal con continuidad",
+    label: "Créditos de caudal con recargo",
     sortKey: "flowWithContinuityCredits",
   },
   { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
