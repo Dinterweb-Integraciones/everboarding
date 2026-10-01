@@ -116,6 +116,7 @@ type CreditHistoryReportRow = {
   flowCredits: number;
   availableCredits: number;
   flowWithContinuityCredits: number;
+  evaluationCredits: number;
   committedCredits: number;
   completedCredits: number;
   cycleStartAt: string;
@@ -334,6 +335,7 @@ export function ReportsPanel({
       operationsRows.map((row) => [row.client_id, row.current_cycle_start_at]),
     );
     const completedByClient = new Map<string, number>();
+    const evaluationByClient = new Map<string, number>();
     const planningByClient = new Map<string, number>();
     const executingByClient = new Map<string, number>();
 
@@ -351,6 +353,16 @@ export function ReportsPanel({
         return;
       }
 
+      // "En evaluación" usa la misma ventana: casos creados en el ciclo actual o últimos 30 días.
+      if (initiative.status === "backlog") {
+        const windowStart = windowStartByClientId.get(initiative.client_id);
+        const createdDate = initiative.created_at.slice(0, 10);
+        if (windowStart && createdDate >= windowStart) {
+          evaluationByClient.set(initiative.client_id, (evaluationByClient.get(initiative.client_id) ?? 0) + credits);
+        }
+        return;
+      }
+
       const byStatus =
         initiative.status === "planned"
           ? planningByClient
@@ -361,7 +373,7 @@ export function ReportsPanel({
       byStatus.set(initiative.client_id, (byStatus.get(initiative.client_id) ?? 0) + credits);
     });
 
-    return { completedByClient, planningByClient, executingByClient };
+    return { completedByClient, evaluationByClient, planningByClient, executingByClient };
   }, [operationsInitiatives, operationsRows]);
   const creditHistoryRows = useMemo(() => {
     const grantedCreditsByClient = new Map<string, number>();
@@ -403,6 +415,7 @@ export function ReportsPanel({
           // Simulación: si el cliente tuviera continuidad, conservaría lo disponible y
           // sumaría su caudal, aunque hoy no tenga continuidad.
           flowWithContinuityCredits: contractedFlowCredits + availableCredits,
+          evaluationCredits: initiativeCreditTotals.evaluationByClient.get(row.client_id) ?? 0,
           committedCredits: planningCredits + executingCredits,
           completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
           cycleStartAt: row.current_cycle_start_at,
@@ -890,6 +903,7 @@ type CreditHistorySortKey =
   | "flowCredits"
   | "availableCredits"
   | "flowWithContinuityCredits"
+  | "evaluationCredits"
   | "committedCredits"
   | "completedCredits";
 
@@ -912,6 +926,7 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
     sortKey: "flowWithContinuityCredits",
   },
   { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
+  { key: "evaluation", label: "Créditos En Evaluación", sortKey: "evaluationCredits" },
   { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
   { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
 ];
@@ -1233,6 +1248,7 @@ function CreditHistoryReport({
             flowWithContinuityCredits:
               accumulator.flowWithContinuityCredits + client.flowWithContinuityCredits,
             availableCredits: accumulator.availableCredits + client.availableCredits,
+            evaluationCredits: accumulator.evaluationCredits + client.evaluationCredits,
             committedCredits: accumulator.committedCredits + client.committedCredits,
             completedCredits: accumulator.completedCredits + client.completedCredits,
           }),
@@ -1240,6 +1256,7 @@ function CreditHistoryReport({
             flowCredits: 0,
             flowWithContinuityCredits: 0,
             availableCredits: 0,
+            evaluationCredits: 0,
             committedCredits: 0,
             completedCredits: 0,
           },
@@ -1456,6 +1473,9 @@ function CreditHistoryReport({
                       </span>
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
+                      {formatNumber(row.evaluationCredits)} CR
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.committedCredits)} CR
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
@@ -1477,6 +1497,7 @@ function CreditHistoryReport({
                     {formatNumber(group.totals.flowWithContinuityCredits)} CR
                   </td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.evaluationCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.committedCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.completedCredits)} CR</td>
                 </tr>

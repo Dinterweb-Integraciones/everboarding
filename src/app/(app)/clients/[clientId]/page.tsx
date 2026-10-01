@@ -275,6 +275,8 @@ export default async function ClientDetailPage({
     .from("client_credit_grants")
     .select("granted_credits, used_credits, expired_credits")
     .eq("client_id", clientRecord.id)
+    // Un grant cuyo ciclo aún no empieza no se muestra en el board.
+    .lte("grant_date", toIsoDate(expiringWindowStart))
     .gte("expires_at", toIsoDate(expiringWindowStart))
     .lte("expires_at", toIsoDate(expiringWindowEnd));
 

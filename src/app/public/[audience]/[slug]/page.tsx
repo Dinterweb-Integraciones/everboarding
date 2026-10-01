@@ -25,6 +25,7 @@ import {
 } from "@/lib/public-prospect";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { toIsoDate } from "@/lib/utils";
 
 type PublicSharedPageProps = {
   params: Promise<{
@@ -234,6 +235,8 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     .from("client_credit_grants")
     .select("expires_at")
     .eq("client_id", data.client.id)
+    // Un grant cuyo ciclo aún no empieza no se muestra en el board.
+    .lte("grant_date", toIsoDate())
     .order("expires_at", { ascending: false })
     .limit(1)
     .maybeSingle()) as { data: { expires_at: string } | null };
