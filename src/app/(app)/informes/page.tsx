@@ -24,6 +24,14 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   current_cycle_end_at: string | null;
   is_active: boolean;
   observations: string | null;
+  cycle_milestone_color: CycleMilestoneColor | null;
+};
+
+type CycleMilestoneColor = "verde" | "amarillo" | "rojo";
+
+type CycleMilestoneRow = {
+  client_id: string;
+  color: CycleMilestoneColor;
 };
 
 type InitiativeSourceRow = {
@@ -331,6 +339,23 @@ export default async function ReportsPage() {
   if (activatedProposalsError) {
     throw new Error("No pudimos cargar las fechas de activación para el informe operativo.");
   }
+
+  // Semáforo de hitos del ciclo (vista client_cycle_milestones_report). La vista no está en
+  // database.ts (ver límite de complejidad de tipos), por eso se lee con un cast.
+  const { data: cycleMilestoneRows, error: cycleMilestonesError } = clientIds.length
+    ? ((await admin
+        .from("client_cycle_milestones_report" as never)
+        .select("client_id, color")
+        .in("client_id", clientIds)) as unknown as { data: CycleMilestoneRow[] | null; error: Error | null })
+    : { data: [] as CycleMilestoneRow[], error: null };
+
+  if (cycleMilestonesError) {
+    throw new Error("No pudimos cargar el semáforo de hitos del ciclo.");
+  }
+
+  const cycleMilestoneColorByClientId = new Map(
+    (cycleMilestoneRows ?? []).map((row) => [row.client_id, row.color]),
+  );
 
   const activatedProposalIds = (activatedProposalRows ?? []).map((proposal) => proposal.id);
   const { data: proposalSnapshotRows, error: proposalSnapshotsError } = activatedProposalIds.length
@@ -751,6 +776,7 @@ export default async function ReportsPage() {
       current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
       is_active: activeClientIds.has(row.client_id),
       observations: observationsByClientId.get(row.client_id) ?? null,
+      cycle_milestone_color: cycleMilestoneColorByClientId.get(row.client_id) ?? null,
     };
   }) satisfies ClientHealthReportRow[];
   const activeRows = rows.filter((row) => row.is_active);

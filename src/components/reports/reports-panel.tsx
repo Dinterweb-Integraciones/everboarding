@@ -48,7 +48,9 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   current_cycle_end_at: string | null;
   is_active: boolean;
   observations: string | null;
+  cycle_milestone_color: CycleMilestoneColor | null;
 };
+type CycleMilestoneColor = "verde" | "amarillo" | "rojo";
 type HealthColor = ClientHealthReportRow["health_color"];
 type PanelKey = "clients" | "credit_history" | "customer_success" | "operational" | "norths";
 type SortKey =
@@ -123,6 +125,7 @@ type CreditHistoryReportRow = {
   cycleStartAt: string;
   cycleEndAt: string | null;
   observations: string | null;
+  milestoneColor: CycleMilestoneColor | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -455,6 +458,7 @@ export function ReportsPanel({
           cycleStartAt: row.current_cycle_start_at,
           cycleEndAt: row.current_cycle_end_at,
           observations: row.observations,
+          milestoneColor: row.cycle_milestone_color,
         };
       })
       // Un cliente inactivo sigue en Operaciones mientras tenga créditos
@@ -944,6 +948,19 @@ type CreditHistorySortKey =
 function creditHistorySortValue(row: CreditHistoryReportRow, key: CreditHistorySortKey) {
   return row[key];
 }
+
+// Semáforo de hitos del ciclo (vista client_cycle_milestones_report): pinta Disponibles,
+// En Evaluación y Comprometido en Operaciones.
+const CYCLE_MILESTONE_COLOR_CLASSES: Record<CycleMilestoneColor, string> = {
+  verde: "bg-emerald-50 text-emerald-700",
+  amarillo: "bg-amber-50 text-amber-700",
+  rojo: "bg-rose-50 text-rose-700",
+};
+const CYCLE_MILESTONE_COLOR_LABELS: Record<CycleMilestoneColor, string> = {
+  verde: "cumple los 3 hitos",
+  amarillo: "cumple 2 hitos",
+  rojo: "cumple 1 hito o ninguno",
+};
 
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
   { key: "cs", label: "CS" },
@@ -1501,17 +1518,26 @@ function CreditHistoryReport({
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.flowWithContinuityCredits)} CR
                     </td>
-                    <td className="px-4 py-4">
-                      <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-sm font-black text-emerald-700">
-                        {formatNumber(row.availableCredits)} CR
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.evaluationCredits)} CR
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.committedCredits)} CR
-                    </td>
+                    {[row.availableCredits, row.evaluationCredits, row.committedCredits].map(
+                      (credits, index) => (
+                        <td key={index} className="px-4 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-sm font-black ${
+                              row.milestoneColor
+                                ? CYCLE_MILESTONE_COLOR_CLASSES[row.milestoneColor]
+                                : "text-[#33475b]"
+                            }`}
+                            title={
+                              row.milestoneColor
+                                ? `Hitos del ciclo: ${CYCLE_MILESTONE_COLOR_LABELS[row.milestoneColor]}`
+                                : undefined
+                            }
+                          >
+                            {formatNumber(credits)} CR
+                          </span>
+                        </td>
+                      ),
+                    )}
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.completedCredits)} CR
                     </td>
