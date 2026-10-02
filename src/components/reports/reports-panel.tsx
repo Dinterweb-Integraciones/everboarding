@@ -48,9 +48,10 @@ type ClientHealthReportRow = Views<"client_health_report"> & {
   current_cycle_end_at: string | null;
   is_active: boolean;
   observations: string | null;
-  cycle_milestone_color: CycleMilestoneColor | null;
+  cycle_colors: CycleColumnColors | null;
 };
-type CycleMilestoneColor = "verde" | "amarillo" | "rojo";
+type CycleColumnColor = "verde" | "naranja" | "rojo" | "gris";
+type CycleColumnColors = { available: CycleColumnColor; committed: CycleColumnColor; evaluation: CycleColumnColor };
 type HealthColor = ClientHealthReportRow["health_color"];
 type PanelKey = "clients" | "credit_history" | "customer_success" | "operational" | "norths";
 type SortKey =
@@ -125,7 +126,7 @@ type CreditHistoryReportRow = {
   cycleStartAt: string;
   cycleEndAt: string | null;
   observations: string | null;
-  milestoneColor: CycleMilestoneColor | null;
+  cycleColors: CycleColumnColors | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -458,7 +459,7 @@ export function ReportsPanel({
           cycleStartAt: row.current_cycle_start_at,
           cycleEndAt: row.current_cycle_end_at,
           observations: row.observations,
-          milestoneColor: row.cycle_milestone_color,
+          cycleColors: row.cycle_colors,
         };
       })
       // Un cliente inactivo sigue en Operaciones mientras tenga créditos
@@ -949,18 +950,23 @@ function creditHistorySortValue(row: CreditHistoryReportRow, key: CreditHistoryS
   return row[key];
 }
 
-// Semáforo de hitos del ciclo (vista client_cycle_milestones_report): pinta Disponibles,
-// En Evaluación y Comprometido en Operaciones.
-const CYCLE_MILESTONE_COLOR_CLASSES: Record<CycleMilestoneColor, string> = {
+// Semáforo del ciclo (vista client_cycle_milestones_report): cada una de Disponibles,
+// En Evaluación y Comprometido se pinta con su propio color en Operaciones.
+const CYCLE_COLUMN_COLOR_CLASSES: Record<CycleColumnColor, string> = {
   verde: "bg-emerald-50 text-emerald-700",
-  amarillo: "bg-amber-50 text-amber-700",
+  naranja: "bg-orange-50 text-orange-700",
   rojo: "bg-rose-50 text-rose-700",
+  gris: "bg-slate-100 text-slate-500",
 };
-const CYCLE_MILESTONE_COLOR_LABELS: Record<CycleMilestoneColor, string> = {
-  verde: "cumple los 3 hitos",
-  amarillo: "cumple 2 hitos",
-  rojo: "cumple 1 hito o ninguno",
-};
+const CYCLE_COLUMNS: Array<{
+  key: keyof CycleColumnColors;
+  creditsKey: "availableCredits" | "evaluationCredits" | "committedCredits";
+  rule: string;
+}> = [
+  { key: "available", creditsKey: "availableCredits", rule: "desde el día 15: < 10% verde, < 20% naranja, resto rojo" },
+  { key: "evaluation", creditsKey: "evaluationCredits", rule: "desde el día 25: ≥ 50% verde, ≥ 40% naranja, resto rojo" },
+  { key: "committed", creditsKey: "committedCredits", rule: "desde el día 20: < 20% verde, < 30% naranja, resto rojo" },
+];
 
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
   { key: "cs", label: "CS" },
@@ -1518,26 +1524,21 @@ function CreditHistoryReport({
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.flowWithContinuityCredits)} CR
                     </td>
-                    {[row.availableCredits, row.evaluationCredits, row.committedCredits].map(
-                      (credits, index) => (
-                        <td key={index} className="px-4 py-4">
+                    {CYCLE_COLUMNS.map((column) => {
+                      const color = row.cycleColors?.[column.key];
+                      return (
+                        <td key={column.key} className="px-4 py-4">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-1 text-sm font-black ${
-                              row.milestoneColor
-                                ? CYCLE_MILESTONE_COLOR_CLASSES[row.milestoneColor]
-                                : "text-[#33475b]"
+                              color ? CYCLE_COLUMN_COLOR_CLASSES[color] : "text-[#33475b]"
                             }`}
-                            title={
-                              row.milestoneColor
-                                ? `Hitos del ciclo: ${CYCLE_MILESTONE_COLOR_LABELS[row.milestoneColor]}`
-                                : undefined
-                            }
+                            title={color ? `Semáforo ${column.rule}` : undefined}
                           >
-                            {formatNumber(credits)} CR
+                            {formatNumber(row[column.creditsKey])} CR
                           </span>
                         </td>
-                      ),
-                    )}
+                      );
+                    })}
                     <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
                       {formatNumber(row.completedCredits)} CR
                     </td>
