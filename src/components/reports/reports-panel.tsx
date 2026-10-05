@@ -22,6 +22,11 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  buildCreditHistoryRows,
+  type CreditHistoryReportRow,
+} from "@/lib/credit-history-report";
+import { formatMonthLabel, type MonthlyGoalProgress } from "@/lib/cs-monthly-goals";
 import { getEvaluationValidationLabel } from "@/lib/onboarding";
 import type { Views } from "@/types/database";
 import {
@@ -108,25 +113,6 @@ type CustomerSuccessProfileRow = {
   id: string;
   full_name: string | null;
   email: string;
-};
-type CreditHistoryReportRow = {
-  clientId: string;
-  clientName: string;
-  customerSuccessId: string | null;
-  customerSuccessName: string | null;
-  billing: "paquetes" | "recurrencia";
-  isActive: boolean;
-  totalContractedCredits: number;
-  flowCredits: number;
-  availableCredits: number;
-  flowWithContinuityCredits: number;
-  evaluationCredits: number;
-  committedCredits: number;
-  completedCredits: number;
-  cycleStartAt: string;
-  cycleEndAt: string | null;
-  observations: string | null;
-  cycleColors: CycleColumnColors | null;
 };
 type NorthHistoryRow = { id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string };
 type NorthAudit = { north_star_history_id: string; is_from: boolean; is_until: boolean; is_timed: boolean; is_crucial: boolean; has_associated_use_cases: boolean; notes: string };
@@ -277,6 +263,7 @@ export function ReportsPanel({
   operationsRows,
   operationsInitiatives,
   operationsCreditGrants,
+  monthlyGoalProgress,
   operationalTasks,
   operationalTransitionClients,
   customerSuccessConfigs,
@@ -295,6 +282,9 @@ export function ReportsPanel({
   operationsRows: ClientHealthReportRow[];
   operationsInitiatives: InitiativeReportRow[];
   operationsCreditGrants: CustomerSuccessCreditGrantRow[];
+  // Avance contra la meta mensual por CS (últimos 12 meses), calculado en el servidor. Para un CS
+  // solo trae su fila y el total global, sin el detalle de clientes ajenos.
+  monthlyGoalProgress: MonthlyGoalProgress[];
   operationalTasks: OperationalTaskRow[];
   operationalTransitionClients: OperationalTransitionClientRow[];
   customerSuccessConfigs: CustomerSuccessConfigRow[];
@@ -335,145 +325,10 @@ export function ReportsPanel({
     () => rows.reduce((sum, row) => sum + row.north_stars_count, 0),
     [rows],
   );
-  const initiativeCreditTotals = useMemo(() => {
-    const windowStartByClientId = new Map(
-      operationsRows.map((row) => [row.client_id, row.current_cycle_start_at]),
-    );
-    const completedByClient = new Map<string, number>();
-    const evaluationByClient = new Map<string, number>();
-    const planningByClient = new Map<string, number>();
-    const executingByClient = new Map<string, number>();
-
-    operationsInitiatives.forEach((initiative) => {
-      const credits = Number(initiative.credits) || 0;
-
-      // "Completados" refleja producción reciente (ciclo actual o últimos 30 días),
-      // no el acumulado histórico del cliente.
-      if (initiative.status === "completed") {
-        const windowStart = windowStartByClientId.get(initiative.client_id);
-        const completedDate = initiative.completed_at?.slice(0, 10);
-        if (windowStart && completedDate && completedDate >= windowStart) {
-          completedByClient.set(initiative.client_id, (completedByClient.get(initiative.client_id) ?? 0) + credits);
-        }
-        return;
-      }
-
-      // "En evaluación" usa la misma ventana: casos creados en el ciclo actual o últimos 30 días.
-      if (initiative.status === "backlog") {
-        const windowStart = windowStartByClientId.get(initiative.client_id);
-        const createdDate = initiative.created_at.slice(0, 10);
-        if (windowStart && createdDate >= windowStart) {
-          evaluationByClient.set(initiative.client_id, (evaluationByClient.get(initiative.client_id) ?? 0) + credits);
-        }
-        return;
-      }
-
-      const byStatus =
-        initiative.status === "planned"
-          ? planningByClient
-          : initiative.status === "executing"
-            ? executingByClient
-            : null;
-      if (!byStatus) return;
-      byStatus.set(initiative.client_id, (byStatus.get(initiative.client_id) ?? 0) + credits);
-    });
-
-    return { completedByClient, evaluationByClient, planningByClient, executingByClient };
-  }, [operationsInitiatives, operationsRows]);
-  const creditHistoryRows = useMemo(() => {
-    const todayIsoDate = new Date().toISOString().slice(0, 10);
-    const grantedCreditsByClient = new Map<string, number>();
-    // Saldo de grants cuyo ciclo aún no empieza (pagados por adelantado): no está disponible todavía.
-    const futureRemainingByClient = new Map<string, number>();
-    // Créditos que otorga el grant del ciclo vigente (el último que ya empezó).
-    const currentGrantByClient = new Map<string, CustomerSuccessCreditGrantRow>();
-    operationsCreditGrants.forEach((grant) => {
-      grantedCreditsByClient.set(
-        grant.client_id,
-        (grantedCreditsByClient.get(grant.client_id) ?? 0) + Number(grant.granted_credits),
-      );
-
-      if (grant.grant_date > todayIsoDate) {
-        const remaining = Math.max(
-          0,
-          Number(grant.granted_credits) - Number(grant.used_credits) - Number(grant.expired_credits),
-        );
-        futureRemainingByClient.set(
-          grant.client_id,
-          (futureRemainingByClient.get(grant.client_id) ?? 0) + remaining,
-        );
-        return;
-      }
-
-      const currentGrant = currentGrantByClient.get(grant.client_id);
-      if (!currentGrant || grant.grant_date > currentGrant.grant_date) {
-        currentGrantByClient.set(grant.client_id, grant);
-      }
-    });
-
-    return operationsRows
-      .map((row) => {
-        const hasFutureGrant = futureRemainingByClient.has(row.client_id);
-        const availableCredits = Math.max(
-          0,
-          (Number(row.credits_remaining) || 0) - (futureRemainingByClient.get(row.client_id) ?? 0),
-        );
-        const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
-        const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
-        // contracted_credits es el total del plan completo (puede ser mensual, trimestral o
-        // semestral); se divide entre su duración en meses para obtener el equivalente mensual.
-        // Si ya pagó ciclos por adelantado se muestra el plan completo contratado.
-        const recurringPeriodMonths = Math.max(1, row.contracted_credits_period_months || 1);
-        const totalContractedCredits =
-          row.billing === "paquetes"
-            ? grantedCreditsByClient.get(row.client_id) ?? 0
-            : hasFutureGrant
-              ? row.contracted_credits
-              : Math.round(row.contracted_credits / recurringPeriodMonths);
-
-        // Caudal del cliente; sin caudal definido se toma el paquete contratado para este ciclo.
-        // Con ciclos pagados por adelantado, lo que otorga el grant del ciclo vigente.
-        const currentGrant = currentGrantByClient.get(row.client_id);
-        const contractedFlowCredits =
-          row.flow_credits
-          ?? (hasFutureGrant && currentGrant ? Number(currentGrant.granted_credits) : totalContractedCredits);
-        // Sin continuidad (cliente inactivo) no hay caudal real.
-        const flowCredits = row.is_active ? contractedFlowCredits : 0;
-
-        return {
-          clientId: row.client_id,
-          clientName: row.client_name,
-          customerSuccessId: row.customer_success_id,
-          customerSuccessName: row.customer_success_name,
-          billing: row.billing,
-          isActive: row.is_active,
-          totalContractedCredits,
-          flowCredits,
-          availableCredits,
-          // Simulación: si el cliente tuviera continuidad, conservaría lo disponible y
-          // sumaría su caudal, aunque hoy no tenga continuidad.
-          flowWithContinuityCredits: contractedFlowCredits + availableCredits,
-          evaluationCredits: initiativeCreditTotals.evaluationByClient.get(row.client_id) ?? 0,
-          committedCredits: planningCredits + executingCredits,
-          completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
-          cycleStartAt: row.current_cycle_start_at,
-          cycleEndAt: row.current_cycle_end_at,
-          observations: row.observations,
-          cycleColors: row.cycle_colors,
-        };
-      })
-      // Un cliente inactivo sigue en Operaciones mientras tenga créditos
-      // disponibles o comprometidos por ejecutar.
-      .filter((row) => row.isActive || row.availableCredits > 0 || row.committedCredits > 0)
-      .sort(
-        (first, second) =>
-          (first.customerSuccessName ?? "Sin asignar").localeCompare(
-            second.customerSuccessName ?? "Sin asignar",
-            "es",
-          )
-          || first.clientName.localeCompare(second.clientName, "es"),
-      ) satisfies CreditHistoryReportRow[];
-  }, [initiativeCreditTotals, operationsCreditGrants, operationsRows]);
+  const creditHistoryRows = useMemo(
+    () => buildCreditHistoryRows(operationsRows, operationsInitiatives, operationsCreditGrants),
+    [operationsCreditGrants, operationsInitiatives, operationsRows],
+  );
 
   const panelSummary = useMemo(() => {
     if (selectedPanelKey === "credit_history") {
@@ -575,7 +430,12 @@ export function ReportsPanel({
             <div className="grid gap-4 p-4 xl:grid-cols-2">
               {isCustomerSuccess ? (
                 <div className="xl:col-span-2">
-                  <CreditHistoryReport rows={creditHistoryRows} canEditObservations={canEditObservations} />
+                  <CreditHistoryReport
+                    rows={creditHistoryRows}
+                    canEditObservations={canEditObservations}
+                    goalProgress={monthlyGoalProgress}
+                    progressFirst
+                  />
                 </div>
               ) : (
               <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm xl:col-span-2">
@@ -903,7 +763,13 @@ export function ReportsPanel({
               />
             </div>
           ) : selectedPanelKey === "credit_history" ? (
-            <CreditHistoryReport rows={creditHistoryRows} canEditObservations={canEditObservations} />
+            <div className="p-4">
+              <CreditHistoryReport
+                rows={creditHistoryRows}
+                canEditObservations={canEditObservations}
+                goalProgress={monthlyGoalProgress}
+              />
+            </div>
           ) : selectedPanelKey === "customer_success" ? (
             <CustomerSuccessDashboard
               rows={rows}
@@ -1232,13 +1098,17 @@ function ClientObservationsPopover({
     </>
   );
 }
-
 function CreditHistoryReport({
   rows,
   canEditObservations,
+  goalProgress,
+  progressFirst = false,
 }: {
   rows: CreditHistoryReportRow[];
   canEditObservations: boolean;
+  goalProgress: MonthlyGoalProgress[];
+  // Vista de un CS: el progreso contra la meta va al inicio, antes de la tabla.
+  progressFirst?: boolean;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   // Notas editadas en esta sesión; se superponen a las que llegaron del servidor.
@@ -1331,14 +1201,17 @@ function CreditHistoryReport({
   const totalClients = groups.reduce((sum, group) => sum + group.clients.length, 0);
 
   return (
+    <div className="space-y-8">
+    {progressFirst ? <MonthlyGoalReport progress={goalProgress} isCustomerSuccess /> : null}
     <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] bg-white shadow-sm">
       <div className="flex flex-col gap-4 border-b border-[#dfe3eb] p-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-base font-black text-[#213343]">Operaciones por cliente</h3>
             <InfoTooltip>
-              Completados suma los créditos de casos terminados dentro del ciclo de facturación actual del
-              cliente (o de los últimos 30 días si no tiene un ciclo activo) — no es un acumulado histórico.
+              Completados suma los créditos de casos terminados durante el ciclo de facturación actual del
+              cliente, entre su fecha de inicio y su fecha de fin (o en los últimos 30 días si no tiene un
+              ciclo activo) — no es un acumulado histórico.
               Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Contratados
               divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
               para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
@@ -1582,6 +1455,177 @@ function CreditHistoryReport({
           </div>
         </div>
       ) : null}
+    </article>
+
+    {progressFirst ? null : <MonthlyGoalReport progress={goalProgress} isCustomerSuccess={false} />}
+    </div>
+  );
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0].toUpperCase())
+    .join("");
+}
+
+function GoalProgressBar({
+  label,
+  completedCredits,
+  goalCredits,
+  emphasis = false,
+  showCredits = false,
+}: {
+  label: string;
+  completedCredits: number;
+  goalCredits: number | null;
+  emphasis?: boolean;
+  // Muestra "completados / meta CR" junto al nombre (solo en la vista del CS).
+  showCredits?: boolean;
+}) {
+  const barHeight = emphasis ? "h-10" : "h-8";
+  const hasGoal = goalCredits !== null && goalCredits > 0;
+  const ratio = hasGoal ? completedCredits / goalCredits : 0;
+  const pct = Math.round(ratio * 100);
+  const fillPct = Math.min(ratio, 1) * 100;
+  // Con poco avance el porcentaje no cabe dentro del relleno; se muestra justo a su derecha.
+  const labelInside = fillPct >= 12;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {emphasis ? null : (
+            <span
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                hasGoal ? "bg-[#213343] text-white" : "bg-[#edf3f7] text-[#99acc2]"
+              }`}
+            >
+              {getInitials(label)}
+            </span>
+          )}
+          <span
+            className={`truncate font-black ${emphasis ? "text-lg" : "text-base"} ${
+              hasGoal ? "text-[#213343]" : "text-[#99acc2]"
+            }`}
+          >
+            {label}
+          </span>
+        </div>
+        <span
+          className={`whitespace-nowrap text-sm font-bold ${hasGoal ? "text-[#516f90]" : "text-[#99acc2]"}`}
+        >
+          {hasGoal
+            ? showCredits
+              ? `${formatNumber(completedCredits)} / ${formatNumber(goalCredits)} CR`
+              : null
+            : showCredits
+              ? `${formatNumber(completedCredits)} CR · Sin meta`
+              : "Sin meta"}
+        </span>
+      </div>
+      <div className={`relative mt-2 overflow-hidden rounded-full bg-[#edf3f7] ${barHeight}`}>
+        {hasGoal ? (
+          <>
+            <div
+              className={`h-full rounded-full ${ratio >= 1 ? "bg-emerald-500" : "bg-orange-400"}`}
+              style={{ width: `${fillPct}%` }}
+            />
+            <span
+              className={`absolute inset-y-0 flex items-center font-black text-[#213343] ${emphasis ? "text-base" : "text-sm"}`}
+              style={
+                labelInside
+                  ? { right: `calc(${100 - fillPct}% + 12px)` }
+                  : { left: `calc(${fillPct}% + 8px)` }
+              }
+            >
+              {pct}%
+            </span>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MonthlyGoalReport({
+  progress,
+  isCustomerSuccess,
+}: {
+  // Del mes más reciente (el actual) al más antiguo.
+  progress: MonthlyGoalProgress[];
+  isCustomerSuccess: boolean;
+}) {
+  const [selectedMonth, setSelectedMonth] = useState(progress[0]?.month ?? "");
+  const selected = progress.find((entry) => entry.month === selectedMonth) ?? progress[0];
+
+  if (!selected) return null;
+
+  return (
+    <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] border-t-4 border-t-orange-400 bg-white shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[#dfe3eb] bg-[#fff8f3] p-5">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-500">Reporte de avance</p>
+          <div className="mt-1 flex items-center gap-2">
+            <h3 className="text-lg font-black text-[#213343]">Progreso vs. meta mensual</h3>
+            <InfoTooltip>
+              Cada barra suma los créditos de los casos de uso completados dentro del mes calendario en
+              los clientes del CS y los compara con su meta del mes (definida en Catálogos › Metas CS).
+              Todos los CS suma lo completado por todos sobre la suma de sus metas. Los casos cuentan
+              para el CS asignado hoy al cliente. La barra se pone verde al alcanzar la meta.
+            </InfoTooltip>
+          </div>
+          <p className="mt-1 text-xs font-semibold text-[#516f90]">
+            {isCustomerSuccess
+              ? "Tus créditos completados en el mes sobre tu meta."
+              : "Créditos completados en el mes sobre la meta de cada CS."}
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-xs font-bold text-[#516f90]">
+          Mes
+          <select
+            value={selected.month}
+            onChange={(event) => setSelectedMonth(event.target.value)}
+            className="h-9 rounded-[3px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold capitalize text-[#213343]"
+          >
+            {progress.map((entry) => (
+              <option key={entry.month} value={entry.month}>
+                {formatMonthLabel(entry.month)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="space-y-6 p-5">
+        {isCustomerSuccess ? null : (
+          <GoalProgressBar
+            label="Todos los CS"
+            completedCredits={selected.overall.completedCredits}
+            goalCredits={selected.overall.goalCredits}
+            emphasis
+          />
+        )}
+        <div className={`space-y-5 ${isCustomerSuccess ? "" : "border-t border-[#edf1f5] pt-6"}`}>
+          {selected.customerSuccess.length ? (
+            selected.customerSuccess.map((entry) => (
+              <GoalProgressBar
+                key={entry.csId}
+                label={entry.csName}
+                completedCredits={entry.completedCredits}
+                goalCredits={entry.goalCredits}
+                showCredits={isCustomerSuccess}
+              />
+            ))
+          ) : (
+            <p className="text-sm font-semibold text-[#99acc2]">
+              No hay metas ni casos completados en este mes.
+            </p>
+          )}
+        </div>
+      </div>
     </article>
   );
 }

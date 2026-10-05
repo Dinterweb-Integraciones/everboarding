@@ -2,6 +2,12 @@ import { redirect } from "next/navigation";
 
 import { ReportsPanel } from "@/components/reports/reports-panel";
 import { requireUser } from "@/lib/auth";
+import {
+  buildMonthlyGoalProgress,
+  getRecentMonthKeys,
+  monthKeyToDate,
+  type MonthlyGoalRow,
+} from "@/lib/cs-monthly-goals";
 import { fetchUserMemberships } from "@/lib/membership-access";
 import { normalizeInitiativeTitle } from "@/lib/onboarding";
 import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
@@ -274,15 +280,21 @@ export default async function ReportsPage() {
   }
 
   const allClients = (clientRecords ?? []) as unknown as ClientMilestoneRow[];
-  const reportClients = isCsm
-    ? allClients.filter(
-        (client) =>
-          client.csm_user_id === user.id ||
-          membershipRecords.some(
-            (membership) => membership.client_id === client.id && membership.profile_role === "csm",
-          ),
-      )
-    : allClients;
+  // Los datos se calculan sobre todos los clientes para obtener el progreso global de casos de
+  // uso; a un Customer Success solo se le envían sus clientes (más ese total ya resumido).
+  const reportClients = allClients;
+  const visibleClientIds = new Set(
+    (isCsm
+      ? allClients.filter(
+          (client) =>
+            client.csm_user_id === user.id ||
+            membershipRecords.some(
+              (membership) => membership.client_id === client.id && membership.profile_role === "csm",
+            ),
+        )
+      : allClients
+    ).map((client) => client.id),
+  );
   const reportClientIds = reportClients.map((client) => client.id);
   const activeClientIds = new Set(
     reportClients.filter((client) => client.is_active).map((client) => client.id),
@@ -790,10 +802,66 @@ export default async function ReportsPage() {
       cycle_colors: cycleColorsByClientId.get(row.client_id) ?? null,
     };
   }) satisfies ClientHealthReportRow[];
-  const activeRows = rows.filter((row) => row.is_active);
-  const activeInitiatives = initiatives.filter((initiative) => activeClientIds.has(initiative.client_id));
+  const allCreditGrants = (customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[];
+
+  // Progreso contra la meta mensual de cada CS, de los últimos 12 meses. Se calcula en el servidor
+  // con todos los clientes; a un Customer Success solo se le envía su propio avance.
+  const goalMonths = getRecentMonthKeys(12);
+  // customer_success_monthly_goals no está en database.ts (ver límite de complejidad de tipos).
+  const { data: monthlyGoalRows, error: monthlyGoalsError } = (await admin
+    .from("customer_success_monthly_goals" as never)
+    .select("customer_success_id, month, goal_credits")
+    .gte("month", monthKeyToDate(goalMonths[goalMonths.length - 1]))
+    .lte("month", monthKeyToDate(goalMonths[0]))) as unknown as {
+    data: MonthlyGoalRow[] | null;
+    error: Error | null;
+  };
+
+  if (monthlyGoalsError) {
+    throw new Error("No pudimos cargar las metas mensuales de Customer Success.");
+  }
+
+  const customerSuccessNameById = new Map<string, string>();
+  ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).forEach((profile) => {
+    customerSuccessNameById.set(profile.id, profile.full_name || profile.email);
+  });
+  const monthlyGoalProgress = buildMonthlyGoalProgress({
+    months: goalMonths,
+    goals: monthlyGoalRows ?? [],
+    completedInitiatives: initiatives.filter((initiative) => initiative.status === "completed"),
+    customerSuccessIdByClientId: new Map(rows.map((row) => [row.client_id, row.customer_success_id])),
+    customerSuccessNameById,
+  }).map((progress) => {
+    if (!isCsm) return progress;
+    // Un CS siempre ve su propia barra, aunque ese mes no tenga meta ni avance.
+    const ownEntry = progress.customerSuccess.find((entry) => entry.csId === user.id) ?? {
+      csId: user.id,
+      csName: customerSuccessNameById.get(user.id) ?? "Mi avance",
+      completedCredits: 0,
+      goalCredits: null,
+    };
+    // El CS no ve el total global: solo recibe su propio avance.
+    return {
+      ...progress,
+      overall: { completedCredits: ownEntry.completedCredits, goalCredits: ownEntry.goalCredits ?? 0 },
+      customerSuccess: [ownEntry],
+    };
+  });
+  const visibleRows = rows.filter((row) => visibleClientIds.has(row.client_id));
+  const visibleInitiatives = initiatives.filter((initiative) => visibleClientIds.has(initiative.client_id));
+  const visibleActiveClientIds = new Set(
+    [...activeClientIds].filter((clientId) => visibleClientIds.has(clientId)),
+  );
+  const visibleNorthStarHistoryRows = (northStarHistoryRows ?? []).filter((north) =>
+    visibleClientIds.has(north.client_id),
+  );
+  const visibleNorthHistoryIds = new Set(visibleNorthStarHistoryRows.map((north) => north.id));
+  const activeRows = visibleRows.filter((row) => row.is_active);
+  const activeInitiatives = visibleInitiatives.filter((initiative) =>
+    visibleActiveClientIds.has(initiative.client_id),
+  );
   const activeInitiativeIds = new Set(activeInitiatives.map((initiative) => initiative.id));
-  const creditGrants = (customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[];
+  const creditGrants = allCreditGrants.filter((grant) => visibleClientIds.has(grant.client_id));
 
   return (
     <ReportsPanel
@@ -802,8 +870,9 @@ export default async function ReportsPage() {
       canEditObservations={platformRole === "superadmin"}
       rows={activeRows}
       initiatives={activeInitiatives}
-      operationsRows={rows}
-      operationsInitiatives={initiatives}
+      operationsRows={visibleRows}
+      operationsInitiatives={visibleInitiatives}
+      monthlyGoalProgress={monthlyGoalProgress}
       operationsCreditGrants={creditGrants}
       operationalTasks={reportSubitems.filter((subitem) => activeInitiativeIds.has(subitem.initiative_id))}
       operationalTransitionClients={[
@@ -831,14 +900,16 @@ export default async function ReportsPage() {
           })),
       ]}
       customerSuccessConfigs={((customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[]).filter(
-        (config) => activeClientIds.has(config.client_id),
+        (config) => visibleActiveClientIds.has(config.client_id),
       )}
-      customerSuccessCreditGrants={creditGrants.filter((grant) => activeClientIds.has(grant.client_id))}
+      customerSuccessCreditGrants={creditGrants.filter((grant) => visibleActiveClientIds.has(grant.client_id))}
       customerSuccessProfiles={customerSuccessProfiles as CustomerSuccessProfileRow[]}
-      northStarHistory={((northStarHistoryRows ?? []) as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>).filter(
-        (north) => activeClientIds.has(north.client_id),
+      northStarHistory={(visibleNorthStarHistoryRows as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>).filter(
+        (north) => visibleActiveClientIds.has(north.client_id),
       )}
-      northStarAudits={(northAuditRows ?? []) as Array<Record<string, unknown>>}
+      northStarAudits={((northAuditRows ?? []) as Array<Record<string, unknown>>).filter((audit) =>
+        visibleNorthHistoryIds.has(String(audit.north_star_history_id)),
+      )}
     />
   );
 }
