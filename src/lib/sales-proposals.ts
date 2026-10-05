@@ -73,6 +73,9 @@ export type SalesProposalDraft = {
   contractedCredits: number;
   // Caudal: consumo mensual de créditos acordado. Opcional mientras no se defina.
   flowCredits: number | null;
+  // Marca de las propuestas creadas desde que el caudal de recurrencia se calcula solo. Las
+  // propuestas anteriores no la tienen y conservan el caudal digitado.
+  derivedFlowCredits: boolean;
   quotedPrice: number;
   currency: string;
   billingMode: "subscription" | "one_time";
@@ -140,6 +143,7 @@ type CompactSalesProposalSnapshot = {
   pe?: number | null;
   cv?: number | null;
   fc?: number | null;
+  df?: 0 | 1;
   i?: CompactSalesProposalInitiativeSnapshot[];
 };
 
@@ -154,6 +158,7 @@ function createCompactSalesProposalSnapshot(
     | "prospectExtraPackageQuantity"
     | "creditValidityDays"
     | "flowCredits"
+    | "derivedFlowCredits"
     | "initiatives"
   >,
 ): CompactSalesProposalSnapshot {
@@ -166,6 +171,7 @@ function createCompactSalesProposalSnapshot(
     pe: draft.prospectExtraPackageQuantity,
     cv: draft.creditValidityDays,
     fc: draft.flowCredits,
+    df: draft.derivedFlowCredits ? 1 : 0,
     i: draft.initiatives.map((initiative) => [
       initiative.id,
       initiative.title,
@@ -218,6 +224,9 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     startDate: toIsoDate(),
     contractedCredits: SALES_PROPOSAL_BASE_CREDITS,
     flowCredits: null,
+    // Falso por defecto: así las propuestas guardadas sin la marca se leen como anteriores.
+    // Las propuestas nuevas la activan al crearse en el workspace.
+    derivedFlowCredits: false,
     quotedPrice: SALES_PROPOSAL_BASE_PRICE,
     currency: "usd",
     billingMode: "one_time",
@@ -262,6 +271,41 @@ export function normalizeSalesFlowCredits(value: unknown) {
   }
 
   return Math.max(0, Math.floor(safeParseNumber(value)));
+}
+
+// En una recurrencia el caudal no se digita: son los créditos contratados de la recurrencia,
+// divididos entre los meses del periodo cuando no es mensual (trimestral, semestral, anual).
+// En paquetes se conserva el caudal acordado manualmente. Solo aplica a propuestas nuevas (con la
+// marca derivedFlowCredits) que siguen en borrador sin cliente: las propuestas anteriores y las ya
+// enviadas a pago, pagadas, activadas o archivadas conservan su caudal guardado.
+export function isSalesFlowCreditsDerived(proposal: {
+  derivedFlowCredits?: boolean;
+  status?: SalesProposalStatus;
+  activatedClientId?: string | null;
+  billingMode: SalesProposalDraft["billingMode"];
+}) {
+  return (
+    proposal.derivedFlowCredits === true &&
+    proposal.billingMode === "subscription" &&
+    (proposal.status ?? "draft") === "draft" &&
+    !proposal.activatedClientId
+  );
+}
+
+export function resolveSalesFlowCredits(proposal: {
+  derivedFlowCredits?: boolean;
+  status?: SalesProposalStatus;
+  activatedClientId?: string | null;
+  billingMode: SalesProposalDraft["billingMode"];
+  periodMonths: number;
+  contractedCredits: number;
+  flowCredits: number | null;
+}) {
+  if (!isSalesFlowCreditsDerived(proposal)) {
+    return proposal.flowCredits;
+  }
+
+  return Math.max(0, Math.round(proposal.contractedCredits / Math.max(1, proposal.periodMonths)));
 }
 
 export function normalizeSalesCreditValidityDays(
@@ -626,6 +670,9 @@ export function normalizeSalesProposalDraft(
   const initiatives = rawInitiatives.map((initiative, initiativeIndex) =>
     normalizeSalesProposalInitiativeDraft(initiative, initiativeIndex),
   );
+  const periodMonths = normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths);
+  const contractedCredits = Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits));
+  const derivedFlowCredits = Boolean(input.derivedFlowCredits ?? input.df);
 
   return {
     ...base,
@@ -634,6 +681,7 @@ export function normalizeSalesProposalDraft(
     paymentMethod: normalizeSalesPaymentMethod(input.paymentMethod ?? base.paymentMethod),
     workspaceVariant,
     billingMode,
+    derivedFlowCredits,
     appliedCouponId: input.appliedCouponId || null,
     appliedCouponCode: input.appliedCouponCode || "",
     appliedCouponType: couponType ? normalizeSalesCouponType(couponType) : null,
@@ -665,13 +713,21 @@ export function normalizeSalesProposalDraft(
       0,
       Math.floor(safeParseNumber(input.prospectExtraPackageQuantity ?? input.pe ?? base.prospectExtraPackageQuantity)),
     ),
-    periodMonths: normalizeSalesPeriodMonths(input.periodMonths ?? base.periodMonths),
+    periodMonths,
     creditValidityDays: normalizeSalesCreditValidityDays(
       input.creditValidityDays ?? input.cv ?? base.creditValidityDays,
       billingMode,
     ),
-    contractedCredits: Math.max(0, safeParseNumber(input.contractedCredits ?? base.contractedCredits)),
-    flowCredits: normalizeSalesFlowCredits(input.flowCredits ?? input.fc),
+    contractedCredits,
+    flowCredits: resolveSalesFlowCredits({
+      derivedFlowCredits,
+      status: input.status ?? base.status,
+      activatedClientId: input.activatedClientId ?? base.activatedClientId,
+      billingMode,
+      periodMonths,
+      contractedCredits,
+      flowCredits: normalizeSalesFlowCredits(input.flowCredits ?? input.fc),
+    }),
     quotedPrice: Math.max(0, safeParseNumber(input.quotedPrice ?? base.quotedPrice)),
     initiatives,
   };
@@ -686,6 +742,16 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
       ? rowClientName
       : rowClientCompany || rowClientName || "Cliente";
   const resolvedClientCompany = rowClientCompany || resolvedClientName;
+
+  const contractedCredits = safeParseNumber(
+    (row.contracted_credits as string | number | null | undefined) ?? snapshot.contractedCredits,
+  );
+  const billingMode = normalizeSalesBillingMode(
+    (row.billing_mode as string | null | undefined) ?? snapshot.billingMode,
+  );
+  const periodMonths = normalizeSalesPeriodMonths(
+    (row.plan_period_months as number | null | undefined) ?? snapshot.periodMonths,
+  );
 
   return {
     ...snapshot,
@@ -703,25 +769,27 @@ export function mapSalesProposalRow(row: SalesProposalRow | Record<string, unkno
     clientDescription: String(row.client_description ?? snapshot.clientDescription ?? ""),
     assignedCsmUserId: String(row.assigned_csm_user_id ?? snapshot.assignedCsmUserId ?? ""),
     startDate: String(row.start_date ?? snapshot.startDate ?? toIsoDate()),
-    contractedCredits: safeParseNumber(
-      (row.contracted_credits as string | number | null | undefined) ?? snapshot.contractedCredits,
-    ),
-    flowCredits: normalizeSalesFlowCredits(
-      (row.flow_credits as string | number | null | undefined) ?? snapshot.flowCredits,
-    ),
+    contractedCredits,
+    flowCredits: resolveSalesFlowCredits({
+      derivedFlowCredits: snapshot.derivedFlowCredits,
+      status: normalizeSalesStatus(row.status),
+      activatedClientId: (row.activated_client_id as string | null) ?? null,
+      billingMode,
+      periodMonths,
+      contractedCredits,
+      flowCredits: normalizeSalesFlowCredits(
+        (row.flow_credits as string | number | null | undefined) ?? snapshot.flowCredits,
+      ),
+    }),
     quotedPrice: safeParseNumber(
       (row.quoted_price as string | number | null | undefined) ?? snapshot.quotedPrice,
     ),
     currency: String(row.currency ?? snapshot.currency ?? "usd").toLowerCase(),
-    billingMode: normalizeSalesBillingMode(
-      (row.billing_mode as string | null | undefined) ?? snapshot.billingMode,
-    ),
-    periodMonths: normalizeSalesPeriodMonths(
-      (row.plan_period_months as number | null | undefined) ?? snapshot.periodMonths,
-    ),
+    billingMode,
+    periodMonths,
     creditValidityDays: normalizeSalesCreditValidityDays(
       (row.credit_validity_days as number | null | undefined) ?? snapshot.creditValidityDays,
-      normalizeSalesBillingMode((row.billing_mode as string | null | undefined) ?? snapshot.billingMode),
+      billingMode,
     ),
     status: normalizeSalesStatus(row.status),
     paymentMethod: normalizeSalesPaymentMethod(row.payment_method),

@@ -13,6 +13,7 @@ import {
   normalizeSalesPaymentMethod,
   normalizeCouponPercentageOff,
   normalizeSalesCouponType,
+  resolveSalesFlowCredits,
   setSalesProposalExtraPackages,
   serializeSalesProposalDraft,
   serializeSalesProposalFullSnapshot,
@@ -834,6 +835,8 @@ async function setSalesProposalTransferPending(proposal: SalesProposalRecord) {
     .from("sales_proposals")
     .update(({
       status: "transfer_pending",
+      // Fija el caudal calculado mientras era borrador; desde aquí ya no se recalcula.
+      flow_credits: resolveSalesFlowCredits(proposal),
       payment_method: "bank_transfer",
       stripe_checkout_session_id: null,
       stripe_payment_intent_id: null,
@@ -1051,6 +1054,8 @@ export async function createSalesProposalCheckout(
     .from("sales_proposals")
     .update(({
       status: "checkout_pending",
+      // Fija el caudal calculado mientras era borrador; desde aquí ya no se recalcula.
+      flow_credits: resolveSalesFlowCredits(proposal),
       payment_method: "stripe",
       transfer_bank: null,
       stripe_checkout_session_id: session.id,

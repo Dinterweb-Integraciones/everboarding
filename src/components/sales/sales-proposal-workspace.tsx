@@ -31,6 +31,8 @@ import {
   generateSalesProposalSlug,
   isValidSalesProposalClientEmail,
   normalizeSalesProposalDraft,
+  isSalesFlowCreditsDerived,
+  resolveSalesFlowCredits,
   type SalesCouponType,
   type SalesProposalDraft,
   type SalesProposalInitiativeDraft,
@@ -329,6 +331,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     startDate: normalized.startDate,
     contractedCredits: normalized.contractedCredits,
     flowCredits: normalized.flowCredits,
+    derivedFlowCredits: normalized.derivedFlowCredits,
     quotedPrice: normalized.quotedPrice,
     currency: normalized.currency,
     billingMode: normalized.billingMode,
@@ -546,6 +549,8 @@ function createNewSalesProposalDraft(
     ...draft,
     ...commercialDefaults,
     workspaceVariant: variant,
+    // Las propuestas nuevas calculan el caudal de recurrencia a partir de los créditos contratados.
+    derivedFlowCredits: true,
     sellerName: sellerPreset?.name ?? draft.sellerName,
     sellerEmail: sellerPreset?.email ?? draft.sellerEmail,
     sellerCompany: sellerPreset?.company ?? draft.sellerCompany,
@@ -892,6 +897,10 @@ export function SalesProposalWorkspace({
       });
     });
   }
+
+  // En recurrencia el caudal se deriva de los creditos contratados; en paquetes se digita.
+  const proposalFlowCredits = resolveSalesFlowCredits(proposal);
+  const isFlowCreditsDerived = isSalesFlowCreditsDerived(proposal);
 
   // Caudal: consumo mensual de creditos acordado. Opcional, vacio = sin definir.
   function applyProposalFlowCredits(value: string) {
@@ -3081,13 +3090,17 @@ function mergeRecommendedGroups(
                     type="number"
                     min={0}
                     placeholder="Opcional"
-                    value={proposal.flowCredits === null ? "" : String(proposal.flowCredits)}
+                    value={proposalFlowCredits === null ? "" : String(proposalFlowCredits)}
                     onChange={(event) => applyProposalFlowCredits(event.target.value)}
-                    disabled={isProposalCheckoutLocked}
+                    disabled={isProposalCheckoutLocked || isFlowCreditsDerived}
                     className="h-9 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[12px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   <span className="block text-[10px] font-semibold leading-relaxed text-[#9cb1c6]">
-                    Consumo mensual de creditos acordado con el cliente. Dejalo vacio si aun no se define.
+                    {isFlowCreditsDerived
+                      ? proposal.periodMonths > 1
+                        ? `Se calcula: creditos contratados entre ${proposal.periodMonths} meses del periodo.`
+                        : "Se calcula: son los creditos contratados de la recurrencia mensual."
+                      : "Consumo mensual de creditos acordado con el cliente. Dejalo vacio si aun no se define."}
                   </span>
                 </label>
               </div>
