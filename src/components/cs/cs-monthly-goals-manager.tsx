@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Target } from "lucide-react";
+import { ChevronLeft, ChevronRight, Info, Target } from "lucide-react";
 import { useState } from "react";
 
 import { formatShortMonthLabel, type MonthlyGoalRow } from "@/lib/cs-monthly-goals";
@@ -121,7 +121,25 @@ export function CsMonthlyGoalsManager({
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                   Customer Success
                 </p>
-                <h1 className="text-2xl font-black text-slate-900">Metas mensuales</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-black text-slate-900">Metas mensuales</h1>
+                  <span
+                    tabIndex={0}
+                    aria-label="Información sobre las metas mensuales"
+                    className="group relative inline-flex cursor-help rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  >
+                    <Info className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                    <span
+                      role="tooltip"
+                      className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-72 -translate-x-1/2 rounded-[4px] bg-[#213343] px-3 py-2 text-xs font-semibold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                    >
+                      Define cuántos créditos de casos de uso debe completar cada CS en cada mes. El
+                      informe de progreso compara contra esta meta los créditos completados en el mes
+                      calendario. Los cambios se guardan al salir de cada celda; deja la celda vacía
+                      para quitar la meta.
+                    </span>
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -143,12 +161,6 @@ export function CsMonthlyGoalsManager({
               </Link>
             </div>
           </div>
-
-          <p className="mt-4 text-sm text-slate-600">
-            Define cuántos créditos de casos de uso debe completar cada CS en cada mes. El informe de
-            progreso compara contra esta meta los créditos completados en el mes calendario. Los cambios
-            se guardan al salir de cada celda; deja la celda vacía para quitar la meta.
-          </p>
 
           {customerSuccess.length === 0 ? (
             <p className="mt-6 rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
