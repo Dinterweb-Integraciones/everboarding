@@ -11,10 +11,18 @@ export type MonthlyGoalRow = {
 export type MonthlyGoalProgressEntry = {
   csId: string;
   csName: string;
-  completedCredits: number;
-  // Null si el CS no tiene meta definida para ese mes.
+  // Null cuando se oculta: en la vista de un CS, los créditos de los demás CS no se envían.
+  completedCredits: number | null;
+  // Null si el CS no tiene meta definida para ese mes (o si se oculta).
   goalCredits: number | null;
+  // Avance redondeado (completados / meta × 100); null sin meta.
+  percentage: number | null;
 };
+
+// Vista de un CS: de los demás CS solo se conserva el porcentaje de avance, sin créditos ni meta.
+export function redactMonthlyGoalEntry(entry: MonthlyGoalProgressEntry): MonthlyGoalProgressEntry {
+  return { ...entry, completedCredits: null, goalCredits: null };
+}
 
 export type MonthlyGoalProgress = {
   month: string;
@@ -88,12 +96,17 @@ export function buildMonthlyGoalProgress({
 
   return months.map((month) => {
     const customerSuccess = [...customerSuccessNameById.entries()]
-      .map(([csId, csName]) => ({
-        csId,
-        csName,
-        completedCredits: completedByCsMonth.get(`${csId}:${month}`) ?? 0,
-        goalCredits: goalByCsMonth.get(`${csId}:${month}`) ?? null,
-      }))
+      .map(([csId, csName]) => {
+        const completedCredits = completedByCsMonth.get(`${csId}:${month}`) ?? 0;
+        const goalCredits = goalByCsMonth.get(`${csId}:${month}`) ?? null;
+        return {
+          csId,
+          csName,
+          completedCredits,
+          goalCredits,
+          percentage: goalCredits ? Math.round((completedCredits / goalCredits) * 100) : null,
+        };
+      })
       // Sin meta ni avance en el mes no hay nada que mostrar.
       .filter((entry) => entry.goalCredits !== null || entry.completedCredits > 0)
       .sort((first, second) => first.csName.localeCompare(second.csName, "es"));

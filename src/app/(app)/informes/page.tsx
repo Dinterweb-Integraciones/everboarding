@@ -6,6 +6,7 @@ import {
   buildMonthlyGoalProgress,
   getRecentMonthKeys,
   monthKeyToDate,
+  redactMonthlyGoalEntry,
   type MonthlyGoalRow,
 } from "@/lib/cs-monthly-goals";
 import { fetchUserMemberships } from "@/lib/membership-access";
@@ -61,6 +62,7 @@ type InitiativeSourceRow = {
 };
 
 type InitiativeReportRow = InitiativeSourceRow & {
+  stage_entered_at: string;
   executing_at: string | null;
   completed_at: string | null;
   credits: number;
@@ -679,9 +681,21 @@ export default async function ReportsPage() {
     const completedLog = activityLogs.find((log) =>
       normalizeInitiativeTitle(log.entry).includes("cambio a completado"),
     );
+    // Última vez que el caso pasó a su etapa actual (Planificado / En ejecución); sin registro
+    // del cambio se asume que se creó directamente en esa etapa.
+    const currentStageMarker =
+      initiative.status === "planned"
+        ? "cambio a planificado"
+        : initiative.status === "executing"
+          ? "cambio a en ejecucion"
+          : null;
+    const currentStageLog = currentStageMarker
+      ? activityLogs.findLast((log) => normalizeInitiativeTitle(log.entry).includes(currentStageMarker))
+      : undefined;
 
     return {
       ...initiative,
+      stage_entered_at: currentStageLog?.created_at ?? initiative.created_at,
       executing_at:
         executingLog?.created_at ??
         (initiative.status === "executing" || initiative.status === "completed"
@@ -839,12 +853,19 @@ export default async function ReportsPage() {
       csName: customerSuccessNameById.get(user.id) ?? "Mi avance",
       completedCredits: 0,
       goalCredits: null,
+      percentage: null,
     };
-    // El CS no ve el total global: solo recibe su propio avance.
+    // El CS no ve el total global. Su barra va primero con créditos y meta; de los demás CS
+    // solo se envía el porcentaje de avance.
     return {
       ...progress,
-      overall: { completedCredits: ownEntry.completedCredits, goalCredits: ownEntry.goalCredits ?? 0 },
-      customerSuccess: [ownEntry],
+      overall: { completedCredits: ownEntry.completedCredits ?? 0, goalCredits: ownEntry.goalCredits ?? 0 },
+      customerSuccess: [
+        ownEntry,
+        ...progress.customerSuccess
+          .filter((entry) => entry.csId !== user.id)
+          .map(redactMonthlyGoalEntry),
+      ],
     };
   });
   const visibleRows = rows.filter((row) => visibleClientIds.has(row.client_id));

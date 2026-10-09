@@ -1,5 +1,9 @@
 // Cálculo del informe de Operaciones: créditos por cliente en su ciclo vigente (contratados,
 // caudal, disponibles, comprometidos, completados, etc.).
+//
+// Disponibles, Comprometidos y Completados solo cuentan créditos que pasaron a esa etapa dentro de
+// la ventana del cliente: su ciclo vigente si es recurrente, o los últimos 30 días si es de
+// paquetes. En Evaluación es la excepción: cuenta todo lo que hoy está en evaluación.
 
 type CycleColumnColor = "verde" | "naranja" | "rojo" | "gris";
 type CycleColumnColors = { available: CycleColumnColor; committed: CycleColumnColor; evaluation: CycleColumnColor };
@@ -22,9 +26,13 @@ export type CreditHistorySourceRow = {
 };
 
 export type CreditHistorySourceInitiative = {
+  id: string;
   client_id: string;
+  title: string;
   status: "backlog" | "planned" | "executing" | "completed";
   created_at: string;
+  // Fecha en que el caso entró a su etapa actual (Planificado / En ejecución).
+  stage_entered_at: string;
   completed_at: string | null;
   credits: number;
 };
@@ -35,7 +43,25 @@ export type CreditHistorySourceGrant = {
   used_credits: number;
   expired_credits: number;
   grant_date: string;
+  expires_at: string;
 };
+
+// Detalle de lo que suma (o queda fuera de) cada columna, para justificar la cifra.
+export type CreditBreakdownItem = {
+  key: string;
+  title: string;
+  stage: string;
+  // Fecha que decide si entra en la ventana (o la de creación, en evaluación).
+  date: string | null;
+  dateLabel: string;
+  // Solo en Disponibles: vencimiento del grant.
+  expiresAt?: string;
+  credits: number;
+  // false: se muestra como referencia, pero quedó fuera de la ventana y no suma.
+  included: boolean;
+};
+
+export type CreditBreakdownKey = "evaluation" | "available" | "committed" | "completed";
 
 export type CreditHistoryReportRow = {
   clientId: string;
@@ -53,62 +79,52 @@ export type CreditHistoryReportRow = {
   completedCredits: number;
   cycleStartAt: string;
   cycleEndAt: string | null;
+  // Ventana con la que se midieron Disponibles, Comprometido y Completados.
+  windowStart: string;
+  windowEnd: string | null;
+  // Saldo real del cliente; si es menor que lo otorgado en la ventana, Disponibles se limita a él.
+  currentBalance: number;
+  breakdown: Record<CreditBreakdownKey, CreditBreakdownItem[]>;
   observations: string | null;
   cycleColors: CycleColumnColors | null;
 };
 
-function getInitiativeCreditTotals(
-  rows: CreditHistorySourceRow[],
-  initiatives: CreditHistorySourceInitiative[],
-) {
-  const windowStartByClientId = new Map(rows.map((row) => [row.client_id, row.current_cycle_start_at]));
-  const windowEndByClientId = new Map(rows.map((row) => [row.client_id, row.current_cycle_end_at]));
-  const completedByClient = new Map<string, number>();
-  const evaluationByClient = new Map<string, number>();
-  const planningByClient = new Map<string, number>();
-  const executingByClient = new Map<string, number>();
+type ReportWindow = { start: string; end: string | null };
 
-  initiatives.forEach((initiative) => {
-    const credits = Number(initiative.credits) || 0;
+const STAGE_LABELS: Record<CreditHistorySourceInitiative["status"], string> = {
+  backlog: "En evaluación",
+  planned: "Planificado",
+  executing: "En ejecución",
+  completed: "Completado",
+};
 
-    // "Completados" solo cuenta lo terminado durante el ciclo vigente (entre su inicio y su
-    // fin, ambos inclusive) o en los últimos 30 días si no hay ciclo; no el acumulado histórico.
-    if (initiative.status === "completed") {
-      const windowStart = windowStartByClientId.get(initiative.client_id);
-      const windowEnd = windowEndByClientId.get(initiative.client_id);
-      const completedDate = initiative.completed_at?.slice(0, 10);
-      if (
-        windowStart &&
-        completedDate &&
-        completedDate >= windowStart &&
-        (!windowEnd || completedDate <= windowEnd.slice(0, 10))
-      ) {
-        completedByClient.set(initiative.client_id, (completedByClient.get(initiative.client_id) ?? 0) + credits);
-      }
-      return;
-    }
+function isoDateDaysAgo(days: number) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
+}
 
-    // "En evaluación" usa la misma ventana: casos creados en el ciclo actual o últimos 30 días.
-    if (initiative.status === "backlog") {
-      const windowStart = windowStartByClientId.get(initiative.client_id);
-      const createdDate = initiative.created_at.slice(0, 10);
-      if (windowStart && createdDate >= windowStart) {
-        evaluationByClient.set(initiative.client_id, (evaluationByClient.get(initiative.client_id) ?? 0) + credits);
-      }
-      return;
-    }
+// Ventana en la que se miden las etapas: el ciclo vigente para recurrentes y los últimos
+// 30 días para paquetes. Fechas ISO (YYYY-MM-DD), ambos extremos inclusivos.
+function getReportWindow(row: CreditHistorySourceRow): ReportWindow {
+  if (row.billing === "paquetes") return { start: isoDateDaysAgo(30), end: null };
+  return {
+    start: row.current_cycle_start_at.slice(0, 10),
+    end: row.current_cycle_end_at?.slice(0, 10) ?? null,
+  };
+}
 
-    const byStatus =
-      initiative.status === "planned"
-        ? planningByClient
-        : initiative.status === "executing"
-          ? executingByClient
-          : null;
-    if (!byStatus) return;
-    byStatus.set(initiative.client_id, (byStatus.get(initiative.client_id) ?? 0) + credits);
-  });
+function isWithinWindow(value: string | null | undefined, window: ReportWindow | undefined) {
+  const date = value?.slice(0, 10);
+  return Boolean(window && date && date >= window.start && (!window.end || date <= window.end));
+}
 
-  return { completedByClient, evaluationByClient, planningByClient, executingByClient };
+function sumIncluded(items: CreditBreakdownItem[] | undefined) {
+  return (items ?? []).reduce((sum, item) => (item.included ? sum + item.credits : sum), 0);
+}
+
+function emptyBreakdown(): Record<CreditBreakdownKey, CreditBreakdownItem[]> {
+  return { evaluation: [], available: [], committed: [], completed: [] };
 }
 
 export function buildCreditHistoryRows(
@@ -116,29 +132,101 @@ export function buildCreditHistoryRows(
   initiatives: CreditHistorySourceInitiative[],
   creditGrants: CreditHistorySourceGrant[],
 ): CreditHistoryReportRow[] {
-  const initiativeCreditTotals = getInitiativeCreditTotals(rows, initiatives);
   const todayIsoDate = new Date().toISOString().slice(0, 10);
+  const windowByClientId = new Map(rows.map((row) => [row.client_id, getReportWindow(row)]));
+  const breakdownByClient = new Map<string, Record<CreditBreakdownKey, CreditBreakdownItem[]>>();
+  const getBreakdown = (clientId: string) => {
+    let breakdown = breakdownByClient.get(clientId);
+    if (!breakdown) {
+      breakdown = emptyBreakdown();
+      breakdownByClient.set(clientId, breakdown);
+    }
+    return breakdown;
+  };
+  // Clientes con casos Planificados o En ejecución, sin importar cuándo entraron a esa etapa.
+  const clientsWithCommittedWork = new Set<string>();
+
+  initiatives.forEach((initiative) => {
+    const credits = Number(initiative.credits) || 0;
+    const window = windowByClientId.get(initiative.client_id);
+    const base = {
+      key: initiative.id,
+      title: initiative.title,
+      stage: STAGE_LABELS[initiative.status],
+      credits,
+    };
+
+    // "Completados" solo cuenta lo terminado dentro de la ventana; no el acumulado histórico.
+    if (initiative.status === "completed") {
+      if (isWithinWindow(initiative.completed_at, window)) {
+        getBreakdown(initiative.client_id).completed.push({
+          ...base,
+          date: initiative.completed_at,
+          dateLabel: "Completado el",
+          included: true,
+        });
+      }
+      return;
+    }
+
+    // "En evaluación" no sigue la ventana: cuenta todo lo que hoy está en evaluación.
+    if (initiative.status === "backlog") {
+      getBreakdown(initiative.client_id).evaluation.push({
+        ...base,
+        date: initiative.created_at,
+        dateLabel: "Creado el",
+        included: true,
+      });
+      return;
+    }
+
+    // "Comprometido" solo cuenta los casos que pasaron a Planificado / En ejecución en la ventana;
+    // los demás se listan como referencia.
+    clientsWithCommittedWork.add(initiative.client_id);
+    getBreakdown(initiative.client_id).committed.push({
+      ...base,
+      date: initiative.stage_entered_at,
+      dateLabel: `Pasó a ${STAGE_LABELS[initiative.status]} el`,
+      included: isWithinWindow(initiative.stage_entered_at, window),
+    });
+  });
+
   const grantedCreditsByClient = new Map<string, number>();
   // Saldo de grants cuyo ciclo aún no empieza (pagados por adelantado): no está disponible todavía.
   const futureRemainingByClient = new Map<string, number>();
   // Créditos que otorga el grant del ciclo vigente (el último que ya empezó).
   const currentGrantByClient = new Map<string, CreditHistorySourceGrant>();
-  creditGrants.forEach((grant) => {
+  creditGrants.forEach((grant, index) => {
     grantedCreditsByClient.set(
       grant.client_id,
       (grantedCreditsByClient.get(grant.client_id) ?? 0) + Number(grant.granted_credits),
     );
+    const remaining = Math.max(
+      0,
+      Number(grant.granted_credits) - Number(grant.used_credits) - Number(grant.expired_credits),
+    );
 
     if (grant.grant_date > todayIsoDate) {
-      const remaining = Math.max(
-        0,
-        Number(grant.granted_credits) - Number(grant.used_credits) - Number(grant.expired_credits),
-      );
       futureRemainingByClient.set(
         grant.client_id,
         (futureRemainingByClient.get(grant.client_id) ?? 0) + remaining,
       );
       return;
+    }
+
+    // Disponibles: saldo vigente de los grants otorgados en la ventana. Los grants vigentes de
+    // antes de la ventana se listan como referencia.
+    if (grant.expires_at >= todayIsoDate && remaining > 0) {
+      getBreakdown(grant.client_id).available.push({
+        key: `grant-${index}`,
+        title: `Créditos otorgados (${Number(grant.granted_credits)} CR)`,
+        stage: "Saldo vigente",
+        expiresAt: grant.expires_at,
+        date: grant.grant_date,
+        dateLabel: "Otorgados el",
+        credits: remaining,
+        included: isWithinWindow(grant.grant_date, windowByClientId.get(grant.client_id)),
+      });
     }
 
     const currentGrant = currentGrantByClient.get(grant.client_id);
@@ -147,15 +235,34 @@ export function buildCreditHistoryRows(
     }
   });
 
+  // Saldo real del cliente, sin contar lo de ciclos que aún no empiezan.
+  const getCurrentBalance = (row: CreditHistorySourceRow) =>
+    Math.max(
+      0,
+      (Number(row.credits_remaining) || 0) - (futureRemainingByClient.get(row.client_id) ?? 0),
+    );
+
   return rows
+    // Un cliente inactivo sigue en Operaciones mientras tenga créditos disponibles o
+    // comprometidos por ejecutar, aunque hayan entrado antes de la ventana.
+    .filter(
+      (row) =>
+        row.is_active ||
+        getCurrentBalance(row) > 0 ||
+        clientsWithCommittedWork.has(row.client_id),
+    )
     .map((row) => {
+      const breakdown = breakdownByClient.get(row.client_id) ?? emptyBreakdown();
+      const byDate = (first: CreditBreakdownItem, second: CreditBreakdownItem) =>
+        Number(second.included) - Number(first.included) ||
+        (second.date ?? "").localeCompare(first.date ?? "");
+      (Object.keys(breakdown) as CreditBreakdownKey[]).forEach((key) => breakdown[key].sort(byDate));
+
+      const window = windowByClientId.get(row.client_id) ?? getReportWindow(row);
+      const currentBalance = getCurrentBalance(row);
       const hasFutureGrant = futureRemainingByClient.has(row.client_id);
-      const availableCredits = Math.max(
-        0,
-        (Number(row.credits_remaining) || 0) - (futureRemainingByClient.get(row.client_id) ?? 0),
-      );
-      const planningCredits = initiativeCreditTotals.planningByClient.get(row.client_id) ?? 0;
-      const executingCredits = initiativeCreditTotals.executingByClient.get(row.client_id) ?? 0;
+      // Solo lo que entró como disponible en la ventana, sin superar el saldo real del cliente.
+      const availableCredits = Math.min(sumIncluded(breakdown.available), currentBalance);
       // contracted_credits es el total del plan completo (puede ser mensual, trimestral o
       // semestral); se divide entre su duración en meses para obtener el equivalente mensual.
       // Si ya pagó ciclos por adelantado se muestra el plan completo contratado.
@@ -189,18 +296,19 @@ export function buildCreditHistoryRows(
         // Simulación: si el cliente tuviera continuidad, conservaría lo disponible y
         // sumaría su caudal, aunque hoy no tenga continuidad.
         flowWithContinuityCredits: contractedFlowCredits + availableCredits,
-        evaluationCredits: initiativeCreditTotals.evaluationByClient.get(row.client_id) ?? 0,
-        committedCredits: planningCredits + executingCredits,
-        completedCredits: initiativeCreditTotals.completedByClient.get(row.client_id) ?? 0,
+        evaluationCredits: sumIncluded(breakdown.evaluation),
+        committedCredits: sumIncluded(breakdown.committed),
+        completedCredits: sumIncluded(breakdown.completed),
         cycleStartAt: row.current_cycle_start_at,
         cycleEndAt: row.current_cycle_end_at,
+        windowStart: window.start,
+        windowEnd: window.end,
+        currentBalance,
+        breakdown,
         observations: row.observations,
         cycleColors: row.cycle_colors,
       };
     })
-    // Un cliente inactivo sigue en Operaciones mientras tenga créditos
-    // disponibles o comprometidos por ejecutar.
-    .filter((row) => row.isActive || row.availableCredits > 0 || row.committedCredits > 0)
     .sort(
       (first, second) =>
         (first.customerSuccessName ?? "Sin asignar").localeCompare(

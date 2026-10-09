@@ -24,6 +24,8 @@ import {
 
 import {
   buildCreditHistoryRows,
+  type CreditBreakdownItem,
+  type CreditBreakdownKey,
   type CreditHistoryReportRow,
 } from "@/lib/credit-history-report";
 import { formatMonthLabel, type MonthlyGoalProgress } from "@/lib/cs-monthly-goals";
@@ -88,6 +90,8 @@ type InitiativeReportRow = {
   north_star_history_id: string | null;
   created_at: string;
   updated_at: string;
+  // Fecha en que el caso entró a su etapa actual (Planificado / En ejecución).
+  stage_entered_at: string;
   executing_at: string | null;
   completed_at: string | null;
   // Valor operativo del trabajo; incluye bonificados a su valor de catálogo.
@@ -829,8 +833,8 @@ const CYCLE_COLUMNS: Array<{
   creditsKey: "availableCredits" | "evaluationCredits" | "committedCredits";
   rule: string;
 }> = [
-  { key: "available", creditsKey: "availableCredits", rule: "desde el día 15: < 10% verde, < 20% naranja, resto rojo" },
   { key: "evaluation", creditsKey: "evaluationCredits", rule: "desde el día 25: ≥ 50% verde, ≥ 40% naranja, resto rojo" },
+  { key: "available", creditsKey: "availableCredits", rule: "desde el día 15: < 10% verde, < 20% naranja, resto rojo" },
   { key: "committed", creditsKey: "committedCredits", rule: "desde el día 20: < 20% verde, < 30% naranja, resto rojo" },
 ];
 
@@ -848,8 +852,8 @@ const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: Cred
     label: "Créditos de caudal con recargo",
     sortKey: "flowWithContinuityCredits",
   },
-  { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
   { key: "evaluation", label: "Créditos En Evaluación", sortKey: "evaluationCredits" },
+  { key: "available", label: "Créditos disponibles", sortKey: "availableCredits" },
   { key: "committed", label: "Créditos comprometido", sortKey: "committedCredits" },
   { key: "completed", label: "Créditos completados", sortKey: "completedCredits" },
 ];
@@ -1098,6 +1102,237 @@ function ClientObservationsPopover({
     </>
   );
 }
+const BREAKDOWN_POPOVER_WIDTH = 380;
+
+const BREAKDOWN_COPY: Record<CreditBreakdownKey, { title: string; rule: string; empty: string }> = {
+  evaluation: {
+    title: "Créditos en evaluación",
+    rule: "Todos los casos que hoy están en evaluación, sin importar la fecha.",
+    empty: "No hay casos en evaluación.",
+  },
+  available: {
+    title: "Créditos disponibles",
+    rule: "Saldo vigente de los créditos otorgados dentro del periodo.",
+    empty: "No hay créditos vigentes.",
+  },
+  committed: {
+    title: "Créditos comprometidos",
+    rule: "Casos que pasaron a Planificado o En ejecución dentro del periodo.",
+    empty: "No hay casos planificados ni en ejecución.",
+  },
+  completed: {
+    title: "Créditos completados",
+    rule: "Casos que pasaron a Completado dentro del periodo.",
+    empty: "No hay casos completados en el periodo.",
+  },
+};
+
+// Cifra de una columna de créditos que, al hacer clic, muestra los casos (o grants) que la
+// componen con la fecha en que pasaron a su etapa, para justificar el número y el semáforo.
+function CreditBreakdownPopover({
+  row,
+  breakdownKey,
+  value,
+  className,
+  title,
+}: {
+  row: CreditHistoryReportRow;
+  breakdownKey: CreditBreakdownKey;
+  value: number;
+  className: string;
+  title?: string;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number; placeAbove: boolean } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!position) return;
+
+    const close = () => setPosition(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    const handleScroll = (event: Event) => {
+      if (panelRef.current?.contains(event.target as Node)) return;
+      close();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", close);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [position]);
+
+  function toggle() {
+    if (position) {
+      setPosition(null);
+      return;
+    }
+
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const gutter = 16;
+    const left = Math.min(
+      Math.max(gutter, rect.right - BREAKDOWN_POPOVER_WIDTH),
+      window.innerWidth - BREAKDOWN_POPOVER_WIDTH - gutter,
+    );
+    const placeAbove = window.innerHeight - rect.bottom < 360 && rect.top > 360;
+
+    setPosition({ top: placeAbove ? rect.top - 8 : rect.bottom + 8, left, placeAbove });
+  }
+
+  const copy = BREAKDOWN_COPY[breakdownKey];
+  const items = row.breakdown[breakdownKey];
+  const included = items.filter((item) => item.included);
+  const excluded = items.filter((item) => !item.included);
+  const includedTotal = included.reduce((sum, item) => sum + item.credits, 0);
+  const isWindowed = breakdownKey !== "evaluation";
+  const periodLabel = row.windowEnd
+    ? `${formatDate(row.windowStart)} – ${formatDate(row.windowEnd)}`
+    : `${formatDate(row.windowStart)} – hoy`;
+  // Días desde que terminó el ciclo usado como periodo (sin un ciclo nuevo pagado se sigue usando).
+  const todayIsoDate = new Date().toISOString().slice(0, 10);
+  const daysSinceCycleEnded =
+    isWindowed && row.windowEnd && row.windowEnd < todayIsoDate
+      ? Math.round(
+          (new Date(`${todayIsoDate}T00:00:00Z`).getTime() - new Date(`${row.windowEnd}T00:00:00Z`).getTime()) /
+            86_400_000,
+        )
+      : null;
+  // Disponibles nunca supera el saldo real del cliente (ajustes, pérdidas, etc.).
+  const isCappedByBalance = breakdownKey === "available" && value < includedTotal;
+
+  function renderItem(item: CreditBreakdownItem) {
+    return (
+      <li
+        key={item.key}
+        className={`flex items-start justify-between gap-3 px-4 py-2.5 ${item.included ? "" : "opacity-60"}`}
+      >
+        <div className="min-w-0">
+          <p className={`text-[13px] font-bold text-[#213343] ${item.included ? "" : "line-through decoration-[#99acc2]"}`}>
+            {item.title}
+          </p>
+          <p className="mt-0.5 text-[11px] font-semibold text-[#516f90]">
+            {item.dateLabel} {item.date ? formatDate(item.date.slice(0, 10)) : "sin fecha"}
+            {item.expiresAt ? ` · vence ${formatDate(item.expiresAt.slice(0, 10))}` : ""}
+          </p>
+          <span className="mt-1 inline-flex rounded-full bg-[#f5f8fa] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#516f90]">
+            {item.stage}
+          </span>
+        </div>
+        <span className="shrink-0 text-[13px] font-black text-[#213343]">{formatNumber(item.credits)} CR</span>
+      </li>
+    );
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        aria-expanded={Boolean(position)}
+        aria-label={`Ver detalle de ${copy.title.toLowerCase()} de ${row.clientName}`}
+        title={title ?? "Ver detalle"}
+        className={`${className} cursor-pointer underline decoration-dotted decoration-1 underline-offset-4 transition hover:ring-2 hover:ring-[#00a4bd]/25`}
+      >
+        {formatNumber(value)} CR
+      </button>
+      {position ? (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label={`${copy.title} de ${row.clientName}`}
+          style={{
+            top: position.top,
+            left: position.left,
+            width: BREAKDOWN_POPOVER_WIDTH,
+            transform: position.placeAbove ? "translateY(-100%)" : undefined,
+          }}
+          className="fixed z-50 overflow-hidden rounded-[8px] border border-[#dfe3eb] bg-white text-left normal-case tracking-normal shadow-[0_12px_32px_rgba(33,51,67,0.16)]"
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-[#edf1f5] bg-[#f5f8fa] px-4 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#00a4bd]">{copy.title}</p>
+              <p className="truncate text-xs font-bold text-[#213343]">{row.clientName}</p>
+              <p className="mt-1 text-[11px] font-semibold leading-snug text-[#516f90]">
+                {copy.rule}
+                {isWindowed ? (
+                  <>
+                    {" "}
+                    Periodo: <span className="font-bold text-[#33475b]">{periodLabel}</span> (
+                    {row.billing === "paquetes" ? "últimos 30 días" : "ciclo vigente"}).
+                  </>
+                ) : null}
+              </p>
+              {daysSinceCycleEnded !== null ? (
+                <p className="mt-1.5 inline-flex items-center gap-1 rounded-[4px] bg-amber-50 px-2 py-1 text-[11px] font-bold leading-snug text-amber-700">
+                  <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                  El ciclo terminó hace {daysSinceCycleEnded} {daysSinceCycleEnded === 1 ? "día" : "días"} y no
+                  hay uno nuevo pagado.
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setPosition(null)}
+              aria-label="Cerrar detalle"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#9cb1c6] transition hover:bg-white hover:text-[#516f90]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {included.length ? (
+              <ul className="divide-y divide-[#edf1f5]">{included.map(renderItem)}</ul>
+            ) : (
+              <p className="px-4 py-3 text-[13px] font-medium text-[#9cb1c6]">
+                {isWindowed && excluded.length ? "Nada dentro del periodo." : copy.empty}
+              </p>
+            )}
+            {excluded.length ? (
+              <>
+                <p className="border-t border-[#edf1f5] bg-[#fafbfc] px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#99acc2]">
+                  Fuera del periodo · no suman
+                </p>
+                <ul className="divide-y divide-[#edf1f5]">{excluded.map(renderItem)}</ul>
+              </>
+            ) : null}
+          </div>
+          <div className="border-t border-[#edf1f5] bg-[#f5f8fa] px-4 py-2.5">
+            <div className="flex items-center justify-between text-xs font-black text-[#213343]">
+              <span>Total</span>
+              <span>{formatNumber(value)} CR</span>
+            </div>
+            {isCappedByBalance ? (
+              <p className="mt-1 text-[11px] font-semibold leading-snug text-[#516f90]">
+                Lo otorgado en el periodo suma {formatNumber(includedTotal)} CR, pero se limita al saldo real
+                del cliente ({formatNumber(row.currentBalance)} CR).
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function CreditHistoryReport({
   rows,
   canEditObservations,
@@ -1209,10 +1444,12 @@ function CreditHistoryReport({
           <div className="flex items-center gap-2">
             <h3 className="text-base font-black text-[#213343]">Operaciones por cliente</h3>
             <InfoTooltip>
-              Completados suma los créditos de casos terminados durante el ciclo de facturación actual del
-              cliente, entre su fecha de inicio y su fecha de fin (o en los últimos 30 días si no tiene un
-              ciclo activo) — no es un acumulado histórico.
-              Comprometido suma lo planificado y lo en ejecución. Para clientes recurrentes, Contratados
+              Disponibles, Comprometido y Completados solo cuentan créditos que pasaron a esa etapa en el
+              ciclo vigente del cliente si es recurrente, o en los últimos 30 días si es de paquetes — no
+              son acumulados históricos. Disponibles es el saldo de los créditos otorgados en ese periodo;
+              Comprometido suma los casos que pasaron a Planificado o En ejecución en ese periodo;
+              Completados, los terminados en ese periodo. En Evaluación es la excepción: cuenta todo lo que
+              hoy está en evaluación, sin importar la fecha. Para clientes recurrentes, Contratados
               divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
               para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
               renueva igual cada ciclo. Caudal es el consumo mensual definido comercialmente para el
@@ -1401,19 +1638,25 @@ function CreditHistoryReport({
                       const color = row.cycleColors?.[column.key];
                       return (
                         <td key={column.key} className="px-4 py-4">
-                          <span
+                          <CreditBreakdownPopover
+                            row={row}
+                            breakdownKey={column.key}
+                            value={row[column.creditsKey]}
                             className={`inline-flex rounded-full px-2.5 py-1 text-sm font-black ${
                               color ? CYCLE_COLUMN_COLOR_CLASSES[color] : "text-[#33475b]"
                             }`}
-                            title={color ? `Semáforo ${column.rule}` : undefined}
-                          >
-                            {formatNumber(row[column.creditsKey])} CR
-                          </span>
+                            title={color ? `Semáforo ${column.rule}. Clic para ver el detalle.` : undefined}
+                          />
                         </td>
                       );
                     })}
-                    <td className="px-4 py-4 text-sm font-bold text-[#33475b]">
-                      {formatNumber(row.completedCredits)} CR
+                    <td className="px-4 py-4">
+                      <CreditBreakdownPopover
+                        row={row}
+                        breakdownKey="completed"
+                        value={row.completedCredits}
+                        className="inline-flex rounded-full px-2.5 py-1 text-sm font-bold text-[#33475b]"
+                      />
                     </td>
                   </tr>
                 ))}
@@ -1430,8 +1673,8 @@ function CreditHistoryReport({
                   <td className="px-4 py-3 text-sm">
                     {formatNumber(group.totals.flowWithContinuityCredits)} CR
                   </td>
-                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.evaluationCredits)} CR</td>
+                  <td className="px-4 py-3 text-sm">{formatNumber(group.totals.availableCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.committedCredits)} CR</td>
                   <td className="px-4 py-3 text-sm">{formatNumber(group.totals.completedCredits)} CR</td>
                 </tr>
@@ -1475,20 +1718,28 @@ function GoalProgressBar({
   label,
   completedCredits,
   goalCredits,
+  percentage,
   emphasis = false,
   showCredits = false,
+  isOwn = false,
 }: {
   label: string;
-  completedCredits: number;
+  // Null cuando no se envían (barras de otros CS en la vista de un CS).
+  completedCredits: number | null;
   goalCredits: number | null;
+  // Avance sobre la meta; null sin meta.
+  percentage: number | null;
   emphasis?: boolean;
   // Muestra "completados / meta CR" junto al nombre (solo en la vista del CS).
   showCredits?: boolean;
+  // Barra del propio CS en su vista: se resalta.
+  isOwn?: boolean;
 }) {
   const barHeight = emphasis ? "h-10" : "h-8";
-  const hasGoal = goalCredits !== null && goalCredits > 0;
-  const ratio = hasGoal ? completedCredits / goalCredits : 0;
-  const pct = Math.round(ratio * 100);
+  const hasGoal = percentage !== null;
+  const ratio = hasGoal ? percentage / 100 : 0;
+  const pct = percentage ?? 0;
+  const creditsVisible = showCredits && completedCredits !== null;
   const fillPct = Math.min(ratio, 1) * 100;
   // Con poco avance el porcentaje no cabe dentro del relleno; se muestra justo a su derecha.
   const labelInside = fillPct >= 12;
@@ -1513,15 +1764,20 @@ function GoalProgressBar({
           >
             {label}
           </span>
+          {isOwn ? (
+            <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-orange-600">
+              Tú
+            </span>
+          ) : null}
         </div>
         <span
           className={`whitespace-nowrap text-sm font-bold ${hasGoal ? "text-[#516f90]" : "text-[#99acc2]"}`}
         >
           {hasGoal
-            ? showCredits
-              ? `${formatNumber(completedCredits)} / ${formatNumber(goalCredits)} CR`
+            ? creditsVisible
+              ? `${formatNumber(completedCredits)} / ${formatNumber(goalCredits ?? 0)} CR`
               : null
-            : showCredits
+            : creditsVisible
               ? `${formatNumber(completedCredits)} CR · Sin meta`
               : "Sin meta"}
         </span>
@@ -1579,7 +1835,7 @@ function MonthlyGoalReport({
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
             {isCustomerSuccess
-              ? "Tus créditos completados en el mes sobre tu meta."
+              ? "Tus créditos completados en el mes sobre tu meta, y el avance del resto del equipo."
               : "Créditos completados en el mes sobre la meta de cada CS."}
           </p>
         </div>
@@ -1605,18 +1861,26 @@ function MonthlyGoalReport({
             label="Todos los CS"
             completedCredits={selected.overall.completedCredits}
             goalCredits={selected.overall.goalCredits}
+            percentage={
+              selected.overall.goalCredits > 0
+                ? Math.round((selected.overall.completedCredits / selected.overall.goalCredits) * 100)
+                : null
+            }
             emphasis
           />
         )}
         <div className={`space-y-5 ${isCustomerSuccess ? "" : "border-t border-[#edf1f5] pt-6"}`}>
           {selected.customerSuccess.length ? (
-            selected.customerSuccess.map((entry) => (
+            selected.customerSuccess.map((entry, index) => (
               <GoalProgressBar
                 key={entry.csId}
                 label={entry.csName}
                 completedCredits={entry.completedCredits}
                 goalCredits={entry.goalCredits}
+                percentage={entry.percentage}
                 showCredits={isCustomerSuccess}
+                // En la vista del CS su propia barra llega primero.
+                isOwn={isCustomerSuccess && index === 0}
               />
             ))
           ) : (
