@@ -2,22 +2,44 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronDown, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, CreditCard, House, LayoutGrid, MessageSquareText } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { PlatformRole } from "@/lib/platform-access";
 
-const catalogLinks = [
-  { href: "/cs/categorias", label: "Categorias" },
-  { href: "/cs/categorias-grupos", label: "Categorías de Guía Inteligente" },
-  { href: "/cs/categorias-casos-uso", label: "Categorías de Casos de Uso" },
-  { href: "/cs/tareas", label: "Actividades" },
-  { href: "/cs/grupos", label: "Casos de Uso" },
-  { href: "/cs/clientes", label: "Clientes" },
-  { href: "/cs/cupones", label: "Cupones" },
-  { href: "/cs/metas", label: "Metas CS" },
-  { href: "/cs/ventas", label: "Ventas" },
+type NavLink = { href: string; label: string };
+
+// Catálogos se agrupa en submenús; los enlaces sueltos van después de los grupos.
+const catalogGroups: Array<{ label: string; links: NavLink[] }> = [
+  {
+    label: "Casos de Uso",
+    links: [
+      { href: "/cs/categorias", label: "Categorias" },
+      { href: "/cs/categorias-grupos", label: "Categorías de Guía Inteligente" },
+      { href: "/cs/categorias-casos-uso", label: "Categorías de Casos de Uso" },
+      { href: "/cs/tareas", label: "Actividades" },
+      { href: "/cs/grupos", label: "Casos de Uso" },
+    ],
+  },
+  {
+    label: "Customer Success",
+    links: [
+      { href: "/cs/clientes", label: "Clientes" },
+      { href: "/cs/metas", label: "Metas CS" },
+      { href: "/cs/ventas", label: "Ventas" },
+    ],
+  },
 ];
+
+const catalogLinks: NavLink[] = [{ href: "/cs/cupones", label: "Cupones" }];
+
+const dropdownLinkClass = (active: boolean) =>
+  cn(
+    "block rounded-[12px] px-3 py-2.5 text-sm font-semibold transition",
+    active
+      ? "bg-[color-mix(in_oklab,var(--accent)_12%,white)] text-[#0f766e]"
+      : "text-[#516f90] hover:bg-slate-50 hover:text-[#33475b]",
+  );
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -77,7 +99,11 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
         ]
       : []),
   ];
-  const catalogActive = catalogLinksToRender.some((link) => isActive(pathname, link.href));
+  const catalogActive =
+    canSeeCatalogs &&
+    [...catalogGroups.flatMap((group) => group.links), ...catalogLinksToRender].some((link) =>
+      isActive(pathname, link.href),
+    );
   const salesLinks = [
     { href: "/sales/dinterweb", label: "Sales Dinterweb" },
     { href: "/sales/proposals/new", label: "Sales Hubspot" },
@@ -118,17 +144,39 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
             </button>
 
             <div className="invisible absolute left-0 top-full z-40 mt-2 w-56 translate-y-1 rounded-[16px] border border-[#dfe3eb] bg-white p-2 opacity-0 shadow-[0_18px_45px_rgba(15,23,42,0.08)] transition-all group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+              {catalogGroups.map((group) => {
+                const groupActive = group.links.some((link) => isActive(pathname, link.href));
+                return (
+                  <div key={group.label} className="group/sub relative">
+                    <button
+                      type="button"
+                      className={cn(
+                        dropdownLinkClass(groupActive),
+                        "flex w-full appearance-none items-center justify-between gap-2 border-0 bg-transparent text-left",
+                      )}
+                    >
+                      {group.label}
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                    </button>
+
+                    {/* El padding izquierdo cubre el hueco entre menús para no perder el hover. */}
+                    <div className="invisible absolute left-full top-0 z-50 -mt-2 pl-3 opacity-0 transition-all group-hover/sub:visible group-hover/sub:opacity-100 group-focus-within/sub:visible group-focus-within/sub:opacity-100">
+                      <div className="w-64 rounded-[16px] border border-[#dfe3eb] bg-white p-2 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
+                        {group.links.map((link) => (
+                          <Link key={link.href} href={link.href} className={dropdownLinkClass(isActive(pathname, link.href))}>
+                            {link.label}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="my-1 border-t border-[#edf1f5]" />
+
               {catalogLinksToRender.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={cn(
-                    "block rounded-[12px] px-3 py-2.5 text-sm font-semibold transition",
-                    isActive(pathname, link.href)
-                      ? "bg-[color-mix(in_oklab,var(--accent)_12%,white)] text-[#0f766e]"
-                      : "text-[#516f90] hover:bg-slate-50 hover:text-[#33475b]",
-                  )}
-                >
+                <Link key={link.href} href={link.href} className={dropdownLinkClass(isActive(pathname, link.href))}>
                   {link.label}
                 </Link>
               ))}
