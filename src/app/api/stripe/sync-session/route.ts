@@ -7,6 +7,7 @@ import {
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
+import { anchorAwaitingMembershipToPaymentDate } from "@/lib/membership-checkout";
 import { buildPublicProspectSnapshotBase } from "@/lib/public-prospect";
 import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -125,6 +126,9 @@ export async function POST(request: Request) {
         grantedCredits,
       });
     } else {
+      // Primer pago de un cliente que pasó de paquetes a recurrencia: su ciclo empieza hoy.
+      await anchorAwaitingMembershipToPaymentDate(clientId);
+
       const supabase = createSupabaseAdminClient();
       const recordPaymentArgs: RecordStripeCheckoutPaymentArgs = {
         p_client_id: clientId,

@@ -6,10 +6,12 @@ import {
   ArrowRight,
   CalendarDays,
   Copy,
+  CreditCard,
   Download,
   Link2,
   Loader2,
   Plus,
+  Repeat,
   Search,
   ShieldCheck,
   Sparkles,
@@ -82,11 +84,29 @@ import {
   type InitiativeRecord,
   type InitiativeStatus,
   type InitiativeTaskStatus,
+  type OnboardingConfig,
   type OnboardingSnapshot,
   type ProjectStage,
 } from "@/lib/onboarding";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate, formatUserError, safeParseNumber, toIsoDate } from "@/lib/utils";
+
+type SubscriptionConversionDraft = {
+  credits: number;
+  periodMonths: PlanPeriodMonths;
+  price: number;
+  // Caudal: vacío mientras no se defina un consumo mensual.
+  flowCredits: string;
+  validityDays: number;
+  firstCycleStartDate: string;
+  paymentMethod: "stripe" | "bank_transfer";
+};
+
+function addDaysToIsoDate(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 type OnboardingClientPageProps = {
   initialData: OnboardingSnapshot;
@@ -94,6 +114,12 @@ type OnboardingClientPageProps = {
   userId: string;
   canSharePublicLinks: boolean;
   canToggleClientActive: boolean;
+  // Solo superadmin: pasar de paquetes a recurrencia y generar el link de membresía.
+  canChangeBillingMode: boolean;
+  // Con un ciclo pagado, "Configurar oferta" ya no cambia la forma de cobro.
+  hasPaidBillingCycle: boolean;
+  // Pasó a recurrencia con Stripe y aún no activa su membresía (isAwaitingStripeMembership).
+  canCopyMembershipLink: boolean;
   // Solo llega para el equipo (CS/admin/superadmin); null oculta el panel.
   clientObservations: string | null;
 };
@@ -474,6 +500,9 @@ export function OnboardingClientPage({
   userId,
   canSharePublicLinks,
   canToggleClientActive,
+  canChangeBillingMode,
+  hasPaidBillingCycle,
+  canCopyMembershipLink,
   clientObservations,
 }: OnboardingClientPageProps) {
   const supabase = createSupabaseBrowserClient();
@@ -504,6 +533,11 @@ export function OnboardingClientPage({
   const [isClearingBoard, setIsClearingBoard] = useState(false);
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [subscriptionConversionDraft, setSubscriptionConversionDraft] =
+    useState<SubscriptionConversionDraft | null>(null);
+  const [isConvertingToSubscription, setIsConvertingToSubscription] = useState(false);
+  const [isCreatingMembershipLink, setIsCreatingMembershipLink] = useState(false);
+  const [isAwaitingMembershipPayment, setIsAwaitingMembershipPayment] = useState(canCopyMembershipLink);
   const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
   const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
@@ -1086,6 +1120,86 @@ export function OnboardingClientPage({
       showError(formatUserError(caughtError, "No pudimos actualizar el estado del cliente."));
     } finally {
       setIsTogglingClientActive(false);
+    }
+  }
+
+  function openSubscriptionConversion() {
+    // Por defecto el primer ciclo empieza al día siguiente del vencimiento del paquete vigente.
+    const todayIsoDate = toIsoDate();
+    const packageEndDate = billing.current_cycle_end?.slice(0, 10);
+    const dayAfterPackage = packageEndDate ? addDaysToIsoDate(packageEndDate, 1) : todayIsoDate;
+
+    setSubscriptionConversionDraft({
+      credits: config.custom_plan_credits ?? config.base_capacity,
+      periodMonths: 1,
+      price: getEffectivePlanPrice(config),
+      flowCredits: config.flow_credits === null ? "" : String(config.flow_credits),
+      validityDays: 60,
+      firstCycleStartDate: dayAfterPackage > todayIsoDate ? dayAfterPackage : todayIsoDate,
+      paymentMethod: "stripe",
+    });
+  }
+
+  async function convertToSubscription() {
+    if (!canChangeBillingMode || !subscriptionConversionDraft || isConvertingToSubscription) return;
+
+    setIsConvertingToSubscription(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/clients/${client.id}/billing-mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...subscriptionConversionDraft,
+          creditValidityDays: subscriptionConversionDraft.validityDays,
+          flowCredits:
+            subscriptionConversionDraft.flowCredits.trim() === ""
+              ? null
+              : subscriptionConversionDraft.flowCredits,
+        }),
+      });
+      const payload = (await response.json()) as { config?: OnboardingConfig; message?: string };
+
+      if (!response.ok || !payload.config) {
+        throw new Error(payload.message || "No pudimos cambiar la forma de cobro del cliente.");
+      }
+
+      setConfig(payload.config);
+      setIsAwaitingMembershipPayment(subscriptionConversionDraft.paymentMethod === "stripe");
+      setSubscriptionConversionDraft(null);
+      showSuccess(payload.message || "Cliente pasado a recurrencia.");
+    } catch (caughtError) {
+      showError(formatUserError(caughtError, "No pudimos cambiar la forma de cobro del cliente."));
+    } finally {
+      setIsConvertingToSubscription(false);
+    }
+  }
+
+  async function copyMembershipCheckoutLink() {
+    if (!canChangeBillingMode || isCreatingMembershipLink) return;
+
+    setIsCreatingMembershipLink(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch(`/api/clients/${client.id}/membership-checkout`, { method: "POST" });
+      const payload = (await response.json()) as { url?: string; message?: string };
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.message || "No pudimos generar el link de membresía.");
+      }
+
+      const url = payload.url;
+      await navigator.clipboard.writeText(url).then(
+        () => showSuccess("Link de membresía copiado. Envíalo al cliente para activar su recurrencia."),
+        // Sin permiso de portapapeles se abre el link para copiarlo desde ahí.
+        () => window.open(url, "_blank", "noopener"),
+      );
+    } catch (caughtError) {
+      showError(formatUserError(caughtError, "No pudimos generar el link de membresía."));
+    } finally {
+      setIsCreatingMembershipLink(false);
     }
   }
 
@@ -2972,6 +3086,30 @@ export function OnboardingClientPage({
     </button>
   ) : null;
 
+  const billingModeActions = canChangeBillingMode ? (
+    !isRecurringPlan ? (
+      <Button
+        variant="secondary"
+        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+        onClick={openSubscriptionConversion}
+      >
+        <Repeat className="mr-2 h-3.5 w-3.5" />
+        Pasar a recurrencia
+      </Button>
+    ) : isAwaitingMembershipPayment ? (
+      <Button
+        variant="secondary"
+        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
+        onClick={copyMembershipCheckoutLink}
+        disabled={isCreatingMembershipLink}
+        title="Su primer ciclo empieza el día que pague."
+      >
+        <CreditCard className="mr-2 h-3.5 w-3.5" />
+        {isCreatingMembershipLink ? "Generando..." : "Copiar link de membresía"}
+      </Button>
+    ) : null
+  ) : null;
+
   return (
     <div className="space-y-6" id="onboarding-export-root">
       <div className="overflow-hidden border-b border-[#dfe3eb] bg-white">
@@ -3060,6 +3198,7 @@ export function OnboardingClientPage({
                 <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold text-[#516f90]">
                   <div className="flex items-center gap-3">
                     {clientActiveToggle}
+                    {billingModeActions}
                     {canSharePublicLinks ? (
                       <Button
                         variant="secondary"
@@ -3084,6 +3223,7 @@ export function OnboardingClientPage({
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-3 text-[11px] font-bold text-[#516f90]">
                   {clientActiveToggle}
+                  {billingModeActions}
                   {canSharePublicLinks ? (
                     <>
                       <Button
@@ -5280,6 +5420,7 @@ export function OnboardingClientPage({
                 <span className="text-sm font-medium text-slate-700">Forma de cobro</span>
                 <Select
                   value={offerDraft.billingMode}
+                  disabled={hasPaidBillingCycle}
                   onChange={(event) =>
                     setOfferDraft((current) => {
                       const billingMode = event.target.value as CustomPlanBillingMode;
@@ -5295,6 +5436,12 @@ export function OnboardingClientPage({
                   <option value="subscription">Membresia recurrente</option>
                   <option value="one_time">Paquete unico</option>
                 </Select>
+                {hasPaidBillingCycle ? (
+                  <span className="block text-xs font-medium text-slate-500">
+                    El cliente ya tiene pagos registrados. Para pasarlo a recurrencia, un superadmin usa
+                    &quot;Pasar a recurrencia&quot;.
+                  </span>
+                ) : null}
               </label>
 
               <label className="space-y-2">
@@ -5339,6 +5486,171 @@ export function OnboardingClientPage({
                 Usar referencia sugerida
               </Button>
               <Button variant="ghost" onClick={() => setIsOfferModalOpen(false)}>
+                Cancelar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
+      {subscriptionConversionDraft ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl rounded-[24px] border border-slate-200 bg-white p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Pasar a recurrencia
+                </p>
+                <h3 className="mt-2 text-2xl font-semibold text-slate-950">
+                  Define la membresía con la que seguirá {client.name}.
+                </h3>
+              </div>
+              <Button variant="ghost" onClick={() => setSubscriptionConversionDraft(null)}>
+                Cerrar
+              </Button>
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Creditos contratados por periodo</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={subscriptionConversionDraft.credits}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current ? { ...current, credits: Math.max(1, safeParseNumber(event.target.value)) } : current,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Periodo de cobro</span>
+                <Select
+                  value={String(subscriptionConversionDraft.periodMonths)}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current
+                        ? { ...current, periodMonths: safeParseNumber(event.target.value) as PlanPeriodMonths }
+                        : current,
+                    )
+                  }
+                >
+                  <option value="1">Mensual</option>
+                  <option value="3">Trimestre</option>
+                  <option value="6">Semestre</option>
+                  <option value="12">Anual</option>
+                </Select>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Precio por periodo</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={subscriptionConversionDraft.price}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current ? { ...current, price: Math.max(0, safeParseNumber(event.target.value)) } : current,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Creditos de caudal</span>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="Opcional"
+                  value={subscriptionConversionDraft.flowCredits}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current ? { ...current, flowCredits: event.target.value } : current,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Vigencia de creditos (dias)</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={subscriptionConversionDraft.validityDays}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current ? { ...current, validityDays: Math.max(1, safeParseNumber(event.target.value)) } : current,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Forma de pago</span>
+                <Select
+                  value={subscriptionConversionDraft.paymentMethod}
+                  onChange={(event) =>
+                    setSubscriptionConversionDraft((current) =>
+                      current
+                        ? { ...current, paymentMethod: event.target.value as SubscriptionConversionDraft["paymentMethod"] }
+                        : current,
+                    )
+                  }
+                >
+                  <option value="stripe">Stripe (tarjeta)</option>
+                  <option value="bank_transfer">Transferencia bancaria</option>
+                </Select>
+                <span className="block text-xs font-medium text-slate-500">
+                  {subscriptionConversionDraft.paymentMethod === "stripe"
+                    ? "Copia el link de membresía y envíalo al cliente. Su primer ciclo empieza el día que pague, y ese día queda como su día de corte."
+                    : "Finanzas verá el cobro en su cola de transferencias a partir del inicio del primer ciclo."}
+                </span>
+              </label>
+
+              {subscriptionConversionDraft.paymentMethod === "bank_transfer" ? (
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Inicio del primer ciclo</span>
+                  <Input
+                    type="date"
+                    min={toIsoDate()}
+                    value={subscriptionConversionDraft.firstCycleStartDate}
+                    onChange={(event) =>
+                      setSubscriptionConversionDraft((current) =>
+                        current ? { ...current, firstCycleStartDate: event.target.value } : current,
+                      )
+                    }
+                  />
+                  <span className="block text-xs font-medium text-slate-500">
+                    También será el día de corte de cada ciclo.
+                  </span>
+                </label>
+              ) : null}
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              <p>
+                <strong>{subscriptionConversionDraft.credits} CR</strong> por{" "}
+                <strong>{getPlanPeriodLabel(subscriptionConversionDraft.periodMonths)}</strong> ·{" "}
+                <strong>
+                  {getMonthlyContractCredits({
+                    base_capacity: subscriptionConversionDraft.credits,
+                    custom_plan_credits: subscriptionConversionDraft.credits,
+                    custom_plan_period_months: subscriptionConversionDraft.periodMonths,
+                  })}{" "}
+                  CR/mes
+                </strong>{" "}
+                · <strong>{formatCurrency(subscriptionConversionDraft.price)}</strong>. Los créditos que le
+                quedan del paquete siguen vigentes hasta su vencimiento original.
+              </p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <Button onClick={convertToSubscription} disabled={isConvertingToSubscription}>
+                {isConvertingToSubscription ? "Guardando..." : "Pasar a recurrencia"}
+              </Button>
+              <Button variant="ghost" onClick={() => setSubscriptionConversionDraft(null)}>
                 Cancelar
               </Button>
             </div>

@@ -4,7 +4,8 @@ import { OnboardingClientPage } from "@/components/onboarding/onboarding-client-
 import { requireUser } from "@/lib/auth";
 import { isClientStaffRole } from "@/lib/client-staff-access";
 import { fetchClientMembership } from "@/lib/membership-access";
-import { canViewPrivateCatalogGroups } from "@/lib/platform-access";
+import { isAwaitingStripeMembership } from "@/lib/membership-checkout";
+import { canManagePlatformUsers, canViewPrivateCatalogGroups } from "@/lib/platform-access";
 import {
   createDefaultConfig,
   createDefaultBillingStatus,
@@ -295,6 +296,25 @@ export default async function ClientDetailPage({
   );
   const billingStatus = billingRow ?? createDefaultBillingStatus(configRecord);
 
+  // Con un ciclo ya pagado la forma de cobro no se cambia desde "Configurar oferta": un superadmin
+  // la cambia con "Pasar a recurrencia", que ajusta también la venta y registra el cambio.
+  const { count: paidBillingCycleCount, error: paidBillingCyclesError } = await clientReader
+    .from("client_billing_cycles")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", clientRecord.id)
+    .eq("status", "paid");
+
+  if (paidBillingCyclesError) {
+    throw new Error("No pudimos cargar los ciclos pagados del cliente.");
+  }
+
+  // El link de membresía solo es para clientes que pasaron a recurrencia con Stripe y aún no la
+  // activan. Si no se puede consultar (p. ej. sin la tabla de cambios), no se muestra.
+  const canCopyMembershipLink =
+    canManagePlatformUsers(platformRole) &&
+    configRecord.custom_plan_billing_mode === "subscription" &&
+    (await isAwaitingStripeMembership(clientRecord.id).catch(() => false));
+
   // Las observaciones son internas: solo viajan al navegador del equipo
   // (CS/admin/superadmin). La columna no está en database.ts (ver límite de
   // complejidad de tipos), por eso se lee con un cast.
@@ -332,6 +352,9 @@ export default async function ClientDetailPage({
       userId={user.id}
       canSharePublicLinks={accessRole === "owner" || platformRole === "superadmin"}
       canToggleClientActive={isClientStaff}
+      canChangeBillingMode={canManagePlatformUsers(platformRole)}
+      hasPaidBillingCycle={(paidBillingCycleCount ?? 0) > 0}
+      canCopyMembershipLink={canCopyMembershipLink}
       clientObservations={clientObservations}
     />
   );

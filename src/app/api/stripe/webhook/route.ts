@@ -6,6 +6,7 @@ import {
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
+import { anchorAwaitingMembershipToPaymentDate } from "@/lib/membership-checkout";
 import { activateSalesProposalAfterPayment } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
@@ -59,6 +60,9 @@ function getInvoicePaymentIntentId(invoice: Stripe.Invoice) {
 }
 
 async function recordPayment(input: PaymentRecordInput) {
+  // Primer pago de un cliente que pasó de paquetes a recurrencia: su ciclo empieza hoy.
+  await anchorAwaitingMembershipToPaymentDate(input.clientId);
+
   const supabase = createSupabaseAdminClient();
   const paymentArgs: RecordStripeCheckoutPaymentArgs = {
     p_client_id: input.clientId,

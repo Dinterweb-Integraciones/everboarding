@@ -99,10 +99,17 @@ async function buildRenewalFinanceItem(
     return null;
   }
 
+  // Un ciclo pagado que empezó antes de proposal.startDate no es de esta suscripción (p. ej. el
+  // paquete de un cliente que pasó de paquetes a recurrencia): la primera renovación es startDate.
+  // En una suscripción normal ese ciclo termina justo antes de startDate, así que da lo mismo.
+  const firstPaymentDate =
+    proposal.paidAt?.slice(0, 10) || proposal.activatedAt?.slice(0, 10) || proposal.startDate;
   const nextCycleStartDate =
-    latestPaidCycle?.cycle_end_date
+    latestPaidCycle?.cycle_end_date && latestPaidCycle.cycle_start_date >= proposal.startDate
       ? addDaysToIsoDate(latestPaidCycle.cycle_end_date, 1)
-      : proposal.paidAt?.slice(0, 10) || proposal.activatedAt?.slice(0, 10) || proposal.startDate;
+      : latestPaidCycle || proposal.startDate > firstPaymentDate
+        ? proposal.startDate
+        : firstPaymentDate;
 
   if (nextCycleStartDate > todayIsoDate) {
     return null;
