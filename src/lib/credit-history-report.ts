@@ -2,8 +2,10 @@
 // caudal, disponibles, comprometidos, completados, etc.).
 //
 // Disponibles, Comprometidos y Completados solo cuentan créditos que pasaron a esa etapa dentro de
-// la ventana del cliente: su ciclo vigente si es recurrente, o los últimos 30 días si es de
-// paquetes. En Evaluación es la excepción: cuenta todo lo que hoy está en evaluación.
+// la ventana del cliente: si es de paquetes, desde la compra del último paquete; si es recurrente,
+// su ciclo vigente o, si un ciclo anterior aún tiene créditos pendientes (sin usar o en casos sin
+// completar), desde el inicio de ese ciclo. En Evaluación es la excepción: cuenta todo lo que hoy
+// está en evaluación.
 
 type CycleColumnColor = "verde" | "naranja" | "rojo" | "gris";
 type CycleColumnColors = { available: CycleColumnColor; committed: CycleColumnColor; evaluation: CycleColumnColor };
@@ -82,6 +84,7 @@ export type CreditHistoryReportRow = {
   // Ventana con la que se midieron Disponibles, Comprometido y Completados.
   windowStart: string;
   windowEnd: string | null;
+  windowSource: ReportWindow["source"];
   // Saldo real del cliente; si es menor que lo otorgado en la ventana, Disponibles se limita a él.
   currentBalance: number;
   breakdown: Record<CreditBreakdownKey, CreditBreakdownItem[]>;
@@ -89,7 +92,12 @@ export type CreditHistoryReportRow = {
   cycleColors: CycleColumnColors | null;
 };
 
-type ReportWindow = { start: string; end: string | null };
+// source: de dónde sale el inicio de la ventana (para explicarlo en el detalle).
+type ReportWindow = {
+  start: string;
+  end: string | null;
+  source: "package" | "cycle" | "pending_cycle" | "fallback";
+};
 
 const STAGE_LABELS: Record<CreditHistorySourceInitiative["status"], string> = {
   backlog: "En evaluación",
@@ -104,14 +112,42 @@ function isoDateDaysAgo(days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-// Ventana en la que se miden las etapas: el ciclo vigente para recurrentes y los últimos
-// 30 días para paquetes. Fechas ISO (YYYY-MM-DD), ambos extremos inclusivos.
-function getReportWindow(row: CreditHistorySourceRow): ReportWindow {
-  if (row.billing === "paquetes") return { start: isoDateDaysAgo(30), end: null };
-  return {
-    start: row.current_cycle_start_at.slice(0, 10),
-    end: row.current_cycle_end_at?.slice(0, 10) ?? null,
-  };
+// Fecha del grant más antiguo con créditos pendientes: sin usar o asignados a casos que aún no se
+// completan. Los créditos completados cubren los grants del más antiguo al más nuevo, igual que
+// expire_unused_client_credits; lo vencido sin usar no cuenta como pendiente.
+function getOldestPendingGrantDate(grants: CreditHistorySourceGrant[], completedCredits: number) {
+  let uncoveredCompleted = completedCredits;
+  for (const grant of grants) {
+    const granted = Number(grant.granted_credits);
+    const coveredByCompleted = Math.min(granted, uncoveredCompleted);
+    uncoveredCompleted -= coveredByCompleted;
+    if (granted - Number(grant.expired_credits) - coveredByCompleted > 0) return grant.grant_date;
+  }
+  return null;
+}
+
+// Ventana en la que se miden las etapas. Paquetes: desde la compra del último paquete. Recurrentes:
+// el ciclo vigente, o desde un ciclo anterior si aún tiene créditos pendientes. startedGrants son
+// los grants que ya empezaron, del más antiguo al más nuevo. Fechas ISO (YYYY-MM-DD), ambos
+// extremos inclusivos.
+function getReportWindow(
+  row: CreditHistorySourceRow,
+  startedGrants: CreditHistorySourceGrant[],
+  completedCredits: number,
+): ReportWindow {
+  if (row.billing === "paquetes") {
+    const latestGrant = startedGrants[startedGrants.length - 1];
+    return latestGrant
+      ? { start: latestGrant.grant_date.slice(0, 10), end: null, source: "package" }
+      : { start: isoDateDaysAgo(30), end: null, source: "fallback" };
+  }
+
+  const cycleStart = row.current_cycle_start_at.slice(0, 10);
+  const end = row.current_cycle_end_at?.slice(0, 10) ?? null;
+  const pendingStart = getOldestPendingGrantDate(startedGrants, completedCredits)?.slice(0, 10);
+  return pendingStart && pendingStart < cycleStart
+    ? { start: pendingStart, end, source: "pending_cycle" }
+    : { start: cycleStart, end, source: "cycle" };
 }
 
 function isWithinWindow(value: string | null | undefined, window: ReportWindow | undefined) {
@@ -133,7 +169,33 @@ export function buildCreditHistoryRows(
   creditGrants: CreditHistorySourceGrant[],
 ): CreditHistoryReportRow[] {
   const todayIsoDate = new Date().toISOString().slice(0, 10);
-  const windowByClientId = new Map(rows.map((row) => [row.client_id, getReportWindow(row)]));
+  const startedGrantsByClient = new Map<string, CreditHistorySourceGrant[]>();
+  creditGrants
+    .filter((grant) => grant.grant_date <= todayIsoDate)
+    .sort((first, second) => first.grant_date.localeCompare(second.grant_date))
+    .forEach((grant) => {
+      const grants = startedGrantsByClient.get(grant.client_id) ?? [];
+      grants.push(grant);
+      startedGrantsByClient.set(grant.client_id, grants);
+    });
+  const completedCreditsByClient = new Map<string, number>();
+  initiatives.forEach((initiative) => {
+    if (initiative.status !== "completed") return;
+    completedCreditsByClient.set(
+      initiative.client_id,
+      (completedCreditsByClient.get(initiative.client_id) ?? 0) + (Number(initiative.credits) || 0),
+    );
+  });
+  const windowByClientId = new Map(
+    rows.map((row) => [
+      row.client_id,
+      getReportWindow(
+        row,
+        startedGrantsByClient.get(row.client_id) ?? [],
+        completedCreditsByClient.get(row.client_id) ?? 0,
+      ),
+    ]),
+  );
   const breakdownByClient = new Map<string, Record<CreditBreakdownKey, CreditBreakdownItem[]>>();
   const getBreakdown = (clientId: string) => {
     let breakdown = breakdownByClient.get(clientId);
@@ -258,7 +320,7 @@ export function buildCreditHistoryRows(
         (second.date ?? "").localeCompare(first.date ?? "");
       (Object.keys(breakdown) as CreditBreakdownKey[]).forEach((key) => breakdown[key].sort(byDate));
 
-      const window = windowByClientId.get(row.client_id) ?? getReportWindow(row);
+      const window = windowByClientId.get(row.client_id)!;
       const currentBalance = getCurrentBalance(row);
       const hasFutureGrant = futureRemainingByClient.has(row.client_id);
       // Solo lo que entró como disponible en la ventana, sin superar el saldo real del cliente.
@@ -303,6 +365,7 @@ export function buildCreditHistoryRows(
         cycleEndAt: row.current_cycle_end_at,
         windowStart: window.start,
         windowEnd: window.end,
+        windowSource: window.source,
         currentBalance,
         breakdown,
         observations: row.observations,

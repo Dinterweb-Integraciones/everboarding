@@ -158,7 +158,7 @@ const panels: Array<{
     key: "credit_history",
     label: "Operaciones",
     title: "Operaciones",
-    description: "Créditos contratados, disponibilidad y producción del ciclo actual (o últimos 30 días) por cliente.",
+    description: "Créditos contratados, disponibilidad y producción del ciclo actual (o del último paquete) por cliente.",
   },
   {
     key: "customer_success",
@@ -828,6 +828,12 @@ const CYCLE_COLUMN_COLOR_CLASSES: Record<CycleColumnColor, string> = {
   rojo: "bg-rose-50 text-rose-700",
   gris: "bg-slate-100 text-slate-500",
 };
+const WINDOW_SOURCE_LABELS: Record<CreditHistoryReportRow["windowSource"], string> = {
+  package: "desde la compra del último paquete",
+  cycle: "ciclo vigente",
+  pending_cycle: "desde un ciclo anterior con créditos pendientes",
+  fallback: "últimos 30 días, sin paquete registrado",
+};
 const CYCLE_COLUMNS: Array<{
   key: keyof CycleColumnColors;
   creditsKey: "availableCredits" | "evaluationCredits" | "committedCredits";
@@ -1277,7 +1283,7 @@ function CreditBreakdownPopover({
                   <>
                     {" "}
                     Periodo: <span className="font-bold text-[#33475b]">{periodLabel}</span> (
-                    {row.billing === "paquetes" ? "últimos 30 días" : "ciclo vigente"}).
+                    {WINDOW_SOURCE_LABELS[row.windowSource]}).
                   </>
                 ) : null}
               </p>
@@ -1445,8 +1451,9 @@ function CreditHistoryReport({
             <h3 className="text-base font-black text-[#213343]">Operaciones por cliente</h3>
             <InfoTooltip>
               Disponibles, Comprometido y Completados solo cuentan créditos que pasaron a esa etapa en el
-              ciclo vigente del cliente si es recurrente, o en los últimos 30 días si es de paquetes — no
-              son acumulados históricos. Disponibles es el saldo de los créditos otorgados en ese periodo;
+              periodo del cliente — no son acumulados históricos. Si es de paquetes, el periodo empieza en la
+              compra del último paquete; si es recurrente, en su ciclo vigente, o en un ciclo anterior si
+              ese ciclo aún tiene créditos sin usar o en casos sin completar. Disponibles es el saldo de los créditos otorgados en ese periodo;
               Comprometido suma los casos que pasaron a Planificado o En ejecución en ese periodo;
               Completados, los terminados en ese periodo. En Evaluación es la excepción: cuenta todo lo que
               hoy está en evaluación, sin importar la fecha. Para clientes recurrentes, Contratados
