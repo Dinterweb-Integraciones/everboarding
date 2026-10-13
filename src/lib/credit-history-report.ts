@@ -150,6 +150,14 @@ function getReportWindow(
     : { start: cycleStart, end, source: "cycle" };
 }
 
+const RECHARGE_WINDOW_DAYS = 8;
+
+// true si el ciclo / paquete termina en RECHARGE_WINDOW_DAYS días o menos (o ya terminó).
+function isWithinRechargeWindow(cycleEndAt: string | null) {
+  const end = cycleEndAt?.slice(0, 10);
+  return Boolean(end && end <= isoDateDaysAgo(-RECHARGE_WINDOW_DAYS));
+}
+
 function isWithinWindow(value: string | null | undefined, window: ReportWindow | undefined) {
   const date = value?.slice(0, 10);
   return Boolean(window && date && date >= window.start && (!window.end || date <= window.end));
@@ -356,8 +364,11 @@ export function buildCreditHistoryRows(
         flowCredits,
         availableCredits,
         // Simulación: si el cliente tuviera continuidad, conservaría lo disponible y
-        // sumaría su caudal, aunque hoy no tenga continuidad.
-        flowWithContinuityCredits: contractedFlowCredits + availableCredits,
+        // sumaría su caudal, aunque hoy no tenga continuidad. El recargo (lo disponible) solo se
+        // suma cuando faltan RECHARGE_WINDOW_DAYS días o menos para que termine el ciclo o venza
+        // el paquete.
+        flowWithContinuityCredits:
+          contractedFlowCredits + (isWithinRechargeWindow(row.current_cycle_end_at) ? availableCredits : 0),
         evaluationCredits: sumIncluded(breakdown.evaluation),
         committedCredits: sumIncluded(breakdown.committed),
         completedCredits: sumIncluded(breakdown.completed),

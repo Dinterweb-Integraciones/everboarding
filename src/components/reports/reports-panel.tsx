@@ -844,6 +844,12 @@ const CYCLE_COLUMNS: Array<{
   { key: "committed", creditsKey: "committedCredits", rule: "desde el día 20: < 20% verde, < 30% naranja, resto rojo" },
 ];
 
+// CS y Cuenta quedan fijas al hacer scroll horizontal; Cuenta se ancla justo después del ancho de CS.
+const CREDIT_HISTORY_CS_WIDTH = "w-[160px] min-w-[160px] max-w-[160px]";
+const CREDIT_HISTORY_CLIENT_LEFT = "left-[160px]";
+const CREDIT_HISTORY_CLIENT_WIDTH = "min-w-[200px]";
+const CREDIT_HISTORY_FROZEN_EDGE = "shadow-[inset_-1px_0_0_#cbd6e2,4px_0_6px_-4px_rgba(33,51,67,0.18)]";
+
 const CREDIT_HISTORY_COLUMNS: Array<{ key: string; label: string; sortKey?: CreditHistorySortKey }> = [
   { key: "cs", label: "CS" },
   { key: "client", label: "Cuenta" },
@@ -1460,7 +1466,9 @@ function CreditHistoryReport({
               divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
               para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
               renueva igual cada ciclo. Caudal es el consumo mensual definido comercialmente para el
-              cliente; si aún no está definido, se muestra el paquete contratado para el ciclo. Servicio
+              cliente; si aún no está definido, se muestra el paquete contratado para el ciclo. Caudal con
+              recargo suma al caudal los créditos disponibles solo cuando faltan 8 días o menos para que
+              termine el ciclo o venza el paquete (o ya terminó); antes de eso es igual al caudal. Servicio
               activo indica si el cliente sigue activo en la plataforma. Para clientes recurrentes, Proyectados
               sin continuidad es el equivalente mensual de la recurrencia, ya que se renueva igual cada ciclo.
               Para paquetes, asume que el contrato no se renueva: toma la tasa de consumo semanal del ciclo
@@ -1536,7 +1544,13 @@ function CreditHistoryReport({
               {CREDIT_HISTORY_COLUMNS.map((column) => (
                 <th
                   key={column.key}
-                  className="sticky top-0 z-10 border-b-2 border-[#33475b] bg-[#eef3f8] px-4 py-3 text-[10px] font-black uppercase tracking-[0.14em] text-[#213343] shadow-[0_1px_0_rgba(33,51,67,0.08)]"
+                  className={`sticky top-0 border-b-2 border-[#33475b] bg-[#eef3f8] px-4 py-3 text-[10px] font-black uppercase tracking-[0.14em] text-[#213343] ${
+                    column.key === "cs"
+                      ? `left-0 z-30 ${CREDIT_HISTORY_CS_WIDTH} shadow-[0_1px_0_rgba(33,51,67,0.08)]`
+                      : column.key === "client"
+                        ? `${CREDIT_HISTORY_CLIENT_LEFT} z-30 ${CREDIT_HISTORY_CLIENT_WIDTH} ${CREDIT_HISTORY_FROZEN_EDGE}`
+                        : "z-10 shadow-[0_1px_0_rgba(33,51,67,0.08)]"
+                  }`}
                 >
                   {column.sortKey ? (
                     <button
@@ -1573,19 +1587,23 @@ function CreditHistoryReport({
                 {group.clients.map((row, rowIndex) => (
                   <tr
                     key={row.clientId}
-                    className={`border-b border-[#edf1f5] last:border-b-0 ${rowBg} ${rowHoverBg} ${
+                    className={`group/row border-b border-[#edf1f5] last:border-b-0 ${rowBg} ${rowHoverBg} ${
                       rowIndex === 0 && groupIndex > 0 ? "border-t-4 border-t-[#33475b]" : ""
                     }`}
                   >
                     {rowIndex === 0 ? (
                       <td
                         rowSpan={group.clients.length}
-                        className={`border-r-2 border-r-[#33475b]/40 ${csCellBg} px-4 py-4 align-top`}
+                        className={`sticky left-0 z-[5] ${CREDIT_HISTORY_CS_WIDTH} ${csCellBg} px-4 py-4 align-top shadow-[inset_-2px_0_0_rgba(51,71,91,0.4)]`}
                       >
                         <p className="text-sm font-bold text-[#213343]">{group.csName}</p>
                       </td>
                     ) : null}
-                    <td className="px-4 py-4">
+                    <td
+                      className={`sticky ${CREDIT_HISTORY_CLIENT_LEFT} z-[5] ${CREDIT_HISTORY_CLIENT_WIDTH} ${rowBg} ${
+                        isEvenGroup ? "group-hover/row:bg-[#eef6fa]" : "group-hover/row:bg-[#e8f1f7]"
+                      } ${CREDIT_HISTORY_FROZEN_EDGE} px-4 py-4`}
+                    >
                       <div className="group/client flex items-center gap-2">
                         <a
                           href={`/clients/${row.clientId}`}
@@ -1668,7 +1686,10 @@ function CreditHistoryReport({
                   </tr>
                 ))}
                 <tr className={`border-b-2 border-[#33475b]/30 ${csCellBg} font-black text-[#213343]`}>
-                  <td colSpan={2} className="px-4 py-3 text-sm uppercase tracking-[0.06em]">
+                  <td
+                    colSpan={2}
+                    className={`sticky left-0 z-[5] ${csCellBg} ${CREDIT_HISTORY_FROZEN_EDGE} px-4 py-3 text-sm uppercase tracking-[0.06em]`}
+                  >
                     Total {group.csName}
                   </td>
                   <td className="px-4 py-3 text-sm">-</td>
