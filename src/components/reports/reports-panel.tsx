@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowDownAZ,
@@ -146,6 +147,7 @@ const panels: Array<{
   key: PanelKey;
   label: string;
   title: string;
+  // Vacío: el panel se muestra sin subtítulo.
   description: string;
 }> = [
   {
@@ -158,7 +160,7 @@ const panels: Array<{
     key: "credit_history",
     label: "Operaciones",
     title: "Operaciones",
-    description: "Créditos contratados, disponibilidad y producción del ciclo actual (o del último paquete) por cliente.",
+    description: "",
   },
   {
     key: "customer_success",
@@ -416,7 +418,9 @@ export function ReportsPanel({
                 Panel
               </p>
               <h2 className="mt-1 text-xl font-black text-[#213343]">{selectedPanel.title}</h2>
-              <p className="mt-1 text-sm font-semibold text-[#516f90]">{selectedPanel.description}</p>
+              {selectedPanel.description ? (
+                <p className="mt-1 text-sm font-semibold text-[#516f90]">{selectedPanel.description}</p>
+              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-4 text-right sm:grid-cols-3">
               {panelSummary.map((summary) => (
@@ -1021,7 +1025,8 @@ function ClientObservationsPopover({
           <MessageSquarePlus className="h-3.5 w-3.5" />
         )}
       </button>
-      {position ? (
+      {/* Portal: las celdas fijas (sticky) de la tabla crean su propio apilamiento y lo taparían. */}
+      {position ? createPortal(
         <div
           ref={panelRef}
           role="dialog"
@@ -1109,7 +1114,8 @@ function ClientObservationsPopover({
               )}
             </p>
           )}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
@@ -1266,7 +1272,7 @@ function CreditBreakdownPopover({
       >
         {formatNumber(value)} CR
       </button>
-      {position ? (
+      {position ? createPortal(
         <div
           ref={panelRef}
           role="dialog"
@@ -1339,7 +1345,8 @@ function CreditBreakdownPopover({
               </p>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
@@ -1455,29 +1462,6 @@ function CreditHistoryReport({
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-base font-black text-[#213343]">Operaciones por cliente</h3>
-            <InfoTooltip>
-              Disponibles, Comprometido y Completados solo cuentan créditos que pasaron a esa etapa en el
-              periodo del cliente — no son acumulados históricos. Si es de paquetes, el periodo empieza en la
-              compra del último paquete; si es recurrente, en su ciclo vigente, o en un ciclo anterior si
-              ese ciclo aún tiene créditos sin usar o en casos sin completar. Disponibles es el saldo de los créditos otorgados en ese periodo;
-              Comprometido suma los casos que pasaron a Planificado o En ejecución en ese periodo;
-              Completados, los terminados en ese periodo. En Evaluación es la excepción: cuenta todo lo que
-              hoy está en evaluación, sin importar la fecha. Para clientes recurrentes, Contratados
-              divide los créditos del plan (mensual, trimestral o semestral) entre su duración en meses,
-              para mostrar solo el equivalente de un mes — no el total del contrato completo, ya que se
-              renueva igual cada ciclo. Caudal es el consumo mensual definido comercialmente para el
-              cliente; si aún no está definido, se muestra el paquete contratado para el ciclo. Caudal con
-              recargo suma al caudal los créditos disponibles solo cuando faltan 8 días o menos para que
-              termine el ciclo o venza el paquete (o ya terminó); antes de eso es igual al caudal. Servicio
-              activo indica si el cliente sigue activo en la plataforma. Para clientes recurrentes, Proyectados
-              sin continuidad es el equivalente mensual de la recurrencia, ya que se renueva igual cada ciclo.
-              Para paquetes, asume que el contrato no se renueva: toma la tasa de consumo semanal del ciclo
-              (lo consumido desde su inicio hasta hoy, o hasta el fin del ciclo si ya terminó) por 4 semanas,
-              limitada por los créditos que todavía quedan disponibles. Los clientes inactivos se siguen
-              mostrando mientras tengan créditos disponibles o comprometidos.
-              La tabla agrupa a cada cliente bajo su Customer Success, con un total por CS al final de cada
-              grupo.
-            </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
             Agrupado por Customer Success, en orden alfabético.
@@ -2204,6 +2188,7 @@ function KickoffWindowReport({
 }: {
   rows: ClientHealthReportRow[];
   title: string;
+  // Vacío: el panel se muestra sin subtítulo.
   description: string;
   emptyTitle: string;
   emptyDescription: string;
@@ -2316,6 +2301,7 @@ function FirstCaseCompletionReport({
 }: {
   rows: ClientHealthReportRow[];
   title: string;
+  // Vacío: el panel se muestra sin subtítulo.
   description: string;
   emptyTitle: string;
   emptyDescription: string;
@@ -2436,6 +2422,7 @@ function ClientMetricBarsReport({
 }: {
   rows: ClientHealthReportRow[];
   title: string;
+  // Vacío: el panel se muestra sin subtítulo.
   description: string;
   emptyTitle: string;
   emptyDescription: string;
