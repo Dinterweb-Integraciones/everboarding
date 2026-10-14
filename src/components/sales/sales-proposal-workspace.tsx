@@ -3081,6 +3081,8 @@ function mergeRecommendedGroups(
                 </div>
               ) : null}
 
+              {/* Por ahora el caudal solo lo define el vendedor de Dinterweb. */}
+              {isDinterwebVariant ? (
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <label className="space-y-1">
                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
@@ -3104,6 +3106,7 @@ function mergeRecommendedGroups(
                   </span>
                 </label>
               </div>
+              ) : null}
 
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <div className="flex flex-col items-center gap-2.5">
