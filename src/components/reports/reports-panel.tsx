@@ -1827,9 +1827,24 @@ function MonthlyGoalReport({
   isCustomerSuccess: boolean;
 }) {
   const [selectedMonth, setSelectedMonth] = useState(progress[0]?.month ?? "");
+  const [selectedCsId, setSelectedCsId] = useState("all");
   const selected = progress.find((entry) => entry.month === selectedMonth) ?? progress[0];
+  // Todos los CS que aparecen en algún mes, para que el filtro no cambie al cambiar de mes.
+  const csOptions = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const month of progress) {
+      for (const entry of month.customerSuccess) names.set(entry.csId, entry.csName);
+    }
+    return [...names].sort((first, second) => first[1].localeCompare(second[1], "es"));
+  }, [progress]);
 
   if (!selected) return null;
+
+  const isFiltered = selectedCsId !== "all";
+  const visibleCustomerSuccess = isFiltered
+    ? selected.customerSuccess.filter((entry) => entry.csId === selectedCsId)
+    : selected.customerSuccess;
+  const ownCsId = isCustomerSuccess ? selected.customerSuccess[0]?.csId : undefined;
 
   return (
     <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] border-t-4 border-t-orange-400 bg-white shadow-sm">
@@ -1851,24 +1866,41 @@ function MonthlyGoalReport({
               : "Créditos completados en el mes sobre la meta de cada CS."}
           </p>
         </div>
-        <label className="flex items-center gap-2 text-xs font-bold text-[#516f90]">
-          Mes
-          <select
-            value={selected.month}
-            onChange={(event) => setSelectedMonth(event.target.value)}
-            className="h-9 rounded-[3px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold capitalize text-[#213343]"
-          >
-            {progress.map((entry) => (
-              <option key={entry.month} value={entry.month}>
-                {formatMonthLabel(entry.month)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-xs font-bold text-[#516f90]">
+            CS
+            <select
+              value={selectedCsId}
+              onChange={(event) => setSelectedCsId(event.target.value)}
+              className="h-9 rounded-[3px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold text-[#213343]"
+            >
+              <option value="all">Todos los CS</option>
+              {csOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-[#516f90]">
+            Mes
+            <select
+              value={selected.month}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+              className="h-9 rounded-[3px] border border-[#cbd6e2] bg-white px-3 text-sm font-bold capitalize text-[#213343]"
+            >
+              {progress.map((entry) => (
+                <option key={entry.month} value={entry.month}>
+                  {formatMonthLabel(entry.month)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="space-y-6 p-5">
-        {isCustomerSuccess ? null : (
+        {isCustomerSuccess || isFiltered ? null : (
           <GoalProgressBar
             label="Todos los CS"
             completedCredits={selected.overall.completedCredits}
@@ -1881,23 +1913,26 @@ function MonthlyGoalReport({
             emphasis
           />
         )}
-        <div className={`space-y-5 ${isCustomerSuccess ? "" : "border-t border-[#edf1f5] pt-6"}`}>
-          {selected.customerSuccess.length ? (
-            selected.customerSuccess.map((entry, index) => (
+        <div className={`space-y-5 ${isCustomerSuccess || isFiltered ? "" : "border-t border-[#edf1f5] pt-6"}`}>
+          {visibleCustomerSuccess.length ? (
+            visibleCustomerSuccess.map((entry) => (
               <GoalProgressBar
                 key={entry.csId}
                 label={entry.csName}
                 completedCredits={entry.completedCredits}
                 goalCredits={entry.goalCredits}
                 percentage={entry.percentage}
-                showCredits={isCustomerSuccess}
+                // Al filtrar un solo CS se muestran sus créditos completados y su meta.
+                showCredits={isCustomerSuccess || isFiltered}
                 // En la vista del CS su propia barra llega primero.
-                isOwn={isCustomerSuccess && index === 0}
+                isOwn={entry.csId === ownCsId}
               />
             ))
           ) : (
             <p className="text-sm font-semibold text-[#99acc2]">
-              No hay metas ni casos completados en este mes.
+              {isFiltered
+                ? "Este CS no tiene meta ni casos completados en este mes."
+                : "No hay metas ni casos completados en este mes."}
             </p>
           )}
         </div>
