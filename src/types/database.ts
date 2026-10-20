@@ -790,6 +790,7 @@ export type Database = {
           sort_order: number;
           is_active: boolean;
           is_public: boolean;
+          requires_subscription: boolean;
           tags: string[] | null;
           created_by_user_id: string | null;
           created_at: string;
@@ -816,6 +817,7 @@ export type Database = {
           sort_order?: number;
           is_active?: boolean;
           is_public?: boolean;
+          requires_subscription?: boolean;
           tags?: string[] | null;
           created_by_user_id?: string | null;
           created_at?: string;
@@ -842,6 +844,7 @@ export type Database = {
           sort_order?: number;
           is_active?: boolean;
           is_public?: boolean;
+          requires_subscription?: boolean;
           tags?: string[] | null;
           created_by_user_id?: string | null;
           created_at?: string;

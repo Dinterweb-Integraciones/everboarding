@@ -37,6 +37,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
       sortOrder?: number;
       isActive?: boolean;
       isPublic?: boolean;
+      requiresSubscription?: boolean;
       taskIds?: string[];
       tags?: string[] | null;
     };
@@ -194,6 +195,7 @@ export async function PUT(request: Request, { params }: GroupRouteProps) {
         sort_order: sortOrder,
         is_active: isActive,
         is_public: body.isPublic ?? currentGroup.is_public,
+        requires_subscription: body.requiresSubscription ?? currentGroup.requires_subscription,
         tags: tags?.length ? tags : null,
       })
       .eq("id", groupId)

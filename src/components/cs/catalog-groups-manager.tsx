@@ -81,6 +81,7 @@ type CatalogGroupForm = {
   sortOrder: string;
   isActive: boolean;
   isPublic: boolean;
+  requiresSubscription: boolean;
   tags: AvailableTag[];
 };
 
@@ -102,6 +103,7 @@ const emptyForm: CatalogGroupForm = {
   sortOrder: "0",
   isActive: true,
   isPublic: true,
+  requiresSubscription: false,
   tags: [],
 };
 
@@ -523,6 +525,7 @@ export function CatalogGroupsManager({
         group.subsequentUseCases,
         group.is_active ? "activo" : "inactivo",
         group.is_public ? "publico" : "privado",
+        group.requires_subscription ? "solo everboarding" : "",
         `${group.totalCredits} cr`,
         `${group.taskCount} tareas`,
         group.taskNames.join(" "),
@@ -679,6 +682,7 @@ export function CatalogGroupsManager({
       sortOrder: String(group.sort_order ?? 0),
       isActive: group.is_active,
       isPublic: group.is_public,
+      requiresSubscription: group.requires_subscription,
       tags: Array.isArray(group.tags)
         ? (group.tags.filter((tag): tag is AvailableTag => (AVAILABLE_TAGS as readonly string[]).includes(tag)))
         : [],
@@ -1013,6 +1017,7 @@ export function CatalogGroupsManager({
             sortOrder: safeParseNumber(form.sortOrder),
             isActive: form.isActive,
             isPublic: form.isPublic,
+            requiresSubscription: form.requiresSubscription,
             taskIds: selectedTaskIds,
             tags: form.tags.length ? form.tags : null,
           }),
@@ -1270,6 +1275,49 @@ export function CatalogGroupsManager({
                       <span
                         className={`h-5 w-5 rounded-full bg-white shadow-sm transition ${
                           form.isPublic ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+                    <div>
+                      <div className="flex items-center gap-1">
+                        <p className="text-sm font-semibold text-slate-700">Disponible para</p>
+                        <InfoTooltip
+                          label="Disponible para"
+                          help="Los casos solo Everboarding aparecen en gris para clientes de paquetes y no pueden agregarlos."
+                        />
+                      </div>
+                      <p
+                        className={`text-xs font-bold ${
+                          form.requiresSubscription ? "text-violet-700" : "text-emerald-700"
+                        }`}
+                      >
+                        {form.requiresSubscription ? "Solo Everboarding" : "Todos los clientes"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.requiresSubscription}
+                      aria-label={
+                        form.requiresSubscription
+                          ? "Hacer disponible para todos los clientes"
+                          : "Hacer disponible solo para clientes Everboarding"
+                      }
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          requiresSubscription: !current.requiresSubscription,
+                        }))
+                      }
+                      className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 ${
+                        form.requiresSubscription ? "bg-violet-500" : "bg-emerald-500"
+                      }`}
+                    >
+                      <span
+                        className={`h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                          form.requiresSubscription ? "translate-x-5" : "translate-x-0"
                         }`}
                       />
                     </button>
@@ -1906,6 +1954,11 @@ export function CatalogGroupsManager({
                             >
                               {group.is_public ? "Publico" : "Privado"}
                             </span>
+                            {group.requires_subscription ? (
+                              <span className="mt-1.5 block w-fit whitespace-nowrap rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-700">
+                                Solo Everboarding
+                              </span>
+                            ) : null}
                           </td>
                         </tr>
                         {openDescriptionGroupId === group.id ? (

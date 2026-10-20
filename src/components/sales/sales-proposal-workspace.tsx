@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
+import { EverboardingOnlyBadge, EverboardingOnlyModal } from "@/components/onboarding/catalog-plan-access";
 import {
   PlanReportExportPages,
   exportPlanReportPdf,
@@ -832,6 +833,7 @@ export function SalesProposalWorkspace({
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [activeCatalogTab, setActiveCatalogTab] = useState<string>("wizard");
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
+  const [everboardingOnlyGroup, setEverboardingOnlyGroup] = useState<CatalogModalGroup | null>(null);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
   const [catalogTagFilter, setCatalogTagFilter] = useState<string | null>(null);
   const [wizardHubs, setWizardHubs] = useState<string[]>([]);
@@ -1741,7 +1743,17 @@ function createInitiativeFromGroup(
     return next;
   }
 
+  // Casos de uso solo Everboarding: las propuestas de paquetes no pueden incluirlos.
+  function isCatalogGroupEverboardingOnly(group: CatalogModalGroup) {
+    return proposal.billingMode !== "subscription" && group.requiresSubscription;
+  }
+
   function openCatalogGroupPreview(group: CatalogModalGroup) {
+    if (isCatalogGroupEverboardingOnly(group)) {
+      setEverboardingOnlyGroup(group);
+      return;
+    }
+
     setCatalogPreviewGroup(group);
   }
 
@@ -1826,7 +1838,7 @@ function createInitiativeFromGroup(
 
     return recommendations.filter((recommendation) => {
       const group = groupsById.get(recommendation.groupId);
-      if (!group) {
+      if (!group || isCatalogGroupEverboardingOnly(group)) {
         return false;
       }
 
@@ -1882,7 +1894,11 @@ function mergeRecommendedGroups(
       group: CatalogModalGroup | null,
       recommendation: WizardRecommendation,
     ) => {
-      if (!group || existingTitles.has(normalizeCatalogText(group.name))) {
+      if (
+        !group ||
+        isCatalogGroupEverboardingOnly(group) ||
+        existingTitles.has(normalizeCatalogText(group.name))
+      ) {
         return;
       }
 
@@ -2012,20 +2028,22 @@ function mergeRecommendedGroups(
           contractedCredits: proposal.contractedCredits,
           currentPlanCredits,
           remainingRecommendationCredits,
-          groups: catalogGroups.map((group) => ({
-            id: group.id,
-            name: group.name,
-            description: group.description,
-            modalCategory: group.modalCategory,
-            priorityStatus: group.priorityStatus,
-            credits: group.credits,
-            tasks: group.items.map((item) => ({
-              id: item.id,
-              label: item.label,
-              category: item.category,
-              credits: item.credits,
+          groups: catalogGroups
+            .filter((group) => !isCatalogGroupEverboardingOnly(group))
+            .map((group) => ({
+              id: group.id,
+              name: group.name,
+              description: group.description,
+              modalCategory: group.modalCategory,
+              priorityStatus: group.priorityStatus,
+              credits: group.credits,
+              tasks: group.items.map((item) => ({
+                id: item.id,
+                label: item.label,
+                category: item.category,
+                credits: item.credits,
+              })),
             })),
-          })),
         }),
       });
 
@@ -4497,6 +4515,8 @@ function mergeRecommendedGroups(
                       <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                         {visibleCatalogGroups.map((group) => {
                       const alreadyAdded = isCatalogGroupAlreadyAdded(group);
+                      const everboardingOnly = isCatalogGroupEverboardingOnly(group);
+                      const muted = alreadyAdded || everboardingOnly;
 
                       return (
                         <div
@@ -4513,25 +4533,28 @@ function mergeRecommendedGroups(
                             }
                           }}
                           className={`flex h-full min-h-[320px] flex-col rounded-[6px] border p-5 text-left shadow-sm transition ${
-                            alreadyAdded
-                              ? "cursor-pointer border-[#bfd9d4] bg-[#f8fffd] hover:-translate-y-[1px] hover:shadow-md"
-                              : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
+                            everboardingOnly
+                              ? "cursor-pointer border-[#d7dee8] bg-[#f3f5f7] hover:shadow-md"
+                              : alreadyAdded
+                                ? "cursor-pointer border-[#bfd9d4] bg-[#f8fffd] hover:-translate-y-[1px] hover:shadow-md"
+                                : "cursor-pointer border-[#dfe3eb] bg-white hover:-translate-y-[1px] hover:shadow-md"
                           }`}
                         >
                           <div className="mb-3 flex flex-wrap gap-1.5">
                             <span
                               className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
-                                alreadyAdded
+                                muted
                                   ? "border border-[#d7dee8] bg-[#eef2f6] text-[#7c8da1]"
                                   : "border border-[#00bda5]/20 bg-[#f0fdfa] text-[#00bda5]"
                               }`}
                             >
                               {group.modalCategory}
                             </span>
+                            {everboardingOnly ? <EverboardingOnlyBadge /> : null}
                           </div>
                           <h4
                             className={`min-h-[44px] text-[14px] font-bold leading-snug ${
-                              alreadyAdded ? "text-[#6b7d91]" : "text-[#33475b]"
+                              muted ? "text-[#6b7d91]" : "text-[#33475b]"
                             }`}
                             style={{
                               display: "-webkit-box",
@@ -4545,7 +4568,7 @@ function mergeRecommendedGroups(
                           <div className="mt-2 flex-1 overflow-hidden">
                             <p
                               className={`text-[11px] leading-relaxed ${
-                                alreadyAdded ? "text-[#7c8da1]" : "text-[#516f90]"
+                                muted ? "text-[#7c8da1]" : "text-[#516f90]"
                               }`}
                               style={{
                                 display: "-webkit-box",
@@ -4558,12 +4581,12 @@ function mergeRecommendedGroups(
                             </p>
                           </div>
                           <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                            <span className={`text-[14px] font-bold ${alreadyAdded ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
+                            <span className={`text-[14px] font-bold ${muted ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
                               {group.credits} CR
                             </span>
                             <div className="flex items-center gap-3">
-                              <span className={`text-[11px] font-bold ${alreadyAdded ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {alreadyAdded ? "Ya agregado" : "Disponible"}
+                              <span className={`text-[11px] font-bold ${muted ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
+                                {everboardingOnly ? "Solo Everboarding" : alreadyAdded ? "Ya agregado" : "Disponible"}
                               </span>
                               <button
                                 type="button"
@@ -4754,6 +4777,13 @@ function mergeRecommendedGroups(
             </div>
           </aside>
         </div>
+      ) : null}
+
+      {everboardingOnlyGroup ? (
+        <EverboardingOnlyModal
+          useCaseName={everboardingOnlyGroup.name}
+          onClose={() => setEverboardingOnlyGroup(null)}
+        />
       ) : null}
 
       {isUpsellModalOpen && isDinterwebVariant ? (

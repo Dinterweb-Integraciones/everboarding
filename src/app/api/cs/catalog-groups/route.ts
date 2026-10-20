@@ -32,6 +32,7 @@ export async function POST(request: Request) {
       sortOrder?: number;
       isActive?: boolean;
       isPublic?: boolean;
+      requiresSubscription?: boolean;
       taskIds?: string[];
       tags?: string[] | null;
     };
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
     const sortOrder = Number.isFinite(body.sortOrder) ? Number(body.sortOrder) : 0;
     const isActive = body.isActive ?? true;
     const isPublic = body.isPublic ?? true;
+    const requiresSubscription = body.requiresSubscription ?? false;
     const taskIds = Array.isArray(body.taskIds)
       ? [...new Set(body.taskIds.map((taskId) => taskId.trim()).filter(Boolean))]
       : [];
@@ -180,6 +182,7 @@ export async function POST(request: Request) {
         sort_order: sortOrder,
         is_active: isActive,
         is_public: isPublic,
+        requires_subscription: requiresSubscription,
         tags: tags?.length ? tags : null,
         created_by_user_id: user.id,
       })

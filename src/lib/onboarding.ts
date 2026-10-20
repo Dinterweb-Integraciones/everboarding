@@ -184,6 +184,8 @@ export type CatalogModalGroup = {
   modalCategorySortOrders: number[];
   priorityStatus: "normal" | "prioritario";
   credits: number;
+  // Solo para clientes con recurrencia (plan Everboarding); los de paquetes lo ven bloqueado.
+  requiresSubscription: boolean;
   sortOrder: number;
   categorySortOrder?: number;
   items: CreditCatalogItem[];
@@ -634,6 +636,7 @@ export function buildCatalogModalGroups({
         modalCategorySortOrders: categorySortOrders,
         priorityStatus: group.priority_status === "prioritario" ? "prioritario" : "normal",
         credits,
+        requiresSubscription: Boolean(group.requires_subscription),
         sortOrder: safeParseNumber(group.sort_order),
         items: groupItems,
         tags: Array.isArray(group.tags) ? group.tags : [],

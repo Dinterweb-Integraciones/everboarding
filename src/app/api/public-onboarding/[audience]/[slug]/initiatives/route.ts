@@ -40,6 +40,7 @@ type GroupRecord = {
   name: string;
   description: string | null;
   credits: number | null;
+  requires_subscription: boolean;
 };
 
 export async function POST(request: Request, context: RouteContext) {
@@ -84,6 +85,8 @@ export async function POST(request: Request, context: RouteContext) {
     const admin = createSupabaseAdminClient();
     const proposal = audience === "prospect" ? await getSalesProposalBySlug(slug) : null;
     let resolvedClientId: string | null = null;
+    // Clientes de paquetes: no pueden agregar casos de uso solo Everboarding.
+    let isOneTimeClient = false;
 
     if (!proposal) {
       const { data: snapshot, error: snapshotError } = await admin.rpc(
@@ -92,7 +95,10 @@ export async function POST(request: Request, context: RouteContext) {
           p_slug: slug,
         } as never,
       );
-      const snapshotData = snapshot as { client?: { id?: string } } | null;
+      const snapshotData = snapshot as {
+        client?: { id?: string };
+        config?: { custom_plan_billing_mode?: string | null };
+      } | null;
       const clientId = snapshotData?.client?.id ?? null;
 
       if (snapshotError || !clientId) {
@@ -108,6 +114,7 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       resolvedClientId = clientId;
+      isOneTimeClient = snapshotData?.config?.custom_plan_billing_mode === "one_time";
     }
 
     async function createClientInitiativeWithItems(input: {
@@ -312,7 +319,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (body.groupId?.trim()) {
       const { data: group, error: groupError } = await admin
         .from("credit_catalog_groups")
-        .select("id, name, description, credits")
+        .select("id, name, description, credits, requires_subscription")
         .eq("id", body.groupId.trim())
         .eq("is_active", true)
         .eq("is_public", true)
@@ -323,6 +330,13 @@ export async function POST(request: Request, context: RouteContext) {
         return NextResponse.json(
           { message: "El grupo seleccionado ya no esta disponible." },
           { status: 400 },
+        );
+      }
+
+      if (groupRecord.requires_subscription && isOneTimeClient) {
+        return NextResponse.json(
+          { message: "Este caso de uso está disponible solo para clientes con el plan Everboarding." },
+          { status: 403 },
         );
       }
 
