@@ -55,6 +55,7 @@ import {
   calculateCredits,
   calculateInitiativeProgress,
   calculateMetrics,
+  getCommittedCredits,
   calculateReductionPenalty,
   canMoveInitiativeWithNorthStarRules,
   canEdit,
@@ -634,9 +635,11 @@ export function OnboardingClientPage({
     }
   }, []);
 
+  // Comprometido cuando se consultó el saldo (billing); ver calculateMetrics.
+  const [billingCommittedCredits] = useState(() => getCommittedCredits(initialData.initiatives));
   const metrics = useMemo(
-    () => calculateMetrics(config, initiatives, billing),
-    [billing, config, initiatives],
+    () => calculateMetrics(config, initiatives, billing, billingCommittedCredits),
+    [billing, billingCommittedCredits, config, initiatives],
   );
 
   const groupedInitiatives = useMemo(() => {

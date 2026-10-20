@@ -781,10 +781,24 @@ export function mapInitiative(
   };
 }
 
+// Créditos comprometidos: casos en Planificado, En ejecución o Completado.
+export function getCommittedCredits(initiatives: Array<Pick<InitiativeRecord, "status" | "credits">>) {
+  return initiatives
+    .filter(
+      (initiative) =>
+        initiative.status === "planned" || initiative.status === "executing" || initiative.status === "completed",
+    )
+    .reduce((sum, initiative) => sum + initiative.credits, 0);
+}
+
+// billing.active_credits es el saldo de los paquetes cuando se consultó, ya descontado lo
+// comprometido en ese momento (committedCreditsAtBilling). Con ese dato el total no cambia al
+// agregar o mover casos y los disponibles bajan al instante, sin volver a consultar el saldo.
 export function calculateMetrics(
   config: OnboardingConfig,
   initiatives: InitiativeRecord[],
   billing?: ClientBillingStatus,
+  committedCreditsAtBilling?: number,
 ): OnboardingMetrics {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -842,7 +856,10 @@ export function calculateMetrics(
   const extraCapacityCredits = getExtraCapacityCredits(config);
   const lost = config.lost_credits + (billing?.expired_unused_credits ?? 0);
   const total = billing
-    ? billing.active_credits + reserved + consumed + (billing.expired_unused_credits ?? 0) + extraCapacityCredits
+    ? billing.active_credits +
+      (committedCreditsAtBilling ?? reserved + consumed) +
+      (billing.expired_unused_credits ?? 0) +
+      extraCapacityCredits
     : planCredits * activeCycles + extraCapacityCredits;
 
   return {

@@ -29,6 +29,7 @@ import {
   buildCatalogModalGroups,
   calculateCredits,
   calculateMetrics,
+  getCommittedCredits,
   compareInitiativesForBoard,
   findCatalogGroupForInitiative,
   formatDateRange,
@@ -327,7 +328,19 @@ export function PublicOnboardingPage({
   const [isNorthStarManualOpen, setIsNorthStarManualOpen] = useState(false);
   const [isSavingNorthStar, setIsSavingNorthStar] = useState(false);
   const [initiatives, setInitiatives] = useState(initialData.initiatives);
-  const [billing, setBilling] = useState(initialData.billing);
+  const [billing, setBillingState] = useState(initialData.billing);
+  // Comprometido cuando se consultó el saldo (billing); ver calculateMetrics.
+  const [billingCommittedCredits, setBillingCommittedCredits] = useState(() =>
+    getCommittedCredits(initialData.initiatives),
+  );
+  const initiativesRef = useRef(initiatives);
+  useEffect(() => {
+    initiativesRef.current = initiatives;
+  }, [initiatives]);
+  const setBilling = useCallback((nextBilling: ClientBillingStatus) => {
+    setBillingState(nextBilling);
+    setBillingCommittedCredits(getCommittedCredits(initiativesRef.current));
+  }, []);
   const [prospectProposal, setProspectProposal] = useState(initialData.prospectProposal ?? null);
   const [requestDraft, setRequestDraft] = useState({
     title: "",
@@ -389,8 +402,8 @@ export function PublicOnboardingPage({
     }
   }, []);
   const metrics = useMemo(
-    () => calculateMetrics(config, initiatives, billing),
-    [billing, config, initiatives],
+    () => calculateMetrics(config, initiatives, billing, billingCommittedCredits),
+    [billing, billingCommittedCredits, config, initiatives],
   );
 
   const groupedInitiatives = useMemo(() => {
@@ -1012,7 +1025,7 @@ export function PublicOnboardingPage({
     return () => {
       isMounted = false;
     };
-  }, [publicSlug]);
+  }, [publicSlug, setBilling]);
 
   async function createPublicRequest(
     draft: {
