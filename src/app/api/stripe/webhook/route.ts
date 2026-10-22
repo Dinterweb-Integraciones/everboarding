@@ -6,7 +6,10 @@ import {
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
-import { anchorAwaitingMembershipToPaymentDate } from "@/lib/membership-checkout";
+import {
+  activateRecurrenceFromPayment,
+  anchorAwaitingMembershipToPaymentDate,
+} from "@/lib/membership-checkout";
 import { activateSalesProposalAfterPayment } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
@@ -20,6 +23,8 @@ type PaymentRecordInput = {
   invoiceId?: string | null;
   amountCents: number;
   currency: string;
+  // Metadata de la sesión o de la suscripción: trae la oferta de "Únete a Everboarding".
+  metadata?: Record<string, string> | null;
 };
 
 type RecordStripeCheckoutPaymentArgs =
@@ -60,6 +65,8 @@ function getInvoicePaymentIntentId(invoice: Stripe.Invoice) {
 }
 
 async function recordPayment(input: PaymentRecordInput) {
+  // Primer pago de "Únete a Everboarding": el cliente pasa de paquetes a recurrencia.
+  await activateRecurrenceFromPayment(input.clientId, input.metadata);
   // Primer pago de un cliente que pasó de paquetes a recurrencia: su ciclo empieza hoy.
   await anchorAwaitingMembershipToPaymentDate(input.clientId);
 
@@ -153,6 +160,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     invoiceId: getObjectId(session.invoice),
     amountCents: session.amount_total ?? 0,
     currency: session.currency ?? "usd",
+    metadata: session.metadata,
   });
 
   if (error) {
@@ -203,6 +211,7 @@ async function handleInvoicePaid(stripe: Stripe, invoice: Stripe.Invoice) {
     invoiceId: invoice.id,
     amountCents: invoice.amount_paid,
     currency: invoice.currency ?? "usd",
+    metadata: invoice.parent?.subscription_details?.metadata ?? subscription.metadata,
   });
 
   if (error) {

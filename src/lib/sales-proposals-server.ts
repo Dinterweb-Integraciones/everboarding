@@ -22,6 +22,7 @@ import {
   type SalesProposalPaymentMethod,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
+import { getClientCatalogCredits } from "@/lib/onboarding";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { recordManualTransferBillingCycles } from "@/lib/transfer-billing";
 import { isMissingSupabaseTable, safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
@@ -536,6 +537,20 @@ export async function syncActivatedSalesProposalCommercialWaivers(input: {
   }
 
   const liveInitiatives = (initiativeRows ?? []) as OnboardingInitiativeRow[];
+  // Al quitar la bonificación, los clientes de paquetes vuelven a pagar la tarea con recargo.
+  const { data: configRow, error: configError } = await admin
+    .from("onboarding_configs")
+    .select("custom_plan_billing_mode")
+    .eq("client_id", clientId)
+    .maybeSingle();
+
+  if (configError) {
+    throw configError;
+  }
+
+  const usesPackageCreditPricing =
+    (configRow as { custom_plan_billing_mode?: string | null } | null)?.custom_plan_billing_mode ===
+    "one_time";
 
   for (const liveInitiative of liveInitiatives) {
     const requestedInitiative = findProposalInitiativeForLiveRow(
@@ -635,7 +650,8 @@ export async function syncActivatedSalesProposalCommercialWaivers(input: {
           : undefined;
         const requestedCredits = safeParseNumber(requestedSubitem?.unitCredits);
         const previousCredits = safeParseNumber(previousSubitem?.unitCredits);
-        const restoredCredits = Math.max(
+        // Valor base: catálogo, propuesta o el que ya tenía la tarea.
+        const restoredBaseCredits = Math.max(
           0,
           safeParseNumber(
             catalogCredits ??
@@ -648,7 +664,9 @@ export async function syncActivatedSalesProposalCommercialWaivers(input: {
         );
         const { error: restoreCreditsError } = await admin
           .from("onboarding_initiative_subitems")
-          .update(({ unit_credits: restoredCredits }) as never)
+          .update(({
+            unit_credits: getClientCatalogCredits(restoredBaseCredits, usesPackageCreditPricing),
+          }) as never)
           .eq("id", liveSubitem.id)
           .eq("initiative_id", liveInitiative.id);
 

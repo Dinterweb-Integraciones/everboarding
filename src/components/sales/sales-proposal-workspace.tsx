@@ -5,7 +5,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
-import { EverboardingOnlyBadge, EverboardingOnlyModal } from "@/components/onboarding/catalog-plan-access";
+import {
+  CatalogCardFooter,
+  CatalogCreditPrice,
+  EverboardingOnlyBadge,
+  EverboardingOnlyModal,
+} from "@/components/onboarding/catalog-plan-access";
 import {
   PlanReportExportPages,
   exportPlanReportPdf,
@@ -43,9 +48,11 @@ import {
   calculateSalesProposalMetrics,
 } from "@/lib/sales-proposals";
 import {
+  applyPackageCreditPricing,
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
   formatDateRange,
+  getClientCatalogCredits,
   getPlanCadenceLabel,
   matchesCatalogGroupSearch,
   type CatalogModalGroup,
@@ -888,8 +895,14 @@ export function SalesProposalWorkspace({
           ? current.creditValidityDays
           : getDefaultSalesCreditValidityDays(billingMode);
 
+      const nextProposal = clearProspectExtraPackages(current);
+
       return applyActiveCouponPricing({
-        ...clearProspectExtraPackages(current),
+        ...nextProposal,
+        initiatives:
+          current.billingMode === billingMode
+            ? nextProposal.initiatives
+            : repriceInitiativesForBillingMode(nextProposal.initiatives, billingMode !== "subscription"),
         workspaceVariant: "dinterweb",
         billingMode,
         periodMonths,
@@ -913,19 +926,39 @@ export function SalesProposalWorkspace({
     }));
   }
 
+  // Propuestas de paquetes: los casos de uso cuestan un 15% más que el valor base (suscripción),
+  // igual que en las vistas del CS y del cliente.
+  const usesPackageCreditPricing = proposal.billingMode !== "subscription";
+  // Tareas sueltas del catálogo con el precio de la propuesta (credits) y su valor base.
+  const pricedCatalog = useMemo<Array<CreditCatalogItem & { baseCredits?: number }>>(
+    () =>
+      usesPackageCreditPricing
+        ? initialCatalog.map((item) => ({
+            ...item,
+            credits: getClientCatalogCredits(item.credits, true),
+            baseCredits: item.credits,
+          }))
+        : initialCatalog,
+    [initialCatalog, usesPackageCreditPricing],
+  );
+  const catalogCreditsById = useMemo(
+    () => new Map(initialCatalog.map((item) => [item.id, safeParseNumber(item.credits)])),
+    [initialCatalog],
+  );
+
   const catalogOptions = useMemo(() => {
     const grouped = new Map<string, CreditCatalogItem[]>();
 
-    initialCatalog.forEach((item) => {
+    pricedCatalog.forEach((item) => {
       const bucket = grouped.get(item.category) ?? [];
       bucket.push(item);
       grouped.set(item.category, bucket);
     });
 
     return Array.from(grouped.entries());
-  }, [initialCatalog]);
+  }, [pricedCatalog]);
 
-  const catalogGroups = useMemo(() => {
+  const baseCatalogGroups = useMemo(() => {
     return buildCatalogModalGroups({
       groups: initialGroups,
       categories: initialGroupCategories,
@@ -934,6 +967,54 @@ export function SalesProposalWorkspace({
       items: initialCatalog,
     });
   }, [initialCatalog, initialGroupCategories, initialGroupCategoryLinks, initialGroups, initialGroupMemberships]);
+
+  const catalogGroups = useMemo(
+    () => (usesPackageCreditPricing ? baseCatalogGroups.map(applyPackageCreditPricing) : baseCatalogGroups),
+    [baseCatalogGroups, usesPackageCreditPricing],
+  );
+
+  // Casos de uso sin tareas: se agregan como una sola subtarea con el precio del grupo.
+  const baseGroupCreditsByTitle = useMemo(
+    () =>
+      new Map(
+        baseCatalogGroups
+          .filter((group) => !group.items.length)
+          .map((group) => [normalizeCatalogText(group.name), safeParseNumber(group.credits)]),
+      ),
+    [baseCatalogGroups],
+  );
+
+  // Al cambiar entre paquete y recurrencia, las tareas del catálogo pasan al precio de la nueva
+  // modalidad. Las que el vendedor ajustó a mano (o las manuales) conservan su valor.
+  function repriceInitiativesForBillingMode(
+    initiatives: SalesProposalInitiativeDraft[],
+    nextUsesPackagePricing: boolean,
+  ) {
+    return initiatives.map((initiative) => {
+      const groupBaseCredits =
+        initiative.subitems.length === 1 && !initiative.subitems[0].catalogItemId
+          ? baseGroupCreditsByTitle.get(normalizeCatalogText(initiative.title))
+          : undefined;
+
+      return {
+        ...initiative,
+        subitems: initiative.subitems.map((subitem) => {
+          const baseCredits = subitem.catalogItemId
+            ? catalogCreditsById.get(subitem.catalogItemId)
+            : groupBaseCredits;
+
+          if (
+            baseCredits === undefined ||
+            safeParseNumber(subitem.unitCredits) !== getClientCatalogCredits(baseCredits, !nextUsesPackagePricing)
+          ) {
+            return subitem;
+          }
+
+          return { ...subitem, unitCredits: getClientCatalogCredits(baseCredits, nextUsesPackagePricing) };
+        }),
+      };
+    });
+  }
 
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialGroupCategories);
@@ -1178,7 +1259,7 @@ export function SalesProposalWorkspace({
 
   function openGroupedDraft(status: InitiativeStatus) {
     const selectedCatalogId = quickAddSelections[status];
-    const selectedItem = initialCatalog.find((item) => item.id === selectedCatalogId);
+    const selectedItem = pricedCatalog.find((item) => item.id === selectedCatalogId);
     const next = createDraftInitiative(status);
 
     if (selectedItem) {
@@ -1193,7 +1274,7 @@ export function SalesProposalWorkspace({
 
   function quickAddInitiative(status: InitiativeStatus) {
     const selectedCatalogId = quickAddSelections[status];
-    const selectedItem = initialCatalog.find((item) => item.id === selectedCatalogId);
+    const selectedItem = pricedCatalog.find((item) => item.id === selectedCatalogId);
 
     if (!selectedItem) {
       setFeedback({ tone: "error", message: "Selecciona un caso del catalogo para anadir." });
@@ -2126,7 +2207,7 @@ function mergeRecommendedGroups(
 
   function addDraftSubitem(catalogItemId: string) {
     if (!initiativeDraft || !catalogItemId) return;
-    const item = initialCatalog.find((catalogEntry) => catalogEntry.id === catalogItemId);
+    const item = pricedCatalog.find((catalogEntry) => catalogEntry.id === catalogItemId);
     if (!item) return;
 
     setInitiativeDraft({
@@ -4580,26 +4661,18 @@ function mergeRecommendedGroups(
                               {getCatalogGroupPreview(group, "Grupo sugerido desde el catalogo para incluirlo dentro de la propuesta comercial.")}
                             </p>
                           </div>
-                          <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                            <span className={`text-[14px] font-bold ${muted ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
-                              {group.credits} CR
-                            </span>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-[11px] font-bold ${muted ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {everboardingOnly ? "Solo Everboarding" : alreadyAdded ? "Ya agregado" : "Disponible"}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openCatalogGroupPreview(group);
-                                }}
-                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                              >
-                                Ver detalles
-                              </button>
-                            </div>
-                          </div>
+                          <CatalogCardFooter
+                            price={
+                              <CatalogCreditPrice
+                                group={group}
+                                showPackagePrice={!usesPackageCreditPricing}
+                                muted={muted}
+                                onEverboardingClick={() => setEverboardingOnlyGroup(group)}
+                              />
+                            }
+                            status={everboardingOnly ? "locked" : alreadyAdded ? "added" : "available"}
+                            onAction={() => openCatalogGroupPreview(group)}
+                          />
                         </div>
                       );
                     })}
@@ -4724,8 +4797,13 @@ function mergeRecommendedGroups(
                                 {item.category}
                               </p>
                             </div>
-                            <span className="shrink-0 text-[11px] font-bold text-[#ff7a59]">
+                            <span className="shrink-0 text-right text-[11px] font-bold text-[#ff7a59]">
                               {item.credits} CR
+                              {item.baseCredits !== undefined && item.credits > item.baseCredits ? (
+                                <span className="block text-[10px] font-semibold text-[#5c6ac4]">
+                                  {item.baseCredits} CR con Everboarding
+                                </span>
+                              ) : null}
                             </span>
                           </div>
                         </li>
@@ -4744,9 +4822,12 @@ function mergeRecommendedGroups(
                   <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
                     Consumo de creditos:
                   </p>
-                  <p className="text-[28px] font-extrabold text-[#00bda5]">
-                    {catalogPreviewGroup.credits} CR
-                  </p>
+                  <CatalogCreditPrice
+                    group={catalogPreviewGroup}
+                    showPackagePrice={!usesPackageCreditPricing}
+                    size="large"
+                    onEverboardingClick={() => setEverboardingOnlyGroup(catalogPreviewGroup)}
+                  />
                 </div>
               </section>
             </div>
@@ -4781,7 +4862,6 @@ function mergeRecommendedGroups(
 
       {everboardingOnlyGroup ? (
         <EverboardingOnlyModal
-          useCaseName={everboardingOnlyGroup.name}
           onClose={() => setEverboardingOnlyGroup(null)}
         />
       ) : null}

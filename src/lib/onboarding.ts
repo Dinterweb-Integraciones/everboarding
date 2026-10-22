@@ -156,6 +156,14 @@ export type PublicOnboardingSnapshot = {
   paymentEmail: string | null;
   // Vencimiento más lejano de los créditos otorgados; al recargar un paquete se extiende.
   packageExpirationDate?: string | null;
+  // Solo clientes de paquetes: membresía que pueden pagar con "Únete a Everboarding"
+  // (ver lib/recurrence-offer). El ahorro en créditos ya va incluido en credits.
+  recurrenceOffer?: {
+    credits: number;
+    periodMonths: PlanPeriodMonths;
+    price: number;
+    creditSavingsPercent: number;
+  } | null;
   prospectProposal?: {
     workspaceVariant: "hubspot" | "dinterweb";
     appliedCouponCode: string;
@@ -183,12 +191,15 @@ export type CatalogModalGroup = {
   modalCategoryNames: string[];
   modalCategorySortOrders: number[];
   priorityStatus: "normal" | "prioritario";
+  // Lo que paga el cliente; baseCredits es el valor base cuando difiere (paquetes, ver
+  // applyPackageCreditPricing). Lo mismo por tarea en items.
   credits: number;
+  baseCredits?: number;
   // Solo para clientes con recurrencia (plan Everboarding); los de paquetes lo ven bloqueado.
   requiresSubscription: boolean;
   sortOrder: number;
   categorySortOrder?: number;
-  items: CreditCatalogItem[];
+  items: Array<CreditCatalogItem & { baseCredits?: number }>;
   tags: string[];
 };
 
@@ -515,6 +526,44 @@ export function calculateCredits(
   );
 }
 
+// Valor base de las tareas: el precio guardado en el catálogo (con suscripción Everboarding). Las
+// tareas sin catálogo (manuales) valen lo que se cobró.
+// Valor base de una tarea. Si se guardó con el recargo de paquetes sobre su precio de catálogo,
+// es ese precio de catálogo; si no, lo que se guardó (recurrencia, casos de paquetes anteriores
+// al recargo o créditos ajustados a mano), para no alterar lo ya contabilizado.
+export function getBaseUnitCredits(unitCredits: number, catalogCredits: number | undefined) {
+  const credits = safeParseNumber(unitCredits);
+  if (catalogCredits === undefined) {
+    return credits;
+  }
+
+  const base = safeParseNumber(catalogCredits);
+  return credits !== base && credits === getPackageCreditPrice(base) ? base : credits;
+}
+
+// groupCredits: precio del caso de uso sin tareas, que se guarda como una sola subtarea sin
+// catalog_item_id.
+export function calculateBaseCredits(
+  subitems: Array<Pick<InitiativeSubItem, "unit_credits" | "quantity" | "catalog_item_id">>,
+  catalogCreditsById: Map<string, number>,
+  groupCredits?: number,
+) {
+  return subitems.reduce(
+    (total, item) =>
+      total +
+      getBaseUnitCredits(
+        item.unit_credits,
+        item.catalog_item_id
+          ? catalogCreditsById.get(item.catalog_item_id)
+          : subitems.length === 1
+            ? groupCredits
+            : undefined,
+      ) *
+        safeParseNumber(item.quantity),
+    0,
+  );
+}
+
 export function buildCatalogModalGroups({
   groups,
   categories,
@@ -648,6 +697,41 @@ export function buildCatalogModalGroups({
         || left.sortOrder - right.sortOrder
         || left.name.localeCompare(right.name, "es"),
     );
+}
+
+// Los créditos del catálogo son el valor base: el precio con suscripción Everboarding, con el que
+// se calculó la dedicación de cada caso de uso, y el que suma a la meta del CS. A los clientes de
+// paquetes cada tarea les cuesta un 15% más, y eso es lo que consume la iniciativa (unit_credits).
+const PACKAGE_CREDIT_MARKUP = 0.15;
+
+export function getPackageCreditPrice(credits: number) {
+  return Math.round(safeParseNumber(credits) * (1 + PACKAGE_CREDIT_MARKUP));
+}
+
+// Lo que paga el cliente por una tarea del catálogo según su modalidad.
+export function getClientCatalogCredits(baseCredits: number, usesPackagePricing: boolean) {
+  const base = safeParseNumber(baseCredits);
+  return usesPackagePricing ? getPackageCreditPrice(base) : base;
+}
+
+// El recargo se aplica por tarea (así se guardan las subtareas) y el total es su suma.
+export function applyPackageCreditPricing<T extends CatalogModalGroup>(group: T): T {
+  if (!group.items.length) {
+    return { ...group, credits: getPackageCreditPrice(group.credits), baseCredits: group.credits };
+  }
+
+  const items = group.items.map((item) => ({
+    ...item,
+    credits: getPackageCreditPrice(item.credits),
+    baseCredits: item.credits,
+  }));
+
+  return {
+    ...group,
+    items,
+    credits: items.reduce((sum, item) => sum + item.credits, 0),
+    baseCredits: items.reduce((sum, item) => sum + item.baseCredits, 0),
+  };
 }
 
 export const ALL_CATALOG_CATEGORIES_ID = "all-categories";

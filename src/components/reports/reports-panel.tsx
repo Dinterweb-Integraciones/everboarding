@@ -1856,6 +1856,8 @@ function MonthlyGoalReport({
             <InfoTooltip>
               Cada barra suma los créditos de los casos de uso completados dentro del mes calendario en
               los clientes del CS y los compara con su meta del mes (definida en Catálogos › Metas CS).
+              Cuenta el valor base (precio con suscripción Everboarding), sin el 15% que pagan los
+              clientes de paquetes.
               Todos los CS suma lo completado por todos sobre la suma de sus metas. Los casos cuentan
               para el CS asignado hoy al cliente. La barra se pone verde al alcanzar la meta.
             </InfoTooltip>

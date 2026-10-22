@@ -6,7 +6,6 @@ import {
   ArrowRight,
   CalendarDays,
   Copy,
-  CreditCard,
   Download,
   Link2,
   Loader2,
@@ -34,7 +33,12 @@ import { Card } from "@/components/ui/card";
 import { UseCaseClusterGraph } from "@/components/cs/use-case-cluster-graph";
 import { FeedbackToast } from "@/components/ui/feedback-toast";
 import { Input } from "@/components/ui/input";
-import { EverboardingOnlyBadge, EverboardingOnlyModal } from "@/components/onboarding/catalog-plan-access";
+import {
+  CatalogCardFooter,
+  CatalogCreditPrice,
+  EverboardingOnlyBadge,
+  EverboardingOnlyModal,
+} from "@/components/onboarding/catalog-plan-access";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
 import { TimelineScrollbar } from "@/components/onboarding/timeline-scrollbar";
 import { RichTextDisplay, richTextToPlainText } from "@/components/ui/rich-text";
@@ -51,6 +55,10 @@ import {
 } from "@/lib/constants";
 import {
   buildCatalogGroupOptions,
+  applyPackageCreditPricing,
+  calculateBaseCredits,
+  getBaseUnitCredits,
+  getClientCatalogCredits,
   buildCatalogModalGroups,
   calculateCredits,
   calculateInitiativeProgress,
@@ -86,29 +94,17 @@ import {
   type InitiativeRecord,
   type InitiativeStatus,
   type InitiativeTaskStatus,
-  type OnboardingConfig,
   type OnboardingSnapshot,
   type ProjectStage,
 } from "@/lib/onboarding";
+import type { RecurrenceOffer } from "@/lib/recurrence-offer";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate, formatUserError, safeParseNumber, toIsoDate } from "@/lib/utils";
 
-type SubscriptionConversionDraft = {
-  credits: number;
-  periodMonths: PlanPeriodMonths;
-  price: number;
+type RecurrenceOfferDraft = Omit<RecurrenceOffer, "flowCredits"> & {
   // Caudal: vacío mientras no se defina un consumo mensual.
   flowCredits: string;
-  validityDays: number;
-  firstCycleStartDate: string;
-  paymentMethod: "stripe" | "bank_transfer";
 };
-
-function addDaysToIsoDate(value: string, days: number) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 type OnboardingClientPageProps = {
   initialData: OnboardingSnapshot;
@@ -116,15 +112,24 @@ type OnboardingClientPageProps = {
   userId: string;
   canSharePublicLinks: boolean;
   canToggleClientActive: boolean;
-  // Solo superadmin: pasar de paquetes a recurrencia y generar el link de membresía.
+  // Solo superadmin: configurar la oferta de recurrencia que ve el cliente en su vista pública.
   canChangeBillingMode: boolean;
   // Con un ciclo pagado, "Configurar oferta" ya no cambia la forma de cobro.
   hasPaidBillingCycle: boolean;
-  // Pasó a recurrencia con Stripe y aún no activa su membresía (isAwaitingStripeMembership).
-  canCopyMembershipLink: boolean;
+  // Oferta de recurrencia vigente (guardada o por defecto); solo para superadmin y clientes de paquetes.
+  recurrenceOffer: RecurrenceOffer | null;
   // Solo llega para el equipo (CS/admin/superadmin); null oculta el panel.
   clientObservations: string | null;
 };
+
+// El CS ve el valor base (el precio del catálogo, el que suma a su meta) y, en clientes de
+// paquetes, cuánto paga el cliente con el recargo.
+function getCsCreditsLabel(credits: number, baseCredits: number | undefined) {
+  return baseCredits !== undefined && credits > baseCredits
+    ? `${baseCredits} CR · cliente sin Everboarding: ${credits}`
+    : `${credits} CR`;
+}
+
 
 function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
   return richTextToPlainText(group.preview) || richTextToPlainText(group.description) || fallback;
@@ -504,7 +509,7 @@ export function OnboardingClientPage({
   canToggleClientActive,
   canChangeBillingMode,
   hasPaidBillingCycle,
-  canCopyMembershipLink,
+  recurrenceOffer: initialRecurrenceOffer,
   clientObservations,
 }: OnboardingClientPageProps) {
   const supabase = createSupabaseBrowserClient();
@@ -535,11 +540,9 @@ export function OnboardingClientPage({
   const [isClearingBoard, setIsClearingBoard] = useState(false);
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
-  const [subscriptionConversionDraft, setSubscriptionConversionDraft] =
-    useState<SubscriptionConversionDraft | null>(null);
-  const [isConvertingToSubscription, setIsConvertingToSubscription] = useState(false);
-  const [isCreatingMembershipLink, setIsCreatingMembershipLink] = useState(false);
-  const [isAwaitingMembershipPayment, setIsAwaitingMembershipPayment] = useState(canCopyMembershipLink);
+  const [recurrenceOffer, setRecurrenceOffer] = useState(initialRecurrenceOffer);
+  const [recurrenceOfferDraft, setRecurrenceOfferDraft] = useState<RecurrenceOfferDraft | null>(null);
+  const [isSavingRecurrenceOffer, setIsSavingRecurrenceOffer] = useState(false);
   const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
   const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
@@ -678,15 +681,53 @@ export function OnboardingClientPage({
   }, [initialData]);
   const currentExtraCapacityCredits = useMemo(() => getExtraCapacityCredits(config), [config]);
 
+  // Valor base de cada tarea: su precio en el catálogo (con suscripción Everboarding).
+  const catalogCreditsById = useMemo(
+    () => new Map(initialData.catalog.map((item) => [item.id, Number(item.credits)])),
+    [initialData.catalog],
+  );
+  // Valor base de los casos de uso sin tareas (una sola subtarea con el precio del grupo).
+  const catalogGroupCreditsByTitle = useMemo(
+    () =>
+      new Map(
+        initialData.catalogGroups.map((group) => [normalizeCatalogText(group.name), safeParseNumber(group.credits)]),
+      ),
+    [initialData.catalogGroups],
+  );
+
+  function getInitiativeCsCreditsLabel(
+    title: string,
+    subitems: Array<Pick<InitiativeRecord["subitems"][number], "unit_credits" | "quantity" | "catalog_item_id">>,
+  ) {
+    return getCsCreditsLabel(
+      calculateCredits(subitems),
+      calculateBaseCredits(subitems, catalogCreditsById, catalogGroupCreditsByTitle.get(normalizeCatalogText(title))),
+    );
+  }
+
+  function getDraftCsCreditsLabel(draft: InitiativeEditorDraft) {
+    return getInitiativeCsCreditsLabel(
+      draft.title,
+      draft.subitems.map((subitem) => ({
+        unit_credits: subitem.unitCredits,
+        quantity: subitem.quantity,
+        catalog_item_id: subitem.catalogItemId,
+      })),
+    );
+  }
+  // Clientes de paquetes: los casos de uso les cuestan un 15% más que el valor base (suscripción).
+  const usesPackageCreditPricing = config.custom_plan_billing_mode === "one_time";
   const catalogGroups = useMemo(() => {
-    return buildCatalogModalGroups({
+    const groups = buildCatalogModalGroups({
       groups: initialData.catalogGroups,
       categories: initialData.catalogGroupCategories,
       categoryLinks: initialData.catalogGroupCategoryLinks,
       memberships: initialData.catalogGroupMemberships,
       items: initialData.catalog,
     });
-  }, [initialData]);
+
+    return usesPackageCreditPricing ? groups.map(applyPackageCreditPricing) : groups;
+  }, [initialData, usesPackageCreditPricing]);
 
   const catalogGroupOptions = useMemo(() => {
     return buildCatalogGroupOptions(catalogGroups, initialData.catalogGroupCategories);
@@ -1128,83 +1169,44 @@ export function OnboardingClientPage({
     }
   }
 
-  function openSubscriptionConversion() {
-    // Por defecto el primer ciclo empieza al día siguiente del vencimiento del paquete vigente.
-    const todayIsoDate = toIsoDate();
-    const packageEndDate = billing.current_cycle_end?.slice(0, 10);
-    const dayAfterPackage = packageEndDate ? addDaysToIsoDate(packageEndDate, 1) : todayIsoDate;
+  function openRecurrenceOfferEditor() {
+    if (!recurrenceOffer) return;
 
-    setSubscriptionConversionDraft({
-      credits: config.custom_plan_credits ?? config.base_capacity,
-      periodMonths: 1,
-      price: getEffectivePlanPrice(config),
-      flowCredits: config.flow_credits === null ? "" : String(config.flow_credits),
-      validityDays: 60,
-      firstCycleStartDate: dayAfterPackage > todayIsoDate ? dayAfterPackage : todayIsoDate,
-      paymentMethod: "stripe",
+    setRecurrenceOfferDraft({
+      ...recurrenceOffer,
+      flowCredits: recurrenceOffer.flowCredits === null ? "" : String(recurrenceOffer.flowCredits),
     });
   }
 
-  async function convertToSubscription() {
-    if (!canChangeBillingMode || !subscriptionConversionDraft || isConvertingToSubscription) return;
+  async function saveRecurrenceOffer() {
+    if (!canChangeBillingMode || !recurrenceOfferDraft || isSavingRecurrenceOffer) return;
 
-    setIsConvertingToSubscription(true);
+    setIsSavingRecurrenceOffer(true);
     setFeedback(null);
 
     try {
-      const response = await fetch(`/api/clients/${client.id}/billing-mode`, {
+      const response = await fetch(`/api/clients/${client.id}/recurrence-offer`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...subscriptionConversionDraft,
-          creditValidityDays: subscriptionConversionDraft.validityDays,
+          ...recurrenceOfferDraft,
           flowCredits:
-            subscriptionConversionDraft.flowCredits.trim() === ""
-              ? null
-              : subscriptionConversionDraft.flowCredits,
+            recurrenceOfferDraft.flowCredits.trim() === "" ? null : recurrenceOfferDraft.flowCredits,
         }),
       });
-      const payload = (await response.json()) as { config?: OnboardingConfig; message?: string };
+      const payload = (await response.json()) as { offer?: RecurrenceOffer; message?: string };
 
-      if (!response.ok || !payload.config) {
-        throw new Error(payload.message || "No pudimos cambiar la forma de cobro del cliente.");
+      if (!response.ok || !payload.offer) {
+        throw new Error(payload.message || "No pudimos guardar la oferta de recurrencia.");
       }
 
-      setConfig(payload.config);
-      setIsAwaitingMembershipPayment(subscriptionConversionDraft.paymentMethod === "stripe");
-      setSubscriptionConversionDraft(null);
-      showSuccess(payload.message || "Cliente pasado a recurrencia.");
+      setRecurrenceOffer(payload.offer);
+      setRecurrenceOfferDraft(null);
+      showSuccess(payload.message || "Oferta de recurrencia guardada.");
     } catch (caughtError) {
-      showError(formatUserError(caughtError, "No pudimos cambiar la forma de cobro del cliente."));
+      showError(formatUserError(caughtError, "No pudimos guardar la oferta de recurrencia."));
     } finally {
-      setIsConvertingToSubscription(false);
-    }
-  }
-
-  async function copyMembershipCheckoutLink() {
-    if (!canChangeBillingMode || isCreatingMembershipLink) return;
-
-    setIsCreatingMembershipLink(true);
-    setFeedback(null);
-
-    try {
-      const response = await fetch(`/api/clients/${client.id}/membership-checkout`, { method: "POST" });
-      const payload = (await response.json()) as { url?: string; message?: string };
-
-      if (!response.ok || !payload.url) {
-        throw new Error(payload.message || "No pudimos generar el link de membresía.");
-      }
-
-      const url = payload.url;
-      await navigator.clipboard.writeText(url).then(
-        () => showSuccess("Link de membresía copiado. Envíalo al cliente para activar su recurrencia."),
-        // Sin permiso de portapapeles se abre el link para copiarlo desde ahí.
-        () => window.open(url, "_blank", "noopener"),
-      );
-    } catch (caughtError) {
-      showError(formatUserError(caughtError, "No pudimos generar el link de membresía."));
-    } finally {
-      setIsCreatingMembershipLink(false);
+      setIsSavingRecurrenceOffer(false);
     }
   }
 
@@ -1715,7 +1717,7 @@ export function OnboardingClientPage({
           name: selectedItem.label,
           status: "pending",
           targetDate: "",
-          unitCredits: selectedItem.credits,
+          unitCredits: getClientCatalogCredits(selectedItem.credits, usesPackageCreditPricing),
           quantity: 1,
         },
       ];
@@ -1791,7 +1793,7 @@ export function OnboardingClientPage({
           name: selectedItem.label,
           status: "pending",
           targetDate: "",
-          unitCredits: selectedItem.credits,
+          unitCredits: getClientCatalogCredits(selectedItem.credits, usesPackageCreditPricing),
           quantity: 1,
         },
       ],
@@ -1883,7 +1885,11 @@ export function OnboardingClientPage({
           name: group.name,
           status: "pending" as const,
           target_date: null,
-          unit_credits: Math.max(1, safeParseNumber(group.credits)),
+          // Los grupos ya traen el precio del cliente (credits) y el valor base (baseCredits).
+          unit_credits: getClientCatalogCredits(
+            Math.max(1, safeParseNumber(group.baseCredits ?? group.credits)),
+            usesPackageCreditPricing,
+          ),
           quantity: 1,
           sort_order: 0,
         }]);
@@ -2157,13 +2163,15 @@ export function OnboardingClientPage({
       return;
     }
 
+    const unitCredits = getClientCatalogCredits(selectedItem.credits, usesPackageCreditPricing);
+
     if (!canUseReservedStage(status)) {
       showPaymentRequiredMessage();
       return;
     }
 
-    if (status !== "backlog" && status !== "completed" && selectedItem.credits > metrics.available) {
-      showError(`Capacidad insuficiente. Faltan ${selectedItem.credits - metrics.available} creditos.`);
+    if (status !== "backlog" && status !== "completed" && unitCredits > metrics.available) {
+      showError(`Capacidad insuficiente. Faltan ${unitCredits - metrics.available} creditos.`);
       return;
     }
 
@@ -2205,7 +2213,7 @@ export function OnboardingClientPage({
           initiative_id: insertedInitiative.id,
           catalog_item_id: selectedItem.id,
           name: selectedItem.label,
-          unit_credits: selectedItem.credits,
+          unit_credits: unitCredits,
           quantity: 1,
           sort_order: 0,
         })
@@ -2237,7 +2245,7 @@ export function OnboardingClientPage({
               left.sort_order - right.sort_order,
           ),
           logs: insertedLogs ?? [],
-          credits: selectedItem.credits,
+          credits: unitCredits,
         },
       ]);
       setQuickAddSelections((current) => ({ ...current, [status]: "" }));
@@ -3106,29 +3114,18 @@ export function OnboardingClientPage({
     </button>
   ) : null;
 
-  const billingModeActions = canChangeBillingMode ? (
-    !isRecurringPlan ? (
+  const billingModeActions =
+    canChangeBillingMode && !isRecurringPlan && recurrenceOffer ? (
       <Button
         variant="secondary"
         className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
-        onClick={openSubscriptionConversion}
+        onClick={openRecurrenceOfferEditor}
+        title="Lo que se le ofrece al cliente en su vista pública para unirse a Everboarding."
       >
         <Repeat className="mr-2 h-3.5 w-3.5" />
-        Pasar a recurrencia
+        Oferta de recurrencia
       </Button>
-    ) : isAwaitingMembershipPayment ? (
-      <Button
-        variant="secondary"
-        className="h-10 rounded-[8px] border-[#cbd6e2] bg-white px-4 text-[12px] font-semibold text-[#33475b] shadow-none hover:border-[#9cb1c6] hover:bg-[#f8fbfd]"
-        onClick={copyMembershipCheckoutLink}
-        disabled={isCreatingMembershipLink}
-        title="Su primer ciclo empieza el día que pague."
-      >
-        <CreditCard className="mr-2 h-3.5 w-3.5" />
-        {isCreatingMembershipLink ? "Generando..." : "Copiar link de membresía"}
-      </Button>
-    ) : null
-  ) : null;
+    ) : null;
 
   return (
     <div className="space-y-6" id="onboarding-export-root">
@@ -3913,7 +3910,7 @@ export function OnboardingClientPage({
                                   {spanLabel}
                                 </span>
                                 <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[10px] font-bold text-[#33475b]">
-                                  {initiative.credits} CR
+                                  {getInitiativeCsCreditsLabel(initiative.title, initiative.subitems)}
                                 </span>
                               </div>
                             </div>
@@ -4347,7 +4344,7 @@ export function OnboardingClientPage({
                               </div>
                             </div>
                             <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
-                              {initiative.credits} CR
+                              {getInitiativeCsCreditsLabel(initiative.title, initiative.subitems)}
                             </span>
                           </div>
                         </div>
@@ -4551,7 +4548,7 @@ export function OnboardingClientPage({
                               </div>
                             </div>
                             <span className="rounded-[2px] bg-[#eaf0f6] px-1.5 py-0.5 text-[9px] font-bold text-[#33475b]">
-                              {initiative.credits} CR
+                              {getInitiativeCsCreditsLabel(initiative.title, initiative.subitems)}
                             </span>
                           </div>
                         </div>
@@ -5145,26 +5142,18 @@ export function OnboardingClientPage({
                               {getCatalogGroupPreview(group, "Grupo sugerido desde el catálogo para incluirlo dentro del plan de trabajo.")}
                             </p>
                           </div>
-                          <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                            <span className={`text-[14px] font-bold ${muted ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
-                              {group.credits} CR
-                            </span>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-[11px] font-bold ${muted ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                {everboardingOnly ? "Solo Everboarding" : alreadyAdded ? "Ya agregado" : "Disponible"}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openCatalogGroupPreview(group);
-                                }}
-                                className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                              >
-                                Ver detalles
-                              </button>
-                            </div>
-                          </div>
+                          <CatalogCardFooter
+                            price={
+                              <CatalogCreditPrice
+                                group={group}
+                                showPackagePrice={isRecurringPlan}
+                                viewer="cs"
+                                muted={muted}
+                              />
+                            }
+                            status={everboardingOnly ? "locked" : alreadyAdded ? "added" : "available"}
+                            onAction={() => openCatalogGroupPreview(group)}
+                          />
                         </div>
                       );
                     })}
@@ -5288,8 +5277,13 @@ export function OnboardingClientPage({
                                 {item.category}
                               </p>
                             </div>
-                            <span className="shrink-0 text-[11px] font-bold text-[#ff7a59]">
-                              {item.credits} CR
+                            <span className="shrink-0 text-right text-[11px] font-bold text-[#ff7a59]">
+                              {item.baseCredits ?? item.credits} CR
+                              {item.baseCredits !== undefined && item.credits > item.baseCredits ? (
+                                <span className="block text-[10px] font-semibold text-[#516f90]">
+                                  Cliente sin Everboarding: {item.credits} CR
+                                </span>
+                              ) : null}
                             </span>
                           </div>
                         </li>
@@ -5308,9 +5302,12 @@ export function OnboardingClientPage({
                   <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
                     Consumo de créditos:
                   </p>
-                  <p className="text-[28px] font-extrabold text-[#00bda5]">
-                    {catalogPreviewGroup.credits} CR
-                  </p>
+                  <CatalogCreditPrice
+                    group={catalogPreviewGroup}
+                    showPackagePrice={isRecurringPlan}
+                    viewer="cs"
+                    size="large"
+                  />
                 </div>
               </section>
             </div>
@@ -5358,7 +5355,7 @@ export function OnboardingClientPage({
 
       {everboardingOnlyGroup ? (
         <EverboardingOnlyModal
-          useCaseName={everboardingOnlyGroup.name}
+          offer={recurrenceOffer}
           onClose={() => setEverboardingOnlyGroup(null)}
         />
       ) : null}
@@ -5470,8 +5467,9 @@ export function OnboardingClientPage({
                 </Select>
                 {hasPaidBillingCycle ? (
                   <span className="block text-xs font-medium text-slate-500">
-                    El cliente ya tiene pagos registrados. Para pasarlo a recurrencia, un superadmin usa
-                    &quot;Pasar a recurrencia&quot;.
+                    El cliente ya tiene pagos registrados. Pasa a recurrencia desde su vista pública
+                    con &quot;Únete a Everboarding&quot;; un superadmin define la oferta en
+                    &quot;Oferta de recurrencia&quot;.
                   </span>
                 ) : null}
               </label>
@@ -5525,19 +5523,19 @@ export function OnboardingClientPage({
         </div>
       ) : null}
 
-      {subscriptionConversionDraft ? (
+      {recurrenceOfferDraft ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm">
           <Card className="w-full max-w-2xl rounded-[24px] border border-slate-200 bg-white p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Pasar a recurrencia
+                  Oferta de recurrencia
                 </p>
                 <h3 className="mt-2 text-2xl font-semibold text-slate-950">
-                  Define la membresía con la que seguirá {client.name}.
+                  Define la membresía que se le ofrece a {client.name}.
                 </h3>
               </div>
-              <Button variant="ghost" onClick={() => setSubscriptionConversionDraft(null)}>
+              <Button variant="ghost" onClick={() => setRecurrenceOfferDraft(null)}>
                 Cerrar
               </Button>
             </div>
@@ -5548,9 +5546,9 @@ export function OnboardingClientPage({
                 <Input
                   type="number"
                   min={1}
-                  value={subscriptionConversionDraft.credits}
+                  value={recurrenceOfferDraft.credits}
                   onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
+                    setRecurrenceOfferDraft((current) =>
                       current ? { ...current, credits: Math.max(1, safeParseNumber(event.target.value)) } : current,
                     )
                   }
@@ -5560,9 +5558,9 @@ export function OnboardingClientPage({
               <label className="space-y-2">
                 <span className="text-sm font-medium text-slate-700">Periodo de cobro</span>
                 <Select
-                  value={String(subscriptionConversionDraft.periodMonths)}
+                  value={String(recurrenceOfferDraft.periodMonths)}
                   onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
+                    setRecurrenceOfferDraft((current) =>
                       current
                         ? { ...current, periodMonths: safeParseNumber(event.target.value) as PlanPeriodMonths }
                         : current,
@@ -5581,9 +5579,9 @@ export function OnboardingClientPage({
                 <Input
                   type="number"
                   min={0}
-                  value={subscriptionConversionDraft.price}
+                  value={recurrenceOfferDraft.price}
                   onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
+                    setRecurrenceOfferDraft((current) =>
                       current ? { ...current, price: Math.max(0, safeParseNumber(event.target.value)) } : current,
                     )
                   }
@@ -5596,9 +5594,9 @@ export function OnboardingClientPage({
                   type="number"
                   min={0}
                   placeholder="Opcional"
-                  value={subscriptionConversionDraft.flowCredits}
+                  value={recurrenceOfferDraft.flowCredits}
                   onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
+                    setRecurrenceOfferDraft((current) =>
                       current ? { ...current, flowCredits: event.target.value } : current,
                     )
                   }
@@ -5610,79 +5608,23 @@ export function OnboardingClientPage({
                 <Input
                   type="number"
                   min={1}
-                  value={subscriptionConversionDraft.validityDays}
+                  value={recurrenceOfferDraft.creditValidityDays}
                   onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
-                      current ? { ...current, validityDays: Math.max(1, safeParseNumber(event.target.value)) } : current,
+                    setRecurrenceOfferDraft((current) =>
+                      current
+                        ? { ...current, creditValidityDays: Math.max(1, safeParseNumber(event.target.value)) }
+                        : current,
                     )
                   }
                 />
               </label>
-
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Forma de pago</span>
-                <Select
-                  value={subscriptionConversionDraft.paymentMethod}
-                  onChange={(event) =>
-                    setSubscriptionConversionDraft((current) =>
-                      current
-                        ? { ...current, paymentMethod: event.target.value as SubscriptionConversionDraft["paymentMethod"] }
-                        : current,
-                    )
-                  }
-                >
-                  <option value="stripe">Stripe (tarjeta)</option>
-                  <option value="bank_transfer">Transferencia bancaria</option>
-                </Select>
-                <span className="block text-xs font-medium text-slate-500">
-                  {subscriptionConversionDraft.paymentMethod === "stripe"
-                    ? "Copia el link de membresía y envíalo al cliente. Su primer ciclo empieza el día que pague, y ese día queda como su día de corte."
-                    : "Finanzas verá el cobro en su cola de transferencias a partir del inicio del primer ciclo."}
-                </span>
-              </label>
-
-              {subscriptionConversionDraft.paymentMethod === "bank_transfer" ? (
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Inicio del primer ciclo</span>
-                  <Input
-                    type="date"
-                    min={toIsoDate()}
-                    value={subscriptionConversionDraft.firstCycleStartDate}
-                    onChange={(event) =>
-                      setSubscriptionConversionDraft((current) =>
-                        current ? { ...current, firstCycleStartDate: event.target.value } : current,
-                      )
-                    }
-                  />
-                  <span className="block text-xs font-medium text-slate-500">
-                    También será el día de corte de cada ciclo.
-                  </span>
-                </label>
-              ) : null}
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              <p>
-                <strong>{subscriptionConversionDraft.credits} CR</strong> por{" "}
-                <strong>{getPlanPeriodLabel(subscriptionConversionDraft.periodMonths)}</strong> ·{" "}
-                <strong>
-                  {getMonthlyContractCredits({
-                    base_capacity: subscriptionConversionDraft.credits,
-                    custom_plan_credits: subscriptionConversionDraft.credits,
-                    custom_plan_period_months: subscriptionConversionDraft.periodMonths,
-                  })}{" "}
-                  CR/mes
-                </strong>{" "}
-                · <strong>{formatCurrency(subscriptionConversionDraft.price)}</strong>. Los créditos que le
-                quedan del paquete siguen vigentes hasta su vencimiento original.
-              </p>
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Button onClick={convertToSubscription} disabled={isConvertingToSubscription}>
-                {isConvertingToSubscription ? "Guardando..." : "Pasar a recurrencia"}
+              <Button onClick={saveRecurrenceOffer} disabled={isSavingRecurrenceOffer}>
+                {isSavingRecurrenceOffer ? "Guardando..." : "Guardar oferta"}
               </Button>
-              <Button variant="ghost" onClick={() => setSubscriptionConversionDraft(null)}>
+              <Button variant="ghost" onClick={() => setRecurrenceOfferDraft(null)}>
                 Cancelar
               </Button>
             </div>
@@ -5918,13 +5860,7 @@ export function OnboardingClientPage({
                       Actividades incluidas
                     </p>
                     <span className="text-[13px] font-bold text-[#ff7a59]">
-                      {calculateCredits(
-                        draft.subitems.map((subitem) => ({
-                          unit_credits: subitem.unitCredits,
-                          quantity: subitem.quantity,
-                        })),
-                      )}{" "}
-                      CR
+                      {getDraftCsCreditsLabel(draft)}
                     </span>
                   </div>
 
@@ -5948,7 +5884,17 @@ export function OnboardingClientPage({
                               disabled={!writable}
                             />
                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <span className="text-[9px] text-[#516f90]">{subitem.unitCredits} CR c/u</span>
+                              <span className="text-[9px] text-[#516f90]">{getCsCreditsLabel(
+                                  subitem.unitCredits,
+                                  getBaseUnitCredits(
+                                    subitem.unitCredits,
+                                    subitem.catalogItemId
+                                      ? catalogCreditsById.get(subitem.catalogItemId)
+                                      : draft.subitems.length === 1
+                                        ? catalogGroupCreditsByTitle.get(normalizeCatalogText(draft.title))
+                                        : undefined,
+                                  ),
+                                )} c/u</span>
                               <button
                                 type="button"
                                 onClick={() =>
@@ -6092,13 +6038,7 @@ export function OnboardingClientPage({
                       Costo total:
                     </p>
                     <p className="text-[14px] font-bold text-[#ff7a59]">
-                      {calculateCredits(
-                        draft.subitems.map((subitem) => ({
-                          unit_credits: subitem.unitCredits,
-                          quantity: subitem.quantity,
-                        })),
-                      )}{" "}
-                      CR
+                      {getDraftCsCreditsLabel(draft)}
                     </p>
                   </div>
                 </section>

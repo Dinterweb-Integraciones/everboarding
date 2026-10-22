@@ -1,10 +1,15 @@
 "use client";
 
-import { CalendarDays, CreditCard, Download, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { ArrowRight, CalendarDays, CreditCard, Download, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandLogo } from "@/components/layout/brand-logo";
-import { EverboardingOnlyBadge, EverboardingOnlyModal } from "@/components/onboarding/catalog-plan-access";
+import {
+  CatalogCardFooter,
+  CatalogCreditPrice,
+  EverboardingOnlyBadge,
+  EverboardingOnlyModal,
+} from "@/components/onboarding/catalog-plan-access";
 import { NorthStarModal } from "@/components/onboarding/north-star-modal";
 import { TimelineScrollbar } from "@/components/onboarding/timeline-scrollbar";
 import {
@@ -26,6 +31,8 @@ import {
 } from "@/lib/constants";
 import {
   buildCatalogGroupOptions,
+  applyPackageCreditPricing,
+  getClientCatalogCredits,
   buildCatalogModalGroups,
   calculateCredits,
   calculateMetrics,
@@ -37,6 +44,7 @@ import {
   getEstimatedStatus,
   getEffectivePlanPrice,
   getPlanCadenceLabel,
+  getPlanPeriodLabel,
   matchesCatalogGroupSearch,
   normalizeCatalogText,
   shouldRequireNorthStar,
@@ -358,6 +366,8 @@ export function PublicOnboardingPage({
   const [catalogTagFilter, setCatalogTagFilter] = useState<string | null>(null);
   const [catalogPreviewGroup, setCatalogPreviewGroup] = useState<CatalogModalGroup | null>(null);
   const [everboardingOnlyGroup, setEverboardingOnlyGroup] = useState<CatalogModalGroup | null>(null);
+  // El botón "Únete a Everboarding" abre el mismo modal de la suscripción antes de ir al checkout.
+  const [isRecurrenceOfferModalOpen, setIsRecurrenceOfferModalOpen] = useState(false);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -417,10 +427,27 @@ export function PublicOnboardingPage({
       {} as Record<InitiativeStatus, InitiativeRecord[]>,
     );
   }, [initiatives]);
+  // Clientes y propuestas de paquetes: los casos de uso cuestan un 15% más que el valor base
+  // (suscripción). En la vista del prospecto, config refleja la forma de cobro de la propuesta.
+  const showsClientCreditPricing = audience === "client" || audience === "prospect";
+  const usesPackageCreditPricing =
+    showsClientCreditPricing && config.custom_plan_billing_mode === "one_time";
+  // Tareas sueltas del catálogo con el precio del cliente (credits) y su valor base.
+  const pricedCatalog = useMemo<Array<(typeof initialData.catalog)[number] & { baseCredits?: number }>>(
+    () =>
+      usesPackageCreditPricing
+        ? initialData.catalog.map((item) => ({
+            ...item,
+            credits: getClientCatalogCredits(item.credits, true),
+            baseCredits: item.credits,
+          }))
+        : initialData.catalog,
+    [initialData.catalog, usesPackageCreditPricing],
+  );
   const catalogOptions = useMemo(() => {
-    const grouped = new Map<string, typeof initialData.catalog>();
+    const grouped = new Map<string, typeof pricedCatalog>();
 
-    initialData.catalog.forEach((item) => {
+    pricedCatalog.forEach((item) => {
       const bucket = grouped.get(item.category) ?? [];
       bucket.push(item);
       grouped.set(item.category, bucket);
@@ -448,20 +475,22 @@ export function PublicOnboardingPage({
         ),
       }))
       .filter((entry) => entry.items.length > 0);
-  }, [initialData]);
+  }, [initialData, pricedCatalog]);
   const catalogItemMap = useMemo(
-    () => new Map(initialData.catalog.map((item) => [item.id, item])),
-    [initialData.catalog],
+    () => new Map(pricedCatalog.map((item) => [item.id, item])),
+    [pricedCatalog],
   );
   const catalogGroups = useMemo(() => {
-    return buildCatalogModalGroups({
+    const groups = buildCatalogModalGroups({
       groups: initialData.catalogGroups,
       categories: initialData.catalogGroupCategories,
       categoryLinks: initialData.catalogGroupCategoryLinks,
       memberships: initialData.catalogGroupMemberships,
       items: initialData.catalog,
     });
-  }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupCategoryLinks, initialData.catalogGroupMemberships, initialData.catalogGroups]);
+
+    return usesPackageCreditPricing ? groups.map(applyPackageCreditPricing) : groups;
+  }, [initialData.catalog, initialData.catalogGroupCategories, initialData.catalogGroupCategoryLinks, initialData.catalogGroupMemberships, initialData.catalogGroups, usesPackageCreditPricing]);
   const reportGroupedInitiatives = useMemo(
     () =>
       summaryStatuses.reduce(
@@ -583,6 +612,10 @@ export function PublicOnboardingPage({
     () => selectedCatalogItems.reduce((sum, item) => sum + item.credits, 0),
     [selectedCatalogItems],
   );
+  const selectedCatalogBaseCredits = useMemo(
+    () => selectedCatalogItems.reduce((sum, item) => sum + (item.baseCredits ?? item.credits), 0),
+    [selectedCatalogItems],
+  );
 
   const cycleDaysRemaining = useMemo(() => getDaysUntil(metrics.cutoffDate), [metrics.cutoffDate]);
   const paymentAmount =
@@ -641,6 +674,11 @@ export function PublicOnboardingPage({
     ? `Inversión ${getPlanCadenceLabel(config.custom_plan_period_months)}`
     : "Inversión total";
   const usesStripeMembership = config.custom_plan_billing_mode !== "one_time";
+  // "Únete a Everboarding": al pagarla, el cliente de paquetes pasa a recurrencia.
+  const recurrenceOffer =
+    audience === "client" && !isRecurringPlan ? initialData.recurrenceOffer ?? null : null;
+  // Clientes con recurrencia: ven tachado el precio en créditos con paquetes.
+  const showPackageCreditPrice = showsClientCreditPricing && isRecurringPlan;
   const progressParts = useMemo(() => {
     const total = Math.max(metrics.total, 1);
 
@@ -938,6 +976,17 @@ export function PublicOnboardingPage({
     container.scrollLeft = timelineScrollTarget;
   }, [timelineScrollTarget]);
 
+  // Al volver de Stripe con "atrás", el navegador restaura la página desde su caché con
+  // isStartingPayment aún en true y los botones de pago quedarían deshabilitados.
+  useEffect(() => {
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) setIsStartingPayment(false);
+    }
+
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const paymentStatus = params.get("payment");
@@ -980,7 +1029,8 @@ export function PublicOnboardingPage({
 
       const payload = (await response.json()) as {
         billing?: ClientBillingStatus;
-        purchaseKind?: "plan" | "extra_capacity_package";
+        config?: PublicOnboardingSnapshot["config"] | null;
+        purchaseKind?: "plan" | "extra_capacity_package" | "recurrence";
         grantedCredits?: number;
         message?: string;
       };
@@ -992,12 +1042,17 @@ export function PublicOnboardingPage({
         if (!isMounted) return;
 
         setBilling(payload.billing);
+        if (payload.config) {
+          setConfig(payload.config);
+        }
         setFeedback({
           tone: "success",
           message:
             payload.purchaseKind === "extra_capacity_package"
               ? `Pago confirmado. Ya habilitamos ${payload.grantedCredits ?? 0} créditos extra.`
-              : "Pago confirmado. El ciclo quedo activo.",
+              : payload.purchaseKind === "recurrence"
+                ? "¡Bienvenido a Everboarding! Tu membresía quedó activa."
+                : "Pago confirmado. El ciclo quedo activo.",
         });
         params.delete("payment");
         params.delete("session_id");
@@ -1131,10 +1186,7 @@ export function PublicOnboardingPage({
           labels: nextInitiative.labels ?? [],
           logs: nextInitiative.logs ?? [],
           subitems: resolvedSubitems,
-          credits: resolvedSubitems.reduce(
-            (sum, item) => sum + Number(item.unit_credits ?? 0) * Number(item.quantity ?? 1),
-            0,
-          ),
+          credits: calculateCredits(resolvedSubitems),
           progressPercent: 0,
         }].sort((left, right) => left.sort_order - right.sort_order),
       );
@@ -1244,7 +1296,9 @@ export function PublicOnboardingPage({
     }
   }
 
-  async function startStripeCheckout(purchaseKind: "plan" | "extra_package" = "plan") {
+  async function startStripeCheckout(
+    purchaseKind: "plan" | "extra_package" | "recurrence" = "plan",
+  ) {
     setFeedback(null);
     setIsStartingPayment(true);
 
@@ -1844,6 +1898,35 @@ export function PublicOnboardingPage({
                       </div>
                     </div>
                   </div>
+                ) : null}
+                {recurrenceOffer ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsRecurrenceOfferModalOpen(true)}
+                    disabled={isStartingPayment || isSyncingPayment}
+                    className="group relative flex w-full items-center justify-between gap-4 overflow-hidden rounded-[8px] bg-gradient-to-r from-[#00bda5] via-[#00a4bd] to-[#5c6ac4] px-5 py-4 text-left text-white shadow-[0_10px_28px_-8px_rgba(0,164,189,0.65)] ring-2 ring-[#00bda5]/30 ring-offset-2 transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_-8px_rgba(0,164,189,0.8)] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
+                  >
+                    <span className="min-w-0">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em]">
+                        <Sparkles className="h-3 w-3" />
+                        Recomendado
+                      </span>
+                      <span className="mt-2 block text-[17px] font-extrabold leading-tight">
+                        Únete a Everboarding
+                        {recurrenceOffer.creditSavingsPercent > 0
+                          ? `, ahorra un ${recurrenceOffer.creditSavingsPercent}% en créditos`
+                          : ""}{" "}
+                        y desbloquea casos de uso avanzados
+                      </span>
+                      <span className="mt-1 block text-[13px] font-semibold text-white/85">
+                        {recurrenceOffer.credits} CR por {getPlanPeriodLabel(recurrenceOffer.periodMonths)} ·{" "}
+                        {formatCurrency(recurrenceOffer.price)}/{getPlanPeriodLabel(recurrenceOffer.periodMonths)}
+                      </span>
+                    </span>
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-[#0091ae] shadow-md transition group-hover:translate-x-0.5">
+                      <ArrowRight className="h-5 w-5" />
+                    </span>
+                  </button>
                 ) : null}
               </div>
             </div>
@@ -2771,40 +2854,24 @@ export function PublicOnboardingPage({
                                 {getCatalogGroupPreview(group, "Grupo sugerido desde el catalogo para sumarlo al board del cliente.")}
                               </p>
                             </div>
-                            <div className="mt-auto flex items-center justify-between border-t border-[#eaf0f6] pt-4">
-                              <span className={`text-[14px] font-bold ${muted ? "text-[#9aa9b9]" : "text-[#ff7a59]"}`}>
-                                {group.credits} CR
-                              </span>
-                              <div className="flex items-center gap-3">
-                                <span className={`text-[11px] font-bold ${muted ? "text-[#9cb1c6]" : "text-[#00bda5]"}`}>
-                                  {alreadyAdded ? "Bloqueado" : everboardingOnly ? "Solo Everboarding" : "Disponible"}
-                                </span>
-                                {alreadyAdded ? (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void removeCatalogGroup(group);
-                                    }}
-                                    disabled={isSubmitting}
-                                    className="rounded-[3px] border border-[#fecaca] bg-white px-2.5 py-1 text-[10px] font-bold text-[#dc2626] transition hover:border-[#fca5a5] hover:bg-[#fff5f5] disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    Quitar
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      openCatalogGroupPreview(group);
-                                    }}
-                                    className="rounded-[3px] border border-[#99f6e4] bg-[#f0fdfa] px-2.5 py-1 text-[10px] font-bold text-[#00bda5] transition hover:bg-[#ecfffb]"
-                                  >
-                                    Ver detalles
-                                  </button>
-                                )}
-                              </div>
-                            </div>
+                            <CatalogCardFooter
+                              price={
+                                <CatalogCreditPrice
+                                  group={group}
+                                  showPackagePrice={showPackageCreditPrice}
+                                  muted={muted}
+                                  onEverboardingClick={() => setIsRecurrenceOfferModalOpen(true)}
+                                />
+                              }
+                              status={alreadyAdded ? "added" : everboardingOnly ? "locked" : "available"}
+                              statusLabel={alreadyAdded ? "Agregado" : undefined}
+                              actionLabel={alreadyAdded ? "Quitar" : "Ver detalles"}
+                              actionTone={alreadyAdded ? "danger" : undefined}
+                              actionDisabled={alreadyAdded && isSubmitting}
+                              onAction={() =>
+                                alreadyAdded ? void removeCatalogGroup(group) : openCatalogGroupPreview(group)
+                              }
+                            />
                           </div>
                         );
                       })}
@@ -2947,9 +3014,12 @@ export function PublicOnboardingPage({
                   <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
                     Consumo de creditos:
                   </p>
-                  <p className="text-[28px] font-extrabold text-[#00bda5]">
-                    {catalogPreviewGroup.credits} CR
-                  </p>
+                  <CatalogCreditPrice
+                    group={catalogPreviewGroup}
+                    showPackagePrice={showPackageCreditPrice}
+                    size="large"
+                    onEverboardingClick={() => setIsRecurrenceOfferModalOpen(true)}
+                  />
                 </div>
               </section>
             </div>
@@ -2987,10 +3057,15 @@ export function PublicOnboardingPage({
         </div>
       ) : null}
 
-      {everboardingOnlyGroup ? (
+      {everboardingOnlyGroup || isRecurrenceOfferModalOpen ? (
         <EverboardingOnlyModal
-          useCaseName={everboardingOnlyGroup.name}
-          onClose={() => setEverboardingOnlyGroup(null)}
+          offer={recurrenceOffer}
+          onClose={() => {
+            setEverboardingOnlyGroup(null);
+            setIsRecurrenceOfferModalOpen(false);
+          }}
+          onJoin={recurrenceOffer ? () => void startStripeCheckout("recurrence") : undefined}
+          isJoining={isStartingPayment || isSyncingPayment}
         />
       ) : null}
 
@@ -3126,8 +3201,13 @@ export function PublicOnboardingPage({
                   <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#00bda5]">
                     Consumo de créditos:
                   </p>
-                  <p className="text-[28px] font-extrabold text-[#00bda5]">
+                  <p className="text-right text-[28px] font-extrabold text-[#00bda5]">
                     {selectedCatalogCredits} CR
+                    {selectedCatalogCredits > selectedCatalogBaseCredits ? (
+                      <span className="block text-[13px] font-semibold text-[#00a4bd]">
+                        {selectedCatalogBaseCredits} CR con Everboarding
+                      </span>
+                    ) : null}
                   </p>
                 </div>
               </section>

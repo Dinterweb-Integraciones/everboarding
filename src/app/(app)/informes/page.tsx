@@ -10,7 +10,7 @@ import {
   type MonthlyGoalRow,
 } from "@/lib/cs-monthly-goals";
 import { fetchUserMemberships } from "@/lib/membership-access";
-import { normalizeInitiativeTitle } from "@/lib/onboarding";
+import { getBaseUnitCredits, normalizeInitiativeTitle } from "@/lib/onboarding";
 import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Views } from "@/types/database";
@@ -308,6 +308,17 @@ export default async function ReportsPage() {
     reportClients.map((client) => [client.id, client.observations?.trim() || null]),
   );
 
+  // El saldo de los paquetes (used_credits de cada grant) solo se recalcula al ejecutar
+  // expire_unused_client_credits, como hace el tablero al abrirse. Sin esto, los casos
+  // comprometidos desde la última vez no se descuentan de Disponibles.
+  for (let index = 0; index < reportClientIds.length; index += 10) {
+    await Promise.all(
+      reportClientIds.slice(index, index + 10).map((clientId) =>
+        admin.rpc("expire_unused_client_credits" as never, { p_client_id: clientId } as never),
+      ),
+    );
+  }
+
   const { data, error } = reportClientIds.length
     ? await admin
         .from("client_health_report")
@@ -602,8 +613,11 @@ export default async function ReportsPage() {
     const proposal = normalizeSalesProposalDraft(row.snapshot as never);
     proposal.initiatives.forEach((initiative) => {
       const initiativeKey = getInitiativeCreditKey(clientId, initiative.title);
+      // Las propuestas de paquetes guardan las tareas con recargo; los informes usan el valor base.
+      const getSnapshotBaseCredits = (subitem: (typeof initiative.subitems)[number]) =>
+        getBaseUnitCredits(Number(subitem.unitCredits), catalogCreditsById.get(subitem.catalogItemId ?? ""));
       const initiativeCredits = initiative.subitems.reduce(
-        (sum, subitem) => sum + Number(subitem.unitCredits) * Number(subitem.quantity),
+        (sum, subitem) => sum + getSnapshotBaseCredits(subitem) * Number(subitem.quantity),
         0,
       );
       snapshotCreditsByInitiative.set(
@@ -614,7 +628,7 @@ export default async function ReportsPage() {
         const taskKey = getInitiativeTaskCreditKey(clientId, initiative.title, subitem.name);
         snapshotUnitCreditsByTask.set(
           taskKey,
-          Math.max(snapshotUnitCreditsByTask.get(taskKey) ?? 0, Number(subitem.unitCredits)),
+          Math.max(snapshotUnitCreditsByTask.get(taskKey) ?? 0, getSnapshotBaseCredits(subitem)),
         );
       });
     });
@@ -634,7 +648,18 @@ export default async function ReportsPage() {
   const reportSubitems = ((initiativeSubitemRows ?? []) as InitiativeSubitemReportRow[]).map((subitem) => {
     const initiative = initiativeById.get(subitem.initiative_id);
     if (!initiative || !commerciallyWaivedInitiativeIds.has(subitem.initiative_id)) {
-      return subitem;
+      // Informes y metas del CS cuentan el valor base, no el recargo que pagan los clientes de
+      // paquetes. Caso de uso sin tareas: una sola subtarea con el precio del grupo.
+      return {
+        ...subitem,
+        unit_credits: getBaseUnitCredits(
+          subitem.unit_credits,
+          catalogCreditsById.get(subitem.catalog_item_id ?? "") ??
+            (!subitem.catalog_item_id && initiative && subitemCountsByInitiative.get(subitem.initiative_id) === 1
+              ? catalogGroupCreditsByTitle.get(normalizeInitiativeTitle(initiative.title))
+              : undefined),
+        ),
+      };
     }
 
     const historicalTaskCredits = snapshotUnitCreditsByTask.get(

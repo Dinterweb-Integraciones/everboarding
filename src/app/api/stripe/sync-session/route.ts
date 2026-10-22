@@ -7,7 +7,11 @@ import {
   isExtraCreditPackagePurchase,
   recordExtraCreditPackagePayment,
 } from "@/lib/client-extra-credit-payments";
-import { anchorAwaitingMembershipToPaymentDate } from "@/lib/membership-checkout";
+import {
+  activateRecurrenceFromPayment,
+  anchorAwaitingMembershipToPaymentDate,
+} from "@/lib/membership-checkout";
+import { parseRecurrenceUpgradeMetadata } from "@/lib/recurrence-offer";
 import { buildPublicProspectSnapshotBase } from "@/lib/public-prospect";
 import { syncSalesProposalCheckoutStatus } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -110,7 +114,9 @@ export async function POST(request: Request) {
 
     const purchaseKind = isExtraCreditPackagePurchase(session.metadata)
       ? "extra_capacity_package"
-      : "plan";
+      : parseRecurrenceUpgradeMetadata(session.metadata)
+        ? "recurrence"
+        : "plan";
     const grantedCredits =
       purchaseKind === "extra_capacity_package"
         ? getExtraCreditPackageCredits(session.metadata)
@@ -126,6 +132,8 @@ export async function POST(request: Request) {
         grantedCredits,
       });
     } else {
+      // Primer pago de "Únete a Everboarding": el cliente pasa de paquetes a recurrencia.
+      await activateRecurrenceFromPayment(clientId, session.metadata);
       // Primer pago de un cliente que pasó de paquetes a recurrencia: su ciclo empieza hoy.
       await anchorAwaitingMembershipToPaymentDate(clientId);
 
@@ -156,7 +164,19 @@ export async function POST(request: Request) {
     }
 
     const billing = await fetchClientBillingStatus(clientId);
-    return NextResponse.json({ billing, purchaseKind, grantedCredits });
+    // Al pasar a recurrencia cambia la configuración del plan: la vista pública la necesita.
+    const config =
+      purchaseKind === "recurrence"
+        ? (
+            await createSupabaseAdminClient()
+              .from("onboarding_configs")
+              .select("*")
+              .eq("client_id", clientId)
+              .maybeSingle()
+          ).data
+        : undefined;
+
+    return NextResponse.json({ billing, config, purchaseKind, grantedCredits });
   } catch (caughtError) {
     return NextResponse.json(
       {

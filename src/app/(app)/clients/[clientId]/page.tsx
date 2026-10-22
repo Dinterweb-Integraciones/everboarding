@@ -4,7 +4,7 @@ import { OnboardingClientPage } from "@/components/onboarding/onboarding-client-
 import { requireUser } from "@/lib/auth";
 import { isClientStaffRole } from "@/lib/client-staff-access";
 import { fetchClientMembership } from "@/lib/membership-access";
-import { isAwaitingStripeMembership } from "@/lib/membership-checkout";
+import { fetchRecurrenceOffer } from "@/lib/membership-checkout";
 import { canManagePlatformUsers, canViewPrivateCatalogGroups } from "@/lib/platform-access";
 import {
   createDefaultConfig,
@@ -296,8 +296,8 @@ export default async function ClientDetailPage({
   );
   const billingStatus = billingRow ?? createDefaultBillingStatus(configRecord);
 
-  // Con un ciclo ya pagado la forma de cobro no se cambia desde "Configurar oferta": un superadmin
-  // la cambia con "Pasar a recurrencia", que ajusta también la venta y registra el cambio.
+  // Con un ciclo ya pagado la forma de cobro no se cambia desde "Configurar oferta": el cliente pasa
+  // a recurrencia pagando "Únete a Everboarding", con la oferta que define un superadmin.
   const { count: paidBillingCycleCount, error: paidBillingCyclesError } = await clientReader
     .from("client_billing_cycles")
     .select("id", { count: "exact", head: true })
@@ -308,12 +308,11 @@ export default async function ClientDetailPage({
     throw new Error("No pudimos cargar los ciclos pagados del cliente.");
   }
 
-  // El link de membresía solo es para clientes que pasaron a recurrencia con Stripe y aún no la
-  // activan. Si no se puede consultar (p. ej. sin la tabla de cambios), no se muestra.
-  const canCopyMembershipLink =
-    canManagePlatformUsers(platformRole) &&
-    configRecord.custom_plan_billing_mode === "subscription" &&
-    (await isAwaitingStripeMembership(clientRecord.id).catch(() => false));
+  // Oferta de recurrencia que ve el cliente en su vista pública; solo la configura un superadmin.
+  const recurrenceOffer =
+    canManagePlatformUsers(platformRole) && configRecord.custom_plan_billing_mode === "one_time"
+      ? await fetchRecurrenceOffer(clientRecord.id)
+      : null;
 
   // Las observaciones son internas: solo viajan al navegador del equipo
   // (CS/admin/superadmin). La columna no está en database.ts (ver límite de
@@ -354,7 +353,7 @@ export default async function ClientDetailPage({
       canToggleClientActive={isClientStaff}
       canChangeBillingMode={canManagePlatformUsers(platformRole)}
       hasPaidBillingCycle={(paidBillingCycleCount ?? 0) > 0}
-      canCopyMembershipLink={canCopyMembershipLink}
+      recurrenceOffer={recurrenceOffer}
       clientObservations={clientObservations}
     />
   );

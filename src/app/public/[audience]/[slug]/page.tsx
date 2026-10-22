@@ -23,6 +23,7 @@ import {
   buildPublicProspectSnapshotBase,
   getSalesProposalBySlug,
 } from "@/lib/public-prospect";
+import { fetchRecurrenceOffer } from "@/lib/membership-checkout";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toIsoDate } from "@/lib/utils";
@@ -240,6 +241,10 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     .order("expires_at", { ascending: false })
     .limit(1)
     .maybeSingle()) as { data: { expires_at: string } | null };
+  const recurrenceOffer =
+    data.config.custom_plan_billing_mode === "one_time"
+      ? await fetchRecurrenceOffer(data.client.id)
+      : null;
 
   const snapshot: PublicOnboardingSnapshot = {
     client: data.client,
@@ -296,6 +301,14 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     })),
     paymentEmail: data.payment_email,
     packageExpirationDate: latestGrantRow?.expires_at ?? null,
+    recurrenceOffer: recurrenceOffer
+      ? {
+          credits: recurrenceOffer.credits,
+          periodMonths: recurrenceOffer.periodMonths,
+          price: recurrenceOffer.price,
+          creditSavingsPercent: recurrenceOffer.creditSavingsPercent,
+        }
+      : null,
   };
 
   return (

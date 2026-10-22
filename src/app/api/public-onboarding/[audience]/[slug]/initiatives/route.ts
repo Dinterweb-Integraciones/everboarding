@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getClientCatalogCredits } from "@/lib/onboarding";
 import {
   getSalesProposalBySlug,
   mapProposalInitiativeToPublicRecord,
@@ -85,7 +86,8 @@ export async function POST(request: Request, context: RouteContext) {
     const admin = createSupabaseAdminClient();
     const proposal = audience === "prospect" ? await getSalesProposalBySlug(slug) : null;
     let resolvedClientId: string | null = null;
-    // Clientes de paquetes: no pueden agregar casos de uso solo Everboarding.
+    // Clientes de paquetes: pagan las tareas con recargo y no pueden agregar casos de uso solo
+    // Everboarding.
     let isOneTimeClient = false;
 
     if (!proposal) {
@@ -174,6 +176,8 @@ export async function POST(request: Request, context: RouteContext) {
         );
       }
 
+      // Los créditos del catálogo son el valor base; a los clientes de paquetes cada tarea les
+      // cuesta un 15% más (ver getClientCatalogCredits).
       const subitemsPayload = input.items.length
         ? input.items.map((item, index) => ({
             initiative_id: initiativeRow.id,
@@ -181,7 +185,7 @@ export async function POST(request: Request, context: RouteContext) {
             name: item.label,
             status: "pending" as const,
             target_date: null,
-            unit_credits: item.credits,
+            unit_credits: getClientCatalogCredits(Number(item.credits ?? 0), isOneTimeClient),
             quantity: 1,
             sort_order: index,
           }))
@@ -192,7 +196,10 @@ export async function POST(request: Request, context: RouteContext) {
               name: input.title.trim(),
               status: "pending" as const,
               target_date: null,
-              unit_credits: Math.max(1, Number(input.fallbackCredits ?? 0)),
+              unit_credits: getClientCatalogCredits(
+                Math.max(1, Number(input.fallbackCredits ?? 0)),
+                isOneTimeClient,
+              ),
               quantity: 1,
               sort_order: 0,
             },
@@ -255,6 +262,8 @@ export async function POST(request: Request, context: RouteContext) {
         activeProposal.initiatives
           .filter((initiative) => initiative.status === targetStatus)
           .reduce((max, initiative) => Math.max(max, Number(initiative.sortOrder ?? -1)), -1) + 1;
+      // Propuestas de paquetes: cada tarea cuesta un 15% más que el valor base del catálogo.
+      const usesPackagePricing = activeProposal.billingMode !== "subscription";
       const nextInitiative = {
         id: createLocalId("sales-initiative"),
         title: input.title.trim(),
@@ -276,7 +285,7 @@ export async function POST(request: Request, context: RouteContext) {
               name: item.label,
               status: "pending" as const,
               targetDate: "",
-              unitCredits: Number(item.credits ?? 0),
+              unitCredits: getClientCatalogCredits(Number(item.credits ?? 0), usesPackagePricing),
               quantity: 1,
             }))
           : [
@@ -286,7 +295,10 @@ export async function POST(request: Request, context: RouteContext) {
                 name: input.title.trim(),
                 status: "pending" as const,
                 targetDate: "",
-                unitCredits: Math.max(1, Number(input.fallbackCredits ?? 0)),
+                unitCredits: getClientCatalogCredits(
+                  Math.max(1, Number(input.fallbackCredits ?? 0)),
+                  usesPackagePricing,
+                ),
                 quantity: 1,
               },
             ],
@@ -392,13 +404,14 @@ export async function POST(request: Request, context: RouteContext) {
       const orderedItems = typedMembershipRows
         .map((membership) => activeItemsById.get(membership.catalog_item_id))
         .filter((item): item is CatalogItemRecord => Boolean(item));
+      const groupCredits = Number(groupRecord.credits ?? 0);
 
       const createdInitiative = await createInitiativeWithItems({
         title: body.title.trim(),
         description: body.description?.trim() || groupRecord.description || null,
         type: groupRecord.name,
         items: orderedItems,
-        fallbackCredits: Number(groupRecord.credits ?? 0),
+        fallbackCredits: groupCredits,
       });
 
       return NextResponse.json({
