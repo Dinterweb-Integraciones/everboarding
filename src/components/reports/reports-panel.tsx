@@ -29,7 +29,11 @@ import {
   type CreditBreakdownKey,
   type CreditHistoryReportRow,
 } from "@/lib/credit-history-report";
-import { formatMonthLabel, type MonthlyGoalProgress } from "@/lib/cs-monthly-goals";
+import {
+  formatMonthLabel,
+  getExpectedMonthRatio,
+  type MonthlyGoalProgress,
+} from "@/lib/cs-monthly-goals";
 import { getEvaluationValidationLabel } from "@/lib/onboarding";
 import type { Views } from "@/types/database";
 import {
@@ -1734,6 +1738,7 @@ function GoalProgressBar({
   emphasis = false,
   showCredits = false,
   isOwn = false,
+  expectedRatio = 0,
 }: {
   label: string;
   // Null cuando no se envían (barras de otros CS en la vista de un CS).
@@ -1746,6 +1751,8 @@ function GoalProgressBar({
   showCredits?: boolean;
   // Barra del propio CS en su vista: se resalta.
   isOwn?: boolean;
+  // Avance que debería llevar según los días transcurridos del mes; se pinta como barra tenue detrás.
+  expectedRatio?: number;
 }) {
   const barHeight = emphasis ? "h-10" : "h-8";
   const hasGoal = percentage !== null;
@@ -1755,6 +1762,14 @@ function GoalProgressBar({
   const fillPct = Math.min(ratio, 1) * 100;
   // Con poco avance el porcentaje no cabe dentro del relleno; se muestra justo a su derecha.
   const labelInside = fillPct >= 12;
+  const showExpected = expectedRatio > 0;
+  const expectedPercentage = Math.round(expectedRatio * 100);
+  const expectedFillPct = Math.min(expectedPercentage, 100);
+  // Créditos que debería llevar a la fecha; sin meta enviada solo se conoce el porcentaje.
+  const expectedTitle =
+    goalCredits !== null
+      ? `A la fecha debería llevar ${formatNumber(Math.round(goalCredits * expectedRatio))} CR`
+      : `A la fecha debería ir en ${expectedPercentage}%`;
 
   return (
     <div>
@@ -1794,11 +1809,20 @@ function GoalProgressBar({
               : "Sin meta"}
         </span>
       </div>
-      <div className={`relative mt-2 overflow-hidden rounded-full bg-[#edf3f7] ${barHeight}`}>
+      <div
+        className={`relative mt-2 overflow-hidden rounded-full bg-[#edf3f7] ${barHeight}`}
+        title={hasGoal && showExpected ? expectedTitle : undefined}
+      >
         {hasGoal ? (
           <>
+            {showExpected ? (
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-sky-300"
+                style={{ width: `${expectedFillPct}%` }}
+              />
+            ) : null}
             <div
-              className={`h-full rounded-full ${ratio >= 1 ? "bg-emerald-500" : "bg-orange-400"}`}
+              className={`relative h-full rounded-full ${ratio >= 1 ? "bg-emerald-500" : "bg-orange-400"}`}
               style={{ width: `${fillPct}%` }}
             />
             <span
@@ -1814,6 +1838,20 @@ function GoalProgressBar({
           </>
         ) : null}
       </div>
+      {hasGoal && showExpected ? (
+        // Leyenda del avance esperado bajo su marca; cerca del inicio se alinea a la izquierda para no salirse.
+        <div className="relative mt-1 h-4">
+          <span
+            className={`absolute whitespace-nowrap text-xs font-black text-sky-700 ${
+              expectedFillPct >= 8 ? "-translate-x-full" : ""
+            }`}
+            style={{ left: `${expectedFillPct}%` }}
+            title={expectedTitle}
+          >
+            {expectedPercentage}%
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1845,6 +1883,7 @@ function MonthlyGoalReport({
     ? selected.customerSuccess.filter((entry) => entry.csId === selectedCsId)
     : selected.customerSuccess;
   const ownCsId = isCustomerSuccess ? selected.customerSuccess[0]?.csId : undefined;
+  const expectedRatio = getExpectedMonthRatio(selected.month);
 
   return (
     <article className="overflow-hidden rounded-[6px] border border-[#dfe3eb] border-t-4 border-t-orange-400 bg-white shadow-sm">
@@ -1860,6 +1899,9 @@ function MonthlyGoalReport({
               clientes de paquetes.
               Todos los CS suma lo completado por todos sobre la suma de sus metas. Los casos cuentan
               para el CS asignado hoy al cliente. La barra se pone verde al alcanzar la meta.
+              La barra azul marca el avance que debería llevar a la fecha: su meta por los días
+              transcurridos del mes sobre los días del mes. En créditos cada CS espera una cantidad
+              distinta, pero como porcentaje de su meta es el mismo para todos.
             </InfoTooltip>
           </div>
           <p className="mt-1 text-xs font-semibold text-[#516f90]">
@@ -1912,6 +1954,7 @@ function MonthlyGoalReport({
                 ? Math.round((selected.overall.completedCredits / selected.overall.goalCredits) * 100)
                 : null
             }
+            expectedRatio={expectedRatio}
             emphasis
           />
         )}
@@ -1928,6 +1971,7 @@ function MonthlyGoalReport({
                 showCredits={isCustomerSuccess || isFiltered}
                 // En la vista del CS su propia barra llega primero.
                 isOwn={entry.csId === ownCsId}
+                expectedRatio={expectedRatio}
               />
             ))
           ) : (

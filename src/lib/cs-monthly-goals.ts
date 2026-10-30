@@ -41,6 +41,18 @@ export function getCurrentMonthKey() {
   return new Date().toISOString().slice(0, 7);
 }
 
+// Fracción de la meta que debería llevar un CS según los días transcurridos del mes: 1 en meses
+// pasados, 0 en futuros y en el mes actual el día de hoy sobre los días del mes.
+export function getExpectedMonthRatio(monthKey: string, now = new Date()) {
+  const currentMonthKey = now.toISOString().slice(0, 7);
+  if (monthKey < currentMonthKey) return 1;
+  if (monthKey > currentMonthKey) return 0;
+
+  const [year, month] = monthKey.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return now.getUTCDate() / daysInMonth;
+}
+
 export function monthKeyToDate(monthKey: string) {
   return `${monthKey}-01`;
 }

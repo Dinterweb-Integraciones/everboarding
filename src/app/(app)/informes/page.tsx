@@ -162,6 +162,29 @@ function splitIntoReportBatches<T>(values: T[]) {
   return batches;
 }
 
+// PostgREST devuelve como máximo 1000 filas por consulta y descarta el resto sin avisar. Las tablas
+// que pueden pasar ese tope se leen por páginas; la consulta debe ordenar por una columna única
+// para que ninguna fila se repita ni se pierda entre páginas.
+const REPORT_PAGE_SIZE = 1000;
+
+async function fetchAllReportPages<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+) {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += REPORT_PAGE_SIZE) {
+    const { data, error } = await fetchPage(from, from + REPORT_PAGE_SIZE - 1);
+    if (error) {
+      return { data: null, error };
+    }
+
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < REPORT_PAGE_SIZE) {
+      return { data: rows, error: null };
+    }
+  }
+}
+
 function getElapsedCalendarDays(value: string | null) {
   if (!value) {
     return null;
@@ -449,15 +472,23 @@ export default async function ReportsPage() {
   }
 
   const { data: initiativeRows, error: initiativesError } = clientIds.length
-    ? await admin
-        .from("onboarding_initiatives")
-        .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
-        .in("client_id", clientIds)
+    ? await fetchAllReportPages((from, to) =>
+        admin
+          .from("onboarding_initiatives")
+          .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
+          .in("client_id", clientIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
     : { data: [] as InitiativeSourceRow[], error: null };
 
-  const { data: catalogGroupRows, error: catalogGroupsError } = await admin
-    .from("credit_catalog_groups")
-    .select("name, credits");
+  const { data: catalogGroupRows, error: catalogGroupsError } = await fetchAllReportPages((from, to) =>
+    admin
+      .from("credit_catalog_groups")
+      .select("name, credits")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
     ? await admin
@@ -470,11 +501,14 @@ export default async function ReportsPage() {
   const initiativeIdBatches = splitIntoReportBatches(initiativeIds);
   const initiativeActivityLogResults = await Promise.all(
     initiativeIdBatches.map((idBatch) =>
-      admin
-        .from("onboarding_activity_logs")
-        .select("initiative_id, entry, created_at")
-        .in("initiative_id", idBatch)
-        .order("created_at", { ascending: true }),
+      fetchAllReportPages((from, to) =>
+        admin
+          .from("onboarding_activity_logs")
+          .select("initiative_id, entry, created_at")
+          .in("initiative_id", idBatch)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ),
   );
   const initiativeActivityLogsError =
@@ -485,10 +519,14 @@ export default async function ReportsPage() {
 
   const initiativeSubitemResults = await Promise.all(
     initiativeIdBatches.map((idBatch) =>
-      admin
-        .from("onboarding_initiative_subitems")
-        .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
-        .in("initiative_id", idBatch),
+      fetchAllReportPages((from, to) =>
+        admin
+          .from("onboarding_initiative_subitems")
+          .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
+          .in("initiative_id", idBatch)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ),
   );
   const initiativeSubitemsError =
@@ -703,7 +741,8 @@ export default async function ReportsPage() {
     const executingLog = activityLogs.find((log) =>
       normalizeInitiativeTitle(log.entry).includes("cambio a en ejecucion"),
     );
-    const completedLog = activityLogs.find((log) =>
+    // Si el caso se reabrió y se volvió a completar, cuenta la última vez que se completó.
+    const completedLog = activityLogs.findLast((log) =>
       normalizeInitiativeTitle(log.entry).includes("cambio a completado"),
     );
     // Última vez que el caso pasó a su etapa actual (Planificado / En ejecución); sin registro
@@ -726,9 +765,12 @@ export default async function ReportsPage() {
         (initiative.status === "executing" || initiative.status === "completed"
           ? initiative.created_at
           : null),
+      // Sin registro del cambio, el caso se creó directamente como completado. No se usa
+      // updated_at: cambia con cualquier edición (p. ej. reordenar el tablero) y movería el
+      // caso al mes en curso.
       completed_at:
         completedLog?.created_at ??
-        (initiative.status === "completed" ? initiative.updated_at : null),
+        (initiative.status === "completed" ? initiative.created_at : null),
       credits: creditsByInitiative.get(initiative.id) ?? 0,
     };
   }) satisfies InitiativeReportRow[];
