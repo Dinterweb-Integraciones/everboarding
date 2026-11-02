@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { ReportsPanel } from "@/components/reports/reports-panel";
@@ -11,6 +12,7 @@ import {
 } from "@/lib/cs-monthly-goals";
 import { fetchUserMemberships } from "@/lib/membership-access";
 import { getBaseUnitCredits, normalizeInitiativeTitle } from "@/lib/onboarding";
+import { REPORTS_CACHE_TAG } from "@/lib/reports-cache";
 import { normalizeSalesProposalDraft } from "@/lib/sales-proposals";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Views } from "@/types/database";
@@ -102,6 +104,7 @@ type UnassignedPaidProposalRow = {
   client_name: string;
   client_company: string | null;
   paid_at: string | null;
+  assigned_csm_user_id: string | null;
 };
 
 type ActivatedProposalRow = {
@@ -259,77 +262,66 @@ function getInitiativeTaskCreditKey(clientId: string, initiativeTitle: string, t
   return `${getInitiativeCreditKey(clientId, initiativeTitle)}:${normalizeInitiativeTitle(taskName)}`;
 }
 
-export default async function ReportsPage() {
-  const { supabase, user, platformProfile } = await requireUser("/informes");
-  const platformRole = platformProfile?.platform_role ?? null;
-  const isCsm = platformRole === "csm";
+// Las consultas del informe se guardan en la caché de datos de Next por unos minutos para no
+// repetirlas en cada visita. La caché admite como máximo 2MB por entrada, por eso se guarda en dos
+// partes y de las iniciativas solo el resultado ya procesado, sin historial ni snapshots crudos.
+// Los datos son los de todos los clientes; lo que depende del usuario se filtra en la página.
+const REPORTS_CACHE_REVALIDATE_SECONDS = 300;
 
-  if (platformRole !== "admin" && platformRole !== "superadmin" && !isCsm) {
-    redirect("/dashboard");
-  }
-
-  const { data: membershipRows, error: membershipError } = isCsm
-    ? await fetchUserMemberships(supabase, user.id)
-    : { data: [], error: null };
-
-  if (membershipError) {
-    console.error("informes_memberships_load_failed", membershipError);
-  }
-
-  const membershipRecords = ((membershipError ? [] : membershipRows) ?? []) as Array<{
-    client_id: string;
-    access_role: "viewer" | "editor" | "owner";
-    profile_role: "sales" | "csm" | "client" | "stakeholder";
-  }>;
-
+async function loadReportBase(goalRangeStart: string, goalRangeEnd: string) {
   const admin = createSupabaseAdminClient();
-  const { data: customerSuccessProfileRows, error: customerSuccessProfilesError } = await admin
-    .from("profiles")
-    .select("id, full_name, email, platform_role")
-    .in("platform_role", ["csm", "admin", "superadmin"])
-    .order("full_name", { ascending: true });
+  const [
+    { data: customerSuccessProfileRows, error: customerSuccessProfilesError },
+    { data: clientRecords, error: clientsError },
+    { data: unassignedPaidProposalRows, error: unassignedPaidProposalsError },
+    { data: monthlyGoalRows, error: monthlyGoalsError },
+  ] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("id, full_name, email, platform_role")
+      .in("platform_role", ["csm", "admin", "superadmin"])
+      .order("full_name", { ascending: true }),
+    // Se cargan también los clientes inactivos: el informe de Operaciones los sigue
+    // mostrando mientras tengan créditos disponibles o comprometidos. El resto de
+    // paneles recibe solo clientes activos.
+    admin.from("clients").select("id, created_at, csm_user_id, is_active, observations"),
+    // Se cargan las de todos los CS; a un Customer Success la página le deja solo las suyas.
+    admin
+      .from("sales_proposals")
+      .select("id, client_name, client_company, paid_at, assigned_csm_user_id")
+      .eq("status", "paid")
+      .is("activated_client_id", null)
+      .not("paid_at", "is", null)
+      .order("paid_at", { ascending: true }),
+    // customer_success_monthly_goals no está en database.ts (ver límite de complejidad de tipos).
+    admin
+      .from("customer_success_monthly_goals" as never)
+      .select("customer_success_id, month, goal_credits")
+      .gte("month", goalRangeStart)
+      .lte("month", goalRangeEnd) as unknown as PromiseLike<{
+      data: MonthlyGoalRow[] | null;
+      error: Error | null;
+    }>,
+  ]);
 
   if (customerSuccessProfilesError) {
     throw new Error("No pudimos cargar los perfiles de Customer Success.");
   }
 
-  // Se cargan también los clientes inactivos: el informe de Operaciones los sigue
-  // mostrando mientras tengan créditos disponibles o comprometidos. El resto de
-  // paneles recibe solo clientes activos.
-  const { data: clientRecords, error: clientsError } = await admin
-    .from("clients")
-    .select("id, created_at, csm_user_id, is_active, observations");
-
   if (clientsError) {
     throw new Error("No pudimos cargar los clientes para informes.");
   }
 
+  if (unassignedPaidProposalsError) {
+    throw new Error("No pudimos cargar los clientes pagados pendientes de asignación.");
+  }
+
+  if (monthlyGoalsError) {
+    throw new Error("No pudimos cargar las metas mensuales de Customer Success.");
+  }
+
   const allClients = (clientRecords ?? []) as unknown as ClientMilestoneRow[];
-  // Los datos se calculan sobre todos los clientes para obtener el progreso global de casos de
-  // uso; a un Customer Success solo se le envían sus clientes (más ese total ya resumido).
-  const reportClients = allClients;
-  const visibleClientIds = new Set(
-    (isCsm
-      ? allClients.filter(
-          (client) =>
-            client.csm_user_id === user.id ||
-            membershipRecords.some(
-              (membership) => membership.client_id === client.id && membership.profile_role === "csm",
-            ),
-        )
-      : allClients
-    ).map((client) => client.id),
-  );
-  const reportClientIds = reportClients.map((client) => client.id);
-  const activeClientIds = new Set(
-    reportClients.filter((client) => client.is_active).map((client) => client.id),
-  );
-  const clientCreatedAtByClientId = new Map(
-    reportClients.map((client) => [client.id, client.created_at]),
-  );
-  const observationsByClientId = new Map(
-    reportClients.map((client) => [client.id, client.observations?.trim() || null]),
-  );
+  const reportClientIds = allClients.map((client) => client.id);
 
   // El saldo de los paquetes (used_credits de cada grant) solo se recalcula al ejecutar
   // expire_unused_client_credits, como hace el tablero al abrirse. Sin esto, los casos
@@ -355,108 +347,82 @@ export default async function ReportsPage() {
   }
 
   const clientRows = (data ?? []) as Views<"client_health_report">[];
-  const assignedCustomerSuccessIds = new Set(
-    clientRows.flatMap((row) => (row.customer_success_id ? [row.customer_success_id] : [])),
-  );
-  const customerSuccessProfiles = isCsm
-    ? ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
-        (profile) => profile.id === user.id,
-      )
-    : ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
-        (profile) =>
-          profile.platform_role === "csm" ||
-          ((profile.platform_role === "admin" || profile.platform_role === "superadmin") &&
-            assignedCustomerSuccessIds.has(profile.id)),
-      );
   const clientIds = clientRows.map((row) => row.client_id);
-  const { data: paidBillingCycleRows, error: paidBillingCyclesError } = clientIds.length
-    ? await admin
-        .from("client_billing_cycles")
-        .select("client_id, paid_at, cycle_start_date, cycle_end_date")
-        .in("client_id", clientIds)
-        .eq("status", "paid")
-        .not("paid_at", "is", null)
-        .order("paid_at", { ascending: true })
-    : { data: [] as PaidBillingCycleRow[], error: null };
+  const [
+    { data: paidBillingCycleRows, error: paidBillingCyclesError },
+    { data: activatedProposalRows, error: activatedProposalsError },
+    { data: cycleColorRows, error: cycleColorsError },
+    { data: northStarHistoryRows, error: northStarHistoryError },
+    { data: customerSuccessConfigRows, error: customerSuccessConfigError },
+    { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError },
+  ] = await Promise.all([
+    clientIds.length
+      ? admin
+          .from("client_billing_cycles")
+          .select("client_id, paid_at, cycle_start_date, cycle_end_date")
+          .in("client_id", clientIds)
+          .eq("status", "paid")
+          .not("paid_at", "is", null)
+          .order("paid_at", { ascending: true })
+      : { data: [] as PaidBillingCycleRow[], error: null },
+    clientIds.length
+      ? admin
+          .from("sales_proposals")
+          .select("id, activated_client_id, activated_at")
+          .in("activated_client_id", clientIds)
+          .not("activated_at", "is", null)
+          .order("activated_at", { ascending: true })
+      : { data: [] as ActivatedProposalRow[], error: null },
+    // Semáforo del ciclo por columna (vista client_cycle_milestones_report). La vista no está en
+    // database.ts (ver límite de complejidad de tipos), por eso se lee con un cast.
+    clientIds.length
+      ? (admin
+          .from("client_cycle_milestones_report" as never)
+          .select("client_id, available_color, committed_color, evaluation_color")
+          .in("client_id", clientIds) as unknown as PromiseLike<{ data: CycleColorsRow[] | null; error: Error | null }>)
+      : { data: [] as CycleColorsRow[], error: null },
+    clientIds.length
+      ? admin
+          .from("onboarding_north_star_history")
+          .select("id, client_id, north_star_text, north_star_status, north_star_lifecycle_status, created_at")
+          .in("client_id", clientIds)
+      : { data: [] as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>, error: null },
+    clientIds.length
+      ? admin
+          .from("onboarding_configs")
+          .select("client_id, base_capacity, custom_plan_credits, custom_plan_period_months, flow_credits, north_star_text, north_star_status, north_star_lifecycle_status")
+          .in("client_id", clientIds)
+      : { data: [] as CustomerSuccessConfigRow[], error: null },
+    clientIds.length
+      ? admin
+          .from("client_credit_grants")
+          .select("client_id, granted_credits, used_credits, expired_credits, grant_date, expires_at")
+          .in("client_id", clientIds)
+      : { data: [] as CustomerSuccessCreditGrantRow[], error: null },
+  ]);
 
   if (paidBillingCyclesError) {
     throw new Error("No pudimos cargar las fechas de pago para el informe operativo.");
   }
 
-  const { data: activatedProposalRows, error: activatedProposalsError } = clientIds.length
-    ? await admin
-        .from("sales_proposals")
-        .select("id, activated_client_id, activated_at")
-        .in("activated_client_id", clientIds)
-        .not("activated_at", "is", null)
-        .order("activated_at", { ascending: true })
-    : { data: [] as ActivatedProposalRow[], error: null };
-
   if (activatedProposalsError) {
     throw new Error("No pudimos cargar las fechas de activación para el informe operativo.");
   }
-
-  // Semáforo del ciclo por columna (vista client_cycle_milestones_report). La vista no está en
-  // database.ts (ver límite de complejidad de tipos), por eso se lee con un cast.
-  const { data: cycleColorRows, error: cycleColorsError } = clientIds.length
-    ? ((await admin
-        .from("client_cycle_milestones_report" as never)
-        .select("client_id, available_color, committed_color, evaluation_color")
-        .in("client_id", clientIds)) as unknown as { data: CycleColorsRow[] | null; error: Error | null })
-    : { data: [] as CycleColorsRow[], error: null };
 
   if (cycleColorsError) {
     throw new Error("No pudimos cargar el semáforo del ciclo.");
   }
 
-  const cycleColorsByClientId = new Map<string, CycleColumnColors>(
-    (cycleColorRows ?? []).map((row) => [
-      row.client_id,
-      { available: row.available_color, committed: row.committed_color, evaluation: row.evaluation_color },
-    ]),
-  );
-
-  const activatedProposalIds = (activatedProposalRows ?? []).map((proposal) => proposal.id);
-  const { data: proposalSnapshotRows, error: proposalSnapshotsError } = activatedProposalIds.length
-    ? await admin
-        .from("sales_proposal_snapshots")
-        .select("proposal_id, snapshot")
-        .in("proposal_id", activatedProposalIds)
-    : { data: [] as ProposalSnapshotRow[], error: null };
-
-  if (proposalSnapshotsError) {
-    throw new Error("No pudimos cargar los valores originales de las propuestas.");
-  }
-
-  let unassignedPaidProposalsQuery = admin
-    .from("sales_proposals")
-    .select("id, client_name, client_company, paid_at")
-    .eq("status", "paid")
-    .is("activated_client_id", null)
-    .not("paid_at", "is", null);
-
-  if (isCsm) {
-    unassignedPaidProposalsQuery = unassignedPaidProposalsQuery.eq("assigned_csm_user_id", user.id);
-  }
-
-  const { data: unassignedPaidProposalRows, error: unassignedPaidProposalsError } = await unassignedPaidProposalsQuery.order(
-    "paid_at",
-    { ascending: true },
-  );
-
-  if (unassignedPaidProposalsError) {
-    throw new Error("No pudimos cargar los clientes pagados pendientes de asignación.");
-  }
-
-  const { data: northStarHistoryRows, error: northStarHistoryError } = clientIds.length
-    ? await admin
-        .from("onboarding_north_star_history")
-        .select("id, client_id, north_star_text, north_star_status, north_star_lifecycle_status, created_at")
-        .in("client_id", clientIds)
-    : { data: [] as Array<{ id: string; client_id: string; north_star_text: string; north_star_status: "pending" | "cs_preapproved" | "client_approved" | "completed"; north_star_lifecycle_status: "active" | "inactive" | "fulfilled"; created_at: string }>, error: null };
-
   if (northStarHistoryError) {
     throw new Error("No pudimos cargar el conteo de nortes.");
+  }
+
+  if (customerSuccessConfigError) {
+    throw new Error("No pudimos cargar la capacidad de Customer Success.");
+  }
+
+  if (customerSuccessCreditGrantError) {
+    throw new Error("No pudimos cargar los créditos vigentes de Customer Success.");
   }
 
   const northHistoryIds = (northStarHistoryRows ?? []).map((row) => row.id);
@@ -471,154 +437,129 @@ export default async function ReportsPage() {
     throw new Error("No pudimos cargar la auditoría de Nortes.");
   }
 
-  const { data: initiativeRows, error: initiativesError } = clientIds.length
-    ? await fetchAllReportPages((from, to) =>
-        admin
-          .from("onboarding_initiatives")
-          .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
-          .in("client_id", clientIds)
-          .order("id", { ascending: true })
-          .range(from, to),
-      )
-    : { data: [] as InitiativeSourceRow[], error: null };
+  return {
+    customerSuccessProfileRows: (customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[],
+    clientRecords: allClients,
+    clientRows,
+    unassignedPaidProposalRows: (unassignedPaidProposalRows ?? []) as UnassignedPaidProposalRow[],
+    monthlyGoalRows: monthlyGoalRows ?? [],
+    paidBillingCycleRows: (paidBillingCycleRows ?? []) as PaidBillingCycleRow[],
+    activatedProposalRows: (activatedProposalRows ?? []) as ActivatedProposalRow[],
+    cycleColorRows: (cycleColorRows ?? []) as CycleColorsRow[],
+    northStarHistoryRows: northStarHistoryRows ?? [],
+    northAuditRows: (northAuditRows ?? []) as Array<Record<string, unknown>>,
+    customerSuccessConfigRows: (customerSuccessConfigRows ?? []) as CustomerSuccessConfigRow[],
+    customerSuccessCreditGrantRows: (customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[],
+    loadedAt: new Date().toISOString(),
+  };
+}
 
-  const { data: catalogGroupRows, error: catalogGroupsError } = await fetchAllReportPages((from, to) =>
-    admin
-      .from("credit_catalog_groups")
-      .select("name, credits")
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
-
-  const { data: customerSuccessConfigRows, error: customerSuccessConfigError } = clientIds.length
-    ? await admin
-        .from("onboarding_configs")
-        .select("client_id, base_capacity, custom_plan_credits, custom_plan_period_months, flow_credits, north_star_text, north_star_status, north_star_lifecycle_status")
-        .in("client_id", clientIds)
-    : { data: [] as CustomerSuccessConfigRow[], error: null };
-
-  const initiativeIds = (initiativeRows ?? []).map((initiative) => initiative.id);
-  const initiativeIdBatches = splitIntoReportBatches(initiativeIds);
-  const initiativeActivityLogResults = await Promise.all(
-    initiativeIdBatches.map((idBatch) =>
-      fetchAllReportPages((from, to) =>
-        admin
-          .from("onboarding_activity_logs")
-          .select("initiative_id, entry, created_at")
-          .in("initiative_id", idBatch)
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
+async function loadReportInitiatives(clientIds: string[], activatedProposalRows: ActivatedProposalRow[]) {
+  const admin = createSupabaseAdminClient();
+  const activatedProposalIds = activatedProposalRows.map((proposal) => proposal.id);
+  const [
+    { data: initiativeRows, error: initiativesError },
+    { data: catalogGroupRows, error: catalogGroupsError },
+    { data: proposalSnapshotRows, error: proposalSnapshotsError },
+  ] = await Promise.all([
+    clientIds.length
+      ? fetchAllReportPages((from, to) =>
+          admin
+            .from("onboarding_initiatives")
+            .select("id, client_id, title, type, labels, status, north_star_history_id, created_at, updated_at")
+            .in("client_id", clientIds)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
+      : { data: [] as InitiativeSourceRow[], error: null },
+    fetchAllReportPages((from, to) =>
+      admin
+        .from("credit_catalog_groups")
+        .select("name, credits")
+        .order("id", { ascending: true })
+        .range(from, to),
     ),
-  );
-  const initiativeActivityLogsError =
-    initiativeActivityLogResults.find((result) => result.error)?.error ?? null;
-  const initiativeActivityLogRows = initiativeActivityLogResults
-    .flatMap((result) => (result.data ?? []) as InitiativeActivityLogRow[])
-    .sort((left, right) => left.created_at.localeCompare(right.created_at));
-
-  const initiativeSubitemResults = await Promise.all(
-    initiativeIdBatches.map((idBatch) =>
-      fetchAllReportPages((from, to) =>
-        admin
-          .from("onboarding_initiative_subitems")
-          .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
-          .in("initiative_id", idBatch)
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-    ),
-  );
-  const initiativeSubitemsError =
-    initiativeSubitemResults.find((result) => result.error)?.error ?? null;
-  const initiativeSubitemRows = initiativeSubitemResults.flatMap(
-    (result) => (result.data ?? []) as InitiativeSubitemReportRow[],
-  );
-
-  const catalogItemIds = [
-    ...new Set((initiativeSubitemRows ?? []).map((subitem) => subitem.catalog_item_id).filter((id): id is string => Boolean(id))),
-  ];
-  const catalogItemResults = await Promise.all(
-    splitIntoReportBatches(catalogItemIds).map((idBatch) =>
-      admin.from("credit_catalog_items").select("id, credits").in("id", idBatch),
-    ),
-  );
-  const catalogItemsError = catalogItemResults.find((result) => result.error)?.error ?? null;
-  const catalogItemRows = catalogItemResults.flatMap(
-    (result) => (result.data ?? []) as Array<{ id: string; credits: number }>,
-  );
-
-  const { data: customerSuccessCreditGrantRows, error: customerSuccessCreditGrantError } = clientIds.length
-    ? await admin
-        .from("client_credit_grants")
-        .select("client_id, granted_credits, used_credits, expired_credits, grant_date, expires_at")
-        .in("client_id", clientIds)
-    : { data: [] as CustomerSuccessCreditGrantRow[], error: null };
+    activatedProposalIds.length
+      ? admin
+          .from("sales_proposal_snapshots")
+          .select("proposal_id, snapshot")
+          .in("proposal_id", activatedProposalIds)
+      : { data: [] as ProposalSnapshotRow[], error: null },
+  ]);
 
   if (initiativesError) {
     throw new Error("No pudimos cargar las iniciativas para informes.");
-  }
-
-  if (initiativeSubitemsError) {
-    throw new Error("No pudimos cargar los créditos de las iniciativas.");
-  }
-
-  if (catalogItemsError) {
-    throw new Error("No pudimos cargar el catálogo de créditos.");
   }
 
   if (catalogGroupsError) {
     throw new Error("No pudimos cargar el catálogo de casos de uso.");
   }
 
-  if (initiativeActivityLogsError) {
+  if (proposalSnapshotsError) {
+    throw new Error("No pudimos cargar los valores originales de las propuestas.");
+  }
+
+  const initiativeIds = (initiativeRows ?? []).map((initiative) => initiative.id);
+  const initiativeIdBatches = splitIntoReportBatches(initiativeIds);
+  const [initiativeActivityLogResults, initiativeSubitemResults] = await Promise.all([
+    Promise.all(
+      initiativeIdBatches.map((idBatch) =>
+        fetchAllReportPages((from, to) =>
+          admin
+            .from("onboarding_activity_logs")
+            .select("initiative_id, entry, created_at")
+            .in("initiative_id", idBatch)
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
+      ),
+    ),
+    Promise.all(
+      initiativeIdBatches.map((idBatch) =>
+        fetchAllReportPages((from, to) =>
+          admin
+            .from("onboarding_initiative_subitems")
+            .select("id, initiative_id, catalog_item_id, name, status, target_date, unit_credits, quantity, created_at, updated_at")
+            .in("initiative_id", idBatch)
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
+      ),
+    ),
+  ]);
+
+  if (initiativeActivityLogResults.some((result) => result.error)) {
     throw new Error("No pudimos cargar el historial de estados de las iniciativas.");
   }
 
-  if (customerSuccessConfigError) {
-    throw new Error("No pudimos cargar la capacidad de Customer Success.");
+  if (initiativeSubitemResults.some((result) => result.error)) {
+    throw new Error("No pudimos cargar los créditos de las iniciativas.");
   }
 
-  if (customerSuccessCreditGrantError) {
-    throw new Error("No pudimos cargar los créditos vigentes de Customer Success.");
+  const initiativeActivityLogRows = initiativeActivityLogResults
+    .flatMap((result) => (result.data ?? []) as InitiativeActivityLogRow[])
+    .sort((left, right) => left.created_at.localeCompare(right.created_at));
+  const initiativeSubitemRows = initiativeSubitemResults.flatMap(
+    (result) => (result.data ?? []) as InitiativeSubitemReportRow[],
+  );
+
+  const catalogItemIds = [
+    ...new Set(initiativeSubitemRows.map((subitem) => subitem.catalog_item_id).filter((id): id is string => Boolean(id))),
+  ];
+  const catalogItemResults = await Promise.all(
+    splitIntoReportBatches(catalogItemIds).map((idBatch) =>
+      admin.from("credit_catalog_items").select("id, credits").in("id", idBatch),
+    ),
+  );
+
+  if (catalogItemResults.some((result) => result.error)) {
+    throw new Error("No pudimos cargar el catálogo de créditos.");
   }
 
-  const northStarCounts = new Map<string, number>();
-  const firstPaidDates = new Map<string, string>();
-  const latestPaidCycleStarts = new Map<string, string>();
-  const latestPaidCycleEnds = new Map<string, string>();
-  const assignedDates = new Map<string, string>();
-  const kickoffCompletedDates = new Map<string, string>();
-  const firstUseCaseCompletedDates = new Map<string, string>();
-  const stagnantStageDays = new Map<string, number>();
-  const evaluationCasesCounts = new Map<string, number>();
-  const validatedEvaluationCasesCounts = new Map<string, number>();
+  const catalogItemRows = catalogItemResults.flatMap(
+    (result) => (result.data ?? []) as Array<{ id: string; credits: number }>,
+  );
   const creditsByInitiative = new Map<string, number>();
-  const todayIsoDate = isoDateDaysAgo(0);
-  ((paidBillingCycleRows ?? []) as PaidBillingCycleRow[]).forEach((cycle) => {
-    if (!firstPaidDates.has(cycle.client_id)) {
-      firstPaidDates.set(cycle.client_id, cycle.paid_at);
-    }
-
-    // Un ciclo pagado por adelantado que aún no empieza no es el ciclo actual.
-    if (cycle.cycle_start_date > todayIsoDate) return;
-
-    const currentCycleEnd = latestPaidCycleEnds.get(cycle.client_id);
-    if (!currentCycleEnd || cycle.cycle_end_date > currentCycleEnd) {
-      latestPaidCycleStarts.set(cycle.client_id, cycle.cycle_start_date);
-      latestPaidCycleEnds.set(cycle.client_id, cycle.cycle_end_date);
-    }
-  });
-  ((activatedProposalRows ?? []) as ActivatedProposalRow[]).forEach((proposal) => {
-    if (
-      proposal.activated_client_id &&
-      proposal.activated_at &&
-      !assignedDates.has(proposal.activated_client_id)
-    ) {
-      assignedDates.set(proposal.activated_client_id, proposal.activated_at);
-    }
-  });
-
   const activityLogsByInitiativeId = new Map<string, InitiativeActivityLogRow[]>();
   ((initiativeActivityLogRows ?? []) as InitiativeActivityLogRow[]).forEach((log) => {
     const currentLogs = activityLogsByInitiativeId.get(log.initiative_id) ?? [];
@@ -774,6 +715,153 @@ export default async function ReportsPage() {
       credits: creditsByInitiative.get(initiative.id) ?? 0,
     };
   }) satisfies InitiativeReportRow[];
+
+  return { initiatives, reportSubitems };
+}
+
+const getCachedReportBase = unstable_cache(loadReportBase, ["informes-report-base"], {
+  tags: [REPORTS_CACHE_TAG],
+  revalidate: REPORTS_CACHE_REVALIDATE_SECONDS,
+});
+
+const getCachedReportInitiatives = unstable_cache(loadReportInitiatives, ["informes-report-initiatives"], {
+  tags: [REPORTS_CACHE_TAG],
+  revalidate: REPORTS_CACHE_REVALIDATE_SECONDS,
+});
+
+export default async function ReportsPage() {
+  const { supabase, user, platformProfile } = await requireUser("/informes");
+  const platformRole = platformProfile?.platform_role ?? null;
+  const isCsm = platformRole === "csm";
+
+  if (platformRole !== "admin" && platformRole !== "superadmin" && !isCsm) {
+    redirect("/dashboard");
+  }
+
+  const { data: membershipRows, error: membershipError } = isCsm
+    ? await fetchUserMemberships(supabase, user.id)
+    : { data: [], error: null };
+
+  if (membershipError) {
+    console.error("informes_memberships_load_failed", membershipError);
+  }
+
+  const membershipRecords = ((membershipError ? [] : membershipRows) ?? []) as Array<{
+    client_id: string;
+    access_role: "viewer" | "editor" | "owner";
+    profile_role: "sales" | "csm" | "client" | "stakeholder";
+  }>;
+
+  // Progreso contra la meta mensual de cada CS, de los últimos 12 meses. Se calcula en el servidor
+  // con todos los clientes; a un Customer Success solo se le envía su propio avance.
+  const goalMonths = getRecentMonthKeys(12);
+  const reportBase = await getCachedReportBase(
+    monthKeyToDate(goalMonths[goalMonths.length - 1]),
+    monthKeyToDate(goalMonths[0]),
+  );
+  const {
+    customerSuccessProfileRows,
+    clientRecords,
+    clientRows,
+    monthlyGoalRows,
+    paidBillingCycleRows,
+    activatedProposalRows,
+    cycleColorRows,
+    northStarHistoryRows,
+    northAuditRows,
+    customerSuccessConfigRows,
+    customerSuccessCreditGrantRows,
+  } = reportBase;
+  const unassignedPaidProposalRows = isCsm
+    ? reportBase.unassignedPaidProposalRows.filter((proposal) => proposal.assigned_csm_user_id === user.id)
+    : reportBase.unassignedPaidProposalRows;
+  const { initiatives, reportSubitems } = await getCachedReportInitiatives(
+    clientRows.map((row) => row.client_id),
+    activatedProposalRows,
+  );
+
+  const allClients = (clientRecords ?? []) as unknown as ClientMilestoneRow[];
+  // Los datos se calculan sobre todos los clientes para obtener el progreso global de casos de
+  // uso; a un Customer Success solo se le envían sus clientes (más ese total ya resumido).
+  const reportClients = allClients;
+  const visibleClientIds = new Set(
+    (isCsm
+      ? allClients.filter(
+          (client) =>
+            client.csm_user_id === user.id ||
+            membershipRecords.some(
+              (membership) => membership.client_id === client.id && membership.profile_role === "csm",
+            ),
+        )
+      : allClients
+    ).map((client) => client.id),
+  );
+  const activeClientIds = new Set(
+    reportClients.filter((client) => client.is_active).map((client) => client.id),
+  );
+  const clientCreatedAtByClientId = new Map(
+    reportClients.map((client) => [client.id, client.created_at]),
+  );
+  const observationsByClientId = new Map(
+    reportClients.map((client) => [client.id, client.observations?.trim() || null]),
+  );
+
+  const assignedCustomerSuccessIds = new Set(
+    clientRows.flatMap((row) => (row.customer_success_id ? [row.customer_success_id] : [])),
+  );
+  const customerSuccessProfiles = isCsm
+    ? ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
+        (profile) => profile.id === user.id,
+      )
+    : ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).filter(
+        (profile) =>
+          profile.platform_role === "csm" ||
+          ((profile.platform_role === "admin" || profile.platform_role === "superadmin") &&
+            assignedCustomerSuccessIds.has(profile.id)),
+      );
+
+  const cycleColorsByClientId = new Map<string, CycleColumnColors>(
+    (cycleColorRows ?? []).map((row) => [
+      row.client_id,
+      { available: row.available_color, committed: row.committed_color, evaluation: row.evaluation_color },
+    ]),
+  );
+
+  const northStarCounts = new Map<string, number>();
+  const firstPaidDates = new Map<string, string>();
+  const latestPaidCycleStarts = new Map<string, string>();
+  const latestPaidCycleEnds = new Map<string, string>();
+  const assignedDates = new Map<string, string>();
+  const kickoffCompletedDates = new Map<string, string>();
+  const firstUseCaseCompletedDates = new Map<string, string>();
+  const stagnantStageDays = new Map<string, number>();
+  const evaluationCasesCounts = new Map<string, number>();
+  const validatedEvaluationCasesCounts = new Map<string, number>();
+  const todayIsoDate = isoDateDaysAgo(0);
+  ((paidBillingCycleRows ?? []) as PaidBillingCycleRow[]).forEach((cycle) => {
+    if (!firstPaidDates.has(cycle.client_id)) {
+      firstPaidDates.set(cycle.client_id, cycle.paid_at);
+    }
+
+    // Un ciclo pagado por adelantado que aún no empieza no es el ciclo actual.
+    if (cycle.cycle_start_date > todayIsoDate) return;
+
+    const currentCycleEnd = latestPaidCycleEnds.get(cycle.client_id);
+    if (!currentCycleEnd || cycle.cycle_end_date > currentCycleEnd) {
+      latestPaidCycleStarts.set(cycle.client_id, cycle.cycle_start_date);
+      latestPaidCycleEnds.set(cycle.client_id, cycle.cycle_end_date);
+    }
+  });
+  ((activatedProposalRows ?? []) as ActivatedProposalRow[]).forEach((proposal) => {
+    if (
+      proposal.activated_client_id &&
+      proposal.activated_at &&
+      !assignedDates.has(proposal.activated_client_id)
+    ) {
+      assignedDates.set(proposal.activated_client_id, proposal.activated_at);
+    }
+  });
+
   const completedInitiatives = initiatives.filter((initiative) => initiative.status === "completed");
 
   (northStarHistoryRows ?? []).forEach((row) => {
@@ -885,23 +973,6 @@ export default async function ReportsPage() {
   }) satisfies ClientHealthReportRow[];
   const allCreditGrants = (customerSuccessCreditGrantRows ?? []) as CustomerSuccessCreditGrantRow[];
 
-  // Progreso contra la meta mensual de cada CS, de los últimos 12 meses. Se calcula en el servidor
-  // con todos los clientes; a un Customer Success solo se le envía su propio avance.
-  const goalMonths = getRecentMonthKeys(12);
-  // customer_success_monthly_goals no está en database.ts (ver límite de complejidad de tipos).
-  const { data: monthlyGoalRows, error: monthlyGoalsError } = (await admin
-    .from("customer_success_monthly_goals" as never)
-    .select("customer_success_id, month, goal_credits")
-    .gte("month", monthKeyToDate(goalMonths[goalMonths.length - 1]))
-    .lte("month", monthKeyToDate(goalMonths[0]))) as unknown as {
-    data: MonthlyGoalRow[] | null;
-    error: Error | null;
-  };
-
-  if (monthlyGoalsError) {
-    throw new Error("No pudimos cargar las metas mensuales de Customer Success.");
-  }
-
   const customerSuccessNameById = new Map<string, string>();
   ((customerSuccessProfileRows ?? []) as CustomerSuccessPlatformProfileRow[]).forEach((profile) => {
     customerSuccessNameById.set(profile.id, profile.full_name || profile.email);
@@ -956,6 +1027,7 @@ export default async function ReportsPage() {
       canAuditNorths={!isCsm}
       isCustomerSuccess={isCsm}
       canEditObservations={platformRole === "superadmin"}
+      reportsLoadedAt={reportBase.loadedAt}
       rows={activeRows}
       initiatives={activeInitiatives}
       operationsRows={visibleRows}

@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   ArrowDownAZ,
@@ -16,6 +17,7 @@ import {
   MessageSquarePlus,
   MessageSquareText,
   Pencil,
+  RefreshCw,
   Search,
   Table2,
   Target,
@@ -35,6 +37,7 @@ import {
   type MonthlyGoalProgress,
 } from "@/lib/cs-monthly-goals";
 import { getEvaluationValidationLabel } from "@/lib/onboarding";
+import { formatDateTime } from "@/lib/utils";
 import type { Views } from "@/types/database";
 import {
   OperationalDashboard,
@@ -181,6 +184,37 @@ const panels: Array<{
   { key: "norths", label: "Nortes", title: "Nortes", description: "Auditoría, calidad y antigüedad de los Nortes." },
 ];
 
+// Paneles ocultos temporalmente para admin y superadmin. Customer Success sigue viendo Clientes.
+const HIDDEN_STAFF_PANEL_KEYS: PanelKey[] = ["clients", "customer_success"];
+const staffPanels = panels.filter((panel) => !HIDDEN_STAFF_PANEL_KEYS.includes(panel.key));
+
+function ReportsRefreshButton({ loadedAt }: { loadedAt: string }) {
+  const router = useRouter();
+  const [isRefreshing, startRefresh] = useTransition();
+
+  function refresh() {
+    startRefresh(async () => {
+      await fetch("/api/reports/refresh", { method: "POST" });
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#516f90]">
+      <span>Datos de {formatDateTime(loadedAt)}</span>
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={isRefreshing}
+        className="inline-flex items-center gap-1 rounded-[3px] px-2 py-1 font-black text-[#006b7a] transition hover:bg-[#e5f5f8] disabled:opacity-60"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+        {isRefreshing ? "Actualizando" : "Actualizar"}
+      </button>
+    </div>
+  );
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
 }
@@ -284,6 +318,7 @@ export function ReportsPanel({
   canAuditNorths = true,
   isCustomerSuccess = false,
   canEditObservations = false,
+  reportsLoadedAt,
 }: {
   // Solo clientes activos; alimenta todos los paneles salvo Operaciones.
   rows: ClientHealthReportRow[];
@@ -306,8 +341,10 @@ export function ReportsPanel({
   isCustomerSuccess?: boolean;
   // Solo superadmin edita las observaciones del cliente desde Operaciones.
   canEditObservations?: boolean;
+  // Momento en que se consultaron los datos; el servidor los guarda en caché unos minutos.
+  reportsLoadedAt: string;
 }) {
-  const [panelKeyState, setSelectedPanelKey] = useState<PanelKey>("clients");
+  const [panelKeyState, setSelectedPanelKey] = useState<PanelKey>(staffPanels[0].key);
   // Customer Success solo ve el panel de clientes.
   const selectedPanelKey: PanelKey = isCustomerSuccess ? "clients" : panelKeyState;
   const [searchTerm, setSearchTerm] = useState("");
@@ -389,11 +426,12 @@ export function ReportsPanel({
               Informes
             </p>
             <h1 className="mt-2 text-2xl font-black text-[#213343]">Paneles</h1>
+            <ReportsRefreshButton loadedAt={reportsLoadedAt} />
           </div>
 
           {isCustomerSuccess ? null : (
           <div className="inline-flex rounded-[4px] border border-[#cbd6e2] bg-white p-1" aria-label="Paneles de informes">
-            {[...panels]
+            {[...staffPanels]
               .sort((first, second) =>
                 first.key === "operational" ? 1 : second.key === "operational" ? -1 : 0,
               )

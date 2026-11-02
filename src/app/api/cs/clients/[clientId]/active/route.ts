@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
 import { canManageClientAsStaff, isClientStaffRole } from "@/lib/client-staff-access";
+import { invalidateReportsCache } from "@/lib/reports-cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 
@@ -50,6 +51,7 @@ export async function PUT(
       .single();
 
     if (updateError) throw updateError;
+    invalidateReportsCache();
 
     return NextResponse.json({
       ...updatedClient,

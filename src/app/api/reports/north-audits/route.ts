@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
+import { invalidateReportsCache } from "@/lib/reports-cache";
 import { formatUserError } from "@/lib/utils";
 
 export async function PATCH(request: Request) {
@@ -38,6 +39,7 @@ export async function PATCH(request: Request) {
       .select("*")
       .single();
     if (error) throw error;
+    invalidateReportsCache();
     return NextResponse.json(data);
   } catch (error) {
     return NextResponse.json({ message: formatUserError(error, "No pudimos guardar la auditoría.") }, { status: 500 });

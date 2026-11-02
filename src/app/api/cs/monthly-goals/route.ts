@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { isMonthKey, monthKeyToDate } from "@/lib/cs-monthly-goals";
 import { canAccessAdminCatalogs } from "@/lib/platform-access";
+import { invalidateReportsCache } from "@/lib/reports-cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
 
@@ -61,6 +62,7 @@ export async function PUT(request: Request) {
         .eq("month", month);
 
       if (error) throw error;
+      invalidateReportsCache();
 
       return NextResponse.json({ goalCredits: null, message: "Meta eliminada." });
     }
@@ -77,6 +79,7 @@ export async function PUT(request: Request) {
     );
 
     if (error) throw error;
+    invalidateReportsCache();
 
     return NextResponse.json({ goalCredits, message: "Meta guardada." });
   } catch (caughtError) {
