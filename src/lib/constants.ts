@@ -18,12 +18,18 @@ export const SALES_PROPOSAL_UPSELL_OPTIONS = [
 export const PUBLIC_EXTRA_CREDIT_PACKAGE = SALES_PROPOSAL_UPSELL_OPTIONS[0];
 export const EXTRA_CREDIT_PACKAGE_PURCHASE_KIND = "extra_capacity_package";
 
-export function resolveClientExpansionPackage(contractedCredits: number) {
+// Clientes que amplían con el paquete base (60 CR por USD 897) sin importar sus créditos contratados.
+const BASE_EXPANSION_PACKAGE_CLIENT_IDS = new Set(["928f9efc-9163-468d-a353-320d6febe480"]);
+
+export function resolveClientExpansionPackage(contractedCredits: number, clientId?: string | null) {
   const normalizedCredits = Number.isFinite(contractedCredits)
     ? Math.max(0, Math.round(contractedCredits))
     : 0;
 
-  if (normalizedCredits === SALES_PROPOSAL_BASE_CREDITS) {
+  if (
+    normalizedCredits === SALES_PROPOSAL_BASE_CREDITS ||
+    (clientId && BASE_EXPANSION_PACKAGE_CLIENT_IDS.has(clientId))
+  ) {
     return {
       credits: SALES_PROPOSAL_BASE_CREDITS,
       price: SALES_PROPOSAL_BASE_PRICE,

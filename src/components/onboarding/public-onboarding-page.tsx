@@ -623,7 +623,7 @@ export function PublicOnboardingPage({
       ? Math.max(0, Number(config.custom_plan_price))
       : getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
-  const clientExpansionPackage = resolveClientExpansionPackage(contractedPlanCredits);
+  const clientExpansionPackage = resolveClientExpansionPackage(contractedPlanCredits, initialData.client.id);
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =
     prospectExtraPackageQuantity - persistedProspectExtraPackageQuantity;

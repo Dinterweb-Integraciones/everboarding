@@ -251,7 +251,7 @@ export async function POST(request: Request) {
       0,
       Math.round(Number(data.config.custom_plan_credits ?? data.config.base_capacity)),
     );
-    const expansionPackage = resolveClientExpansionPackage(contractedCredits);
+    const expansionPackage = resolveClientExpansionPackage(contractedCredits, data.client.id);
     const amount =
       purchaseKind === "extra_package"
         ? expansionPackage.price
