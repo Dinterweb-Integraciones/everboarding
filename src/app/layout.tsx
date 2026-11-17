@@ -13,6 +13,16 @@ export const metadata: Metadata = {
   title: "Strategic Roadmap & Capacity Manager",
   description:
     "Gestiona clientes, roadmap de estrategia y capacidad operativa.",
+  // app.dinterweb.com no debe aparecer en buscadores. Los enlaces públicos
+  // siguen funcionando; esto solo afecta la indexación.
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+    },
+  },
   icons: {
     icon: "/dinterweb.png",
     shortcut: "/dinterweb.png",

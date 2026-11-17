@@ -14,6 +14,18 @@ const nextConfig: NextConfig = {
     // scratch instead of trusting a cache that isn't reliably invalidated.
     turbopackFileSystemCacheForDev: false,
   },
+  // Noindex para todo el subdominio, incluidas respuestas que no son HTML
+  // (API, imágenes, PDFs) donde la meta etiqueta robots no aplica.
+  // No usamos robots.txt con Disallow: impediría que los buscadores lean
+  // este header y desindexen las URLs ya conocidas.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
