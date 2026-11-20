@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
 import { requireUser } from "@/lib/auth";
+import { toStripeUnitAmount } from "@/lib/currency";
+import { getClientBillingCurrency } from "@/lib/price-lists-server";
 import { getPlanPeriodLabel, suggestPlanPrice } from "@/lib/onboarding";
 import { isAwaitingStripeMembership } from "@/lib/membership-checkout";
 import { canManagePlatformUsers } from "@/lib/platform-access";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUserError } from "@/lib/utils";
+import { resolveAppOrigin } from "@/lib/app-origin";
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -17,13 +20,7 @@ function getStripe() {
 }
 
 function resolveOrigin(request: Request) {
-  const requestOrigin = request.headers.get("origin") || new URL(request.url).origin;
-
-  if (requestOrigin.includes("localhost") || requestOrigin.includes("127.0.0.1")) {
-    return requestOrigin.replace(/\/$/, "");
-  }
-
-  return (process.env.NEXT_PUBLIC_SITE_URL || requestOrigin).replace(/\/$/, "");
+  return resolveAppOrigin(request);
 }
 
 // Link de pago de la membresía (Stripe, modo suscripción) para un cliente que pasó de paquetes a
@@ -73,8 +70,10 @@ export async function POST(
       );
     }
     const contractedCredits = config.custom_plan_credits ?? config.base_capacity;
-    const amountInCents = Math.round(
-      Number(config.custom_plan_price ?? suggestPlanPrice(contractedCredits)) * 100,
+    const currency = await getClientBillingCurrency(client.id);
+    const amountInCents = toStripeUnitAmount(
+      Number(config.custom_plan_price ?? suggestPlanPrice(contractedCredits)),
+      currency,
     );
     const periodMonths = config.custom_plan_period_months ?? 1;
 
@@ -104,7 +103,7 @@ export async function POST(
         {
           quantity: 1,
           price_data: {
-            currency: (process.env.STRIPE_CURRENCY || "usd").toLowerCase(),
+            currency,
             unit_amount: amountInCents,
             recurring: { interval: "month", interval_count: periodMonths },
             product_data: {

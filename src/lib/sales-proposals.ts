@@ -11,6 +11,7 @@ import {
   type InitiativeStatus,
   type InitiativeTaskStatus,
 } from "@/lib/onboarding";
+import { normalizePriceListAdjustment, type PriceListAdjustment } from "@/lib/price-lists";
 import { safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
 
@@ -97,6 +98,9 @@ export type SalesProposalDraft = {
   transferValidatedAt: string | null;
   transferValidatedByUserId: string | null;
   prospectExtraPackageQuantity: number;
+  // Lista de precios con la que se cotizaron los créditos de los casos de uso (congelada). Solo en
+  // propuestas de Dinterweb; null = créditos base del catálogo.
+  priceList: PriceListAdjustment | null;
   initiatives: SalesProposalInitiativeDraft[];
 };
 
@@ -144,6 +148,7 @@ type CompactSalesProposalSnapshot = {
   cv?: number | null;
   fc?: number | null;
   df?: 0 | 1;
+  pl?: PriceListAdjustment | null;
   i?: CompactSalesProposalInitiativeSnapshot[];
 };
 
@@ -159,6 +164,7 @@ function createCompactSalesProposalSnapshot(
     | "creditValidityDays"
     | "flowCredits"
     | "derivedFlowCredits"
+    | "priceList"
     | "initiatives"
   >,
 ): CompactSalesProposalSnapshot {
@@ -172,6 +178,7 @@ function createCompactSalesProposalSnapshot(
     cv: draft.creditValidityDays,
     fc: draft.flowCredits,
     df: draft.derivedFlowCredits ? 1 : 0,
+    pl: draft.priceList,
     i: draft.initiatives.map((initiative) => [
       initiative.id,
       initiative.title,
@@ -248,6 +255,7 @@ export function createEmptySalesProposalDraft(): SalesProposalDraft {
     transferValidatedAt: null,
     transferValidatedByUserId: null,
     prospectExtraPackageQuantity: 0,
+    priceList: null,
     initiatives: [],
   };
 }
@@ -714,6 +722,8 @@ export function normalizeSalesProposalDraft(
       Math.floor(safeParseNumber(input.prospectExtraPackageQuantity ?? input.pe ?? base.prospectExtraPackageQuantity)),
     ),
     periodMonths,
+    // Solo los vendedores de Dinterweb cotizan con lista de precios.
+    priceList: workspaceVariant === "dinterweb" ? normalizePriceListAdjustment(input.priceList ?? input.pl) : null,
     creditValidityDays: normalizeSalesCreditValidityDays(
       input.creditValidityDays ?? input.cv ?? base.creditValidityDays,
       billingMode,

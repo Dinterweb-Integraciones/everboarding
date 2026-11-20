@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getClientCatalogCredits } from "@/lib/onboarding";
+import { applyPriceListToCredits } from "@/lib/price-lists";
+import { getClientPriceListAdjustment } from "@/lib/price-lists-server";
 import {
   getSalesProposalBySlug,
   mapProposalInitiativeToPublicRecord,
@@ -119,6 +121,14 @@ export async function POST(request: Request, context: RouteContext) {
       isOneTimeClient = snapshotData?.config?.custom_plan_billing_mode === "one_time";
     }
 
+    // Lista de precios con la que se cotizan los casos de uso: la de la propuesta (prospecto) o la
+    // que el cliente heredó al activarse.
+    const priceList = proposal
+      ? proposal.priceList
+      : resolvedClientId
+        ? await getClientPriceListAdjustment(resolvedClientId)
+        : null;
+
     async function createClientInitiativeWithItems(input: {
       title: string;
       description: string | null;
@@ -185,7 +195,7 @@ export async function POST(request: Request, context: RouteContext) {
             name: item.label,
             status: "pending" as const,
             target_date: null,
-            unit_credits: getClientCatalogCredits(Number(item.credits ?? 0), isOneTimeClient),
+            unit_credits: getClientCatalogCredits(applyPriceListToCredits(Number(item.credits ?? 0), priceList), isOneTimeClient),
             quantity: 1,
             sort_order: index,
           }))
@@ -197,7 +207,7 @@ export async function POST(request: Request, context: RouteContext) {
               status: "pending" as const,
               target_date: null,
               unit_credits: getClientCatalogCredits(
-                Math.max(1, Number(input.fallbackCredits ?? 0)),
+                applyPriceListToCredits(Math.max(1, Number(input.fallbackCredits ?? 0)), priceList),
                 isOneTimeClient,
               ),
               quantity: 1,
@@ -285,7 +295,7 @@ export async function POST(request: Request, context: RouteContext) {
               name: item.label,
               status: "pending" as const,
               targetDate: "",
-              unitCredits: getClientCatalogCredits(Number(item.credits ?? 0), usesPackagePricing),
+              unitCredits: getClientCatalogCredits(applyPriceListToCredits(Number(item.credits ?? 0), priceList), usesPackagePricing),
               quantity: 1,
             }))
           : [
@@ -296,7 +306,7 @@ export async function POST(request: Request, context: RouteContext) {
                 status: "pending" as const,
                 targetDate: "",
                 unitCredits: getClientCatalogCredits(
-                  Math.max(1, Number(input.fallbackCredits ?? 0)),
+                  applyPriceListToCredits(Math.max(1, Number(input.fallbackCredits ?? 0)), priceList),
                   usesPackagePricing,
                 ),
                 quantity: 1,

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
+import { resolveTrustedProposalPriceList } from "@/lib/price-lists-server";
 import { getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
 import { resolveLiveSalesProposalRecord } from "@/lib/sales-proposal-live-view";
 import {
@@ -67,6 +68,10 @@ export async function PUT(request: Request, { params }: SalesProposalRouteProps)
       existingProposal,
       isSuperadmin,
     });
+    body = {
+      ...body,
+      priceList: await resolveTrustedProposalPriceList(body.priceList, existingProposal.priceList),
+    };
 
     let proposal = await saveSalesProposal(body, slug);
 

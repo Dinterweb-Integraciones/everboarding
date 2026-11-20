@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { isAllowedDinterwebUser } from "@/lib/auth-domain";
+import { resolveActivePriceListLink } from "@/lib/price-list-links-server";
+import { enforceRateLimits, getRequestIp, type RateLimitRule } from "@/lib/rate-limit-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError, isMissingSupabaseTable, safeParseNumber } from "@/lib/utils";
@@ -23,6 +25,7 @@ type RecommendationGroup = {
 type RecommendationRequestBody = {
   startDate?: string;
   workspaceVariant?: "hubspot" | "dinterweb";
+  priceListLinkToken?: string;
   selectedHubs?: string[];
   portalState?: "new" | "optimize";
   context?: string;
@@ -516,6 +519,13 @@ function buildDefaultRecommendations(
   return budgetAwareRecommendations.length ? budgetAwareRecommendations : recommendations.slice(0, 3);
 }
 
+const RECOMMEND_LINK_RATE_LIMIT: RateLimitRule = { limit: 30, windowSeconds: 60 * 60 };
+const RECOMMEND_IP_RATE_LIMIT: RateLimitRule = { limit: 60, windowSeconds: 60 * 60 };
+const MAX_RECOMMEND_HUBS = 10;
+const MAX_RECOMMEND_GROUPS = 1000;
+const MAX_RECOMMEND_TASKS_PER_GROUP = 60;
+const MAX_RECOMMEND_CONTEXT_LENGTH = 4000;
+
 export async function POST(request: Request) {
   try {
     if (!process.env.CLAUDE_API_KEY) {
@@ -527,7 +537,13 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as RecommendationRequestBody;
 
-    if (body.workspaceVariant === "dinterweb") {
+    // Vendedor externo con el enlace vigente de una lista de precios: no tiene sesión.
+    const priceListLink =
+      typeof body.priceListLinkToken === "string"
+        ? await resolveActivePriceListLink(body.priceListLinkToken)
+        : null;
+
+    if (body.workspaceVariant === "dinterweb" && !priceListLink) {
       const supabase = await createSupabaseServerClient();
       const {
         data: { user },
@@ -541,12 +557,37 @@ export async function POST(request: Request) {
       }
     }
 
+    // Sin sesión (enlace externo o cotizador HubSpot público) cada llamada consume la API de Claude:
+    // se limita por IP y, con enlace, también por enlace.
+    const isUnauthenticatedCall = body.workspaceVariant !== "dinterweb" || Boolean(priceListLink);
+    if (isUnauthenticatedCall) {
+      const rateLimited = await enforceRateLimits([
+        ...(priceListLink
+          ? [{ bucket: `recommend-link:${priceListLink.link.id}`, rule: RECOMMEND_LINK_RATE_LIMIT }]
+          : []),
+        { bucket: `recommend-ip:${getRequestIp(request)}`, rule: RECOMMEND_IP_RATE_LIMIT },
+      ]);
+      if (rateLimited) return rateLimited;
+    }
+
     const selectedHubs = Array.isArray(body.selectedHubs)
       ? body.selectedHubs.map((hub) => hub.trim()).filter(Boolean)
       : [];
-    const groups = Array.isArray(body.groups)
+    let groups = Array.isArray(body.groups)
       ? body.groups.filter((group) => group?.id && group?.name && group?.modalCategory)
       : [];
+
+    // Sin sesión, lo que llega del navegador va al prompt y se paga por token: se recorta. Los
+    // vendedores de Dinterweb con sesión no tienen topes (pueden pegar contextos largos).
+    if (isUnauthenticatedCall) {
+      selectedHubs.splice(MAX_RECOMMEND_HUBS);
+      groups = groups.slice(0, MAX_RECOMMEND_GROUPS).map((group) => ({
+        ...group,
+        description: typeof group.description === "string" ? group.description.slice(0, 1000) : "",
+        tasks: Array.isArray(group.tasks) ? group.tasks.slice(0, MAX_RECOMMEND_TASKS_PER_GROUP) : [],
+      }));
+      body.context = typeof body.context === "string" ? body.context.slice(0, MAX_RECOMMEND_CONTEXT_LENGTH) : "";
+    }
 
     if (!selectedHubs.length) {
       return NextResponse.json(

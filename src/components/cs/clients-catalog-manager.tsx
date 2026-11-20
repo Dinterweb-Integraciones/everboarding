@@ -22,10 +22,18 @@ export type ClientCatalogRow = {
   updated_at: string;
   seller_name: string | null;
   csm_name: string | null;
+  price_list_id: string | null;
+};
+
+export type ClientPriceListChoice = {
+  id: string;
+  label: string;
+  is_active: boolean;
 };
 
 type ClientsCatalogManagerProps = {
   initialClients: ClientCatalogRow[];
+  priceLists?: ClientPriceListChoice[];
 };
 
 type StatusFilter = "active" | "all" | "inactive";
@@ -44,7 +52,7 @@ function getStatusLabel(isActive: boolean) {
   return isActive ? "Activo" : "Inactivo";
 }
 
-export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerProps) {
+export function ClientsCatalogManager({ initialClients, priceLists = [] }: ClientsCatalogManagerProps) {
   const [clients, setClients] = useState(initialClients);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [searchQuery, setSearchQuery] = useState("");
@@ -108,6 +116,43 @@ export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerP
 
     return Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
   }, [activePage, totalPages]);
+
+  async function changeClientPriceList(client: ClientCatalogRow, priceListId: string) {
+    const nextPriceListId = priceListId || null;
+
+    setSavingClientId(client.id);
+    setFeedback(null);
+    setClients((current) =>
+      current.map((entry) => (entry.id === client.id ? { ...entry, price_list_id: nextPriceListId } : entry)),
+    );
+
+    try {
+      const response = await fetch(`/api/cs/clients/${client.id}/price-list`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceListId: nextPriceListId }),
+      });
+      const payload = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "No pudimos cambiar la lista de precios.");
+      }
+
+      setFeedback({ tone: "success", message: payload.message || "Lista de precios actualizada." });
+    } catch (caughtError) {
+      setClients((current) =>
+        current.map((entry) =>
+          entry.id === client.id ? { ...entry, price_list_id: client.price_list_id } : entry,
+        ),
+      );
+      setFeedback({
+        tone: "error",
+        message: formatUserError(caughtError, "No pudimos cambiar la lista de precios del cliente."),
+      });
+    } finally {
+      setSavingClientId(null);
+    }
+  }
 
   async function toggleClientStatus(client: ClientCatalogRow) {
     const nextStatus = !client.is_active;
@@ -255,11 +300,12 @@ export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerP
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1120px] table-fixed divide-y divide-slate-200 text-left text-sm">
               <colgroup>
-                <col className="w-[20%]" />
-                <col className="w-[24%]" />
-                <col className="w-[20%]" />
                 <col className="w-[18%]" />
-                <col className="w-[10%]" />
+                <col className="w-[17%]" />
+                <col className="w-[16%]" />
+                <col className="w-[15%]" />
+                <col className="w-[17%]" />
+                <col className="w-[9%]" />
                 <col className="w-[8%]" />
               </colgroup>
               <thead className="bg-slate-50">
@@ -275,6 +321,9 @@ export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerP
                   </th>
                   <th className="px-6 py-3 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                     Ventas
+                  </th>
+                  <th className="px-6 py-3 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Lista de precios
                   </th>
                   <th className="px-6 py-3 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                     Estado
@@ -307,6 +356,24 @@ export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerP
                         </td>
                         <td className="px-6 py-4 align-middle font-medium text-slate-950">
                           {client.seller_name ?? "Sin asignar"}
+                        </td>
+                        <td className="px-6 py-4 align-middle">
+                          <Select
+                            value={client.price_list_id ?? ""}
+                            disabled={isSaving}
+                            onChange={(event) => void changeClientPriceList(client, event.target.value)}
+                            aria-label={`Lista de precios de ${client.name}`}
+                          >
+                            <option value="">Créditos base</option>
+                            {priceLists
+                              .filter((priceList) => priceList.is_active || priceList.id === client.price_list_id)
+                              .map((priceList) => (
+                                <option key={priceList.id} value={priceList.id}>
+                                  {priceList.label}
+                                  {priceList.is_active ? "" : " (inactiva)"}
+                                </option>
+                              ))}
+                          </Select>
                         </td>
                         <td className="px-6 py-4 align-middle">
                           <span
@@ -351,7 +418,7 @@ export function ClientsCatalogManager({ initialClients }: ClientsCatalogManagerP
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center">
+                    <td colSpan={7} className="px-5 py-12 text-center">
                       <p className="font-bold text-slate-900">No hay clientes para mostrar</p>
                       <p className="mt-2 text-sm text-slate-500">
                         Ajusta la busqueda o el filtro de estado.

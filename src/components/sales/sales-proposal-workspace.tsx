@@ -48,6 +48,12 @@ import {
   calculateSalesProposalMetrics,
 } from "@/lib/sales-proposals";
 import {
+  applyPriceListToCatalogCredits,
+  applyPriceListToCredits,
+  type PriceListAdjustment,
+  type PriceListOption,
+} from "@/lib/price-lists";
+import {
   applyPackageCreditPricing,
   buildCatalogGroupOptions,
   buildCatalogModalGroups,
@@ -80,6 +86,11 @@ type SalesProposalWorkspaceProps = {
     company: string;
   } | null;
   canWaiveAnyInitiative?: boolean;
+  // Listas de precios activas que puede elegir el vendedor de Dinterweb.
+  availablePriceLists?: PriceListOption[];
+  // Vendedor externo que entró con el enlace de una lista de precios (/cotizar/[token]): cotiza sin
+  // sesión, con la tarifa fija, y guarda por las APIs del token.
+  externalLink?: { token: string; priceList: PriceListAdjustment } | null;
 };
 
 function getCatalogGroupPreview(group: CatalogModalGroup, fallback: string) {
@@ -220,19 +231,51 @@ function getDinterwebMonthlyPrice(proposal: Pick<SalesProposalDraft, "quotedPric
   );
 }
 
-function inferDinterwebPackageCreditsStep(monthlyCredits: number) {
-  if (monthlyCredits > DINTERWEB_MIN_PACKAGE.credits && monthlyCredits % 80 === 0 && monthlyCredits % 60 !== 0) {
-    return 80;
+type DinterwebPackage = { credits: number; price: number };
+
+// Paquetes de la propuesta de Dinterweb. Con lista de precios, su paquete es a la vez el piso y la
+// base (y el paso del stepper); sin lista, el mínimo de 60 CR y la base de 80 CR en USD.
+// Tope de paquetes en una propuesta del enlace externo (el servidor aplica el mismo).
+const EXTERNAL_LINK_MAX_PACKAGES = 50;
+
+function resolveDinterwebPackages(priceList: PriceListAdjustment | null | undefined): {
+  min: DinterwebPackage;
+  base: DinterwebPackage;
+} {
+  const listPackage = priceList?.package;
+
+  if (listPackage) {
+    const pricePackage = { credits: listPackage.credits, price: listPackage.price };
+    return { min: pricePackage, base: pricePackage };
   }
 
-  return DINTERWEB_MIN_PACKAGE.credits;
+  return { min: DINTERWEB_MIN_PACKAGE, base: DINTERWEB_DEFAULT_PACKAGE };
 }
 
-function inferDinterwebPackagePriceStep(monthlyCredits: number, monthlyPrice: number) {
-  const creditsStep = inferDinterwebPackageCreditsStep(monthlyCredits);
+function inferDinterwebPackageCreditsStep(
+  monthlyCredits: number,
+  packages: { min: DinterwebPackage; base: DinterwebPackage } = resolveDinterwebPackages(null),
+) {
+  if (
+    monthlyCredits > packages.min.credits &&
+    monthlyCredits % packages.base.credits === 0 &&
+    monthlyCredits % packages.min.credits !== 0
+  ) {
+    return packages.base.credits;
+  }
+
+  return packages.min.credits;
+}
+
+function inferDinterwebPackagePriceStep(
+  monthlyCredits: number,
+  monthlyPrice: number,
+  packages: { min: DinterwebPackage; base: DinterwebPackage } = resolveDinterwebPackages(null),
+) {
+  const creditsStep = inferDinterwebPackageCreditsStep(monthlyCredits, packages);
   const packageCount = Math.max(1, Math.round(monthlyCredits / creditsStep));
 
-  return Math.max(DINTERWEB_MIN_PACKAGE.price, Math.round(monthlyPrice / packageCount));
+  return Math.max(packages.min.price, Math.round(monthlyPrice / packageCount));
 }
 
 function getStatusDot(status: InitiativeStatus) {
@@ -353,6 +396,7 @@ function getSalesProposalAutosaveSignature(proposal: SalesProposalDraft) {
     couponBaseContractedCredits: normalized.couponBaseContractedCredits,
     couponBaseQuotedPrice: normalized.couponBaseQuotedPrice,
     couponAppliedAt: normalized.couponAppliedAt,
+    priceList: normalized.priceList,
     initiatives: normalized.initiatives,
   });
 }
@@ -538,6 +582,28 @@ function createDefaultKickoffInitiative(startDate: string, sortOrder = 0): Sales
   kickoff.sortOrder = sortOrder;
 
   return kickoff;
+}
+
+// Propuesta nueva de un vendedor externo: arranca con la tarifa del enlace, su paquete y su moneda.
+function createExternalLinkSalesProposalDraft(
+  sellerPreset: SalesProposalWorkspaceProps["sellerPreset"],
+  priceList: PriceListAdjustment,
+): SalesProposalDraft {
+  const draft = createNewSalesProposalDraft("dinterweb", sellerPreset);
+  const pricePackage = resolveDinterwebPackages(priceList).base;
+
+  return {
+    ...draft,
+    priceList,
+    contractedCredits: pricePackage.credits,
+    quotedPrice: pricePackage.price,
+    currency: priceList.package?.currency ?? draft.currency,
+    // Los enlaces externos solo venden paquetes: sin recurrencia ni caudal.
+    billingMode: "one_time",
+    periodMonths: 1,
+    flowCredits: null,
+    derivedFlowCredits: false,
+  };
 }
 
 function createNewSalesProposalDraft(
@@ -768,8 +834,8 @@ function scheduleRecommendedInitiatives(
 }
 
 export function SalesProposalWorkspace({
-  initialCatalog,
-  initialGroups,
+  initialCatalog: rawInitialCatalog,
+  initialGroups: rawInitialGroups,
   initialGroupCategories,
   initialGroupCategoryLinks,
   initialGroupMemberships,
@@ -778,7 +844,14 @@ export function SalesProposalWorkspace({
   routeBase = "/sales/proposals",
   sellerPreset = null,
   canWaiveAnyInitiative = false,
+  availablePriceLists = [],
+  externalLink = null,
 }: SalesProposalWorkspaceProps) {
+  const isExternalLink = Boolean(externalLink);
+  // Las propuestas del vendedor externo se guardan y activan por las APIs de su enlace.
+  const proposalsApiBase = externalLink
+    ? `/api/cotizar/${externalLink.token}/proposals`
+    : "/api/sales-proposals";
   const wizardChallenges: Record<
     string,
     Array<{ id: string; label: string; description: string; keywords: string[] }>
@@ -788,7 +861,11 @@ export function SalesProposalWorkspace({
     ? { preserveBacklogDates: true, autoFillBacklogDates: true }
     : { preserveBacklogDates: true, autoFillBacklogDates: false };
   const newProposalHref = `${routeBase}/new`;
-  const workspaceHomeHref = isDinterwebVariant ? "/sales/dinterweb" : newProposalHref;
+  const workspaceHomeHref = externalLink
+    ? `/cotizar/${externalLink.token}`
+    : isDinterwebVariant
+      ? "/sales/dinterweb"
+      : newProposalHref;
   const packageOptions = SALES_PROPOSAL_HUBSPOT_UPSELL_OPTIONS;
 
   const router = useRouter();
@@ -797,12 +874,51 @@ export function SalesProposalWorkspace({
   const initialDraft = useMemo(
     () =>
       normalizeSalesProposalDraft({
-        ...(initialProposal ?? createNewSalesProposalDraft(variant, sellerPreset)),
+        ...(initialProposal ??
+          (externalLink
+            ? createExternalLinkSalesProposalDraft(sellerPreset, externalLink.priceList)
+            : createNewSalesProposalDraft(variant, sellerPreset))),
         workspaceVariant: variant,
       }),
-    [initialProposal, sellerPreset, variant],
+    [externalLink, initialProposal, sellerPreset, variant],
   );
   const [proposal, setProposal] = useState<SalesProposalDraft>(initialDraft);
+  const initialDinterwebPackages = resolveDinterwebPackages(initialDraft.priceList);
+  const dinterwebPackages = resolveDinterwebPackages(proposal.priceList);
+
+  // En el enlace externo se venden paquetes completos de la lista: los créditos se redondean hacia
+  // arriba al siguiente paquete y la inversión es la de esos paquetes (igual que lo calcula el servidor).
+  const externalLinkPlanTerms = isExternalLink ? dinterwebPackages.base : null;
+
+  function getExternalLinkPlanTerms(creditsInput: string | number) {
+    const pricePackage = dinterwebPackages.base;
+    const packageCount =
+      pricePackage.credits > 0
+        ? Math.min(
+            EXTERNAL_LINK_MAX_PACKAGES,
+            Math.max(1, Math.ceil(safeParseNumber(creditsInput) / pricePackage.credits)),
+          )
+        : 1;
+
+    return {
+      credits: pricePackage.credits * packageCount,
+      price: Math.round(pricePackage.price * packageCount * 100) / 100,
+    };
+  }
+
+  const dinterwebMinPackage = dinterwebPackages.min;
+  const dinterwebBasePackage = dinterwebPackages.base;
+  // Lista de precios de la propuesta (solo Dinterweb): ajusta cuántos créditos cuesta cada caso de
+  // uso. Todo el catálogo del workspace parte de estos créditos; el recargo de paquete va encima.
+  const proposalPriceList = isDinterwebVariant ? proposal.priceList : null;
+  const initialCatalog = useMemo(
+    () => applyPriceListToCatalogCredits(rawInitialCatalog, proposalPriceList),
+    [proposalPriceList, rawInitialCatalog],
+  );
+  const initialGroups = useMemo(
+    () => applyPriceListToCatalogCredits(rawInitialGroups, proposalPriceList),
+    [proposalPriceList, rawInitialGroups],
+  );
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -812,23 +928,25 @@ export function SalesProposalWorkspace({
   const [isGeneratingWizardPlan, setIsGeneratingWizardPlan] = useState(false);
   const [wizardLoadingMessageIndex, setWizardLoadingMessageIndex] = useState(0);
   const [isUpsellModalOpen, setIsUpsellModalOpen] = useState(false);
+  const [priceListDraftId, setPriceListDraftId] = useState("");
   const [upsellPackageCredits, setUpsellPackageCredits] = useState<number>(
     packageOptions[0].credits,
   );
   const [upsellCartCount, setUpsellCartCount] = useState(0);
   const [dinterwebPlanCreditsDraft, setDinterwebPlanCreditsDraft] = useState(
-    String(Math.max(DINTERWEB_MIN_PACKAGE.credits, getDinterwebMonthlyCredits(initialDraft))),
+    String(Math.max(initialDinterwebPackages.min.credits, getDinterwebMonthlyCredits(initialDraft))),
   );
   const [dinterwebPlanPriceDraft, setDinterwebPlanPriceDraft] = useState(
-    String(Math.max(DINTERWEB_MIN_PACKAGE.price, getDinterwebMonthlyPrice(initialDraft))),
+    String(Math.max(initialDinterwebPackages.min.price, getDinterwebMonthlyPrice(initialDraft))),
   );
   const [dinterwebPackageCreditsStep, setDinterwebPackageCreditsStep] = useState(() =>
-    inferDinterwebPackageCreditsStep(getDinterwebMonthlyCredits(initialDraft)),
+    inferDinterwebPackageCreditsStep(getDinterwebMonthlyCredits(initialDraft), initialDinterwebPackages),
   );
   const [dinterwebPackagePriceStep, setDinterwebPackagePriceStep] = useState(() =>
     inferDinterwebPackagePriceStep(
       getDinterwebMonthlyCredits(initialDraft),
       getDinterwebMonthlyPrice(initialDraft),
+      initialDinterwebPackages,
     ),
   );
   const [isCouponPanelOpen, setIsCouponPanelOpen] = useState(
@@ -884,9 +1002,11 @@ export function SalesProposalWorkspace({
     monthlyPrice: number,
     billingMode: SalesProposalDraft["billingMode"],
     periodMonths: SalesProposalDraft["periodMonths"],
+    overrides: { minPackage?: DinterwebPackage; patch?: Partial<SalesProposalDraft> } = {},
   ) {
-    const normalizedMonthlyCredits = Math.max(DINTERWEB_MIN_PACKAGE.credits, safeParseNumber(monthlyCredits));
-    const normalizedMonthlyPrice = Math.max(DINTERWEB_MIN_PACKAGE.price, safeParseNumber(monthlyPrice));
+    const minPackage = overrides.minPackage ?? dinterwebMinPackage;
+    const normalizedMonthlyCredits = Math.max(minPackage.credits, safeParseNumber(monthlyCredits));
+    const normalizedMonthlyPrice = Math.max(minPackage.price, safeParseNumber(monthlyPrice));
     const multiplier = getDinterwebChargeMultiplier(billingMode, periodMonths);
 
     setProposal((current) => {
@@ -895,7 +1015,7 @@ export function SalesProposalWorkspace({
           ? current.creditValidityDays
           : getDefaultSalesCreditValidityDays(billingMode);
 
-      const nextProposal = clearProspectExtraPackages(current);
+      const nextProposal = { ...clearProspectExtraPackages(current), ...overrides.patch };
 
       return applyActiveCouponPricing({
         ...nextProposal,
@@ -1581,11 +1701,12 @@ export function SalesProposalWorkspace({
     }
 
     if (isDinterwebVariant) {
+      setPriceListDraftId(proposal.priceList?.id ?? "");
       setDinterwebPlanCreditsDraft(
-        String(Math.max(DINTERWEB_MIN_PACKAGE.credits, getDinterwebMonthlyCredits(proposal))),
+        String(Math.max(dinterwebMinPackage.credits, getDinterwebMonthlyCredits(proposal))),
       );
       setDinterwebPlanPriceDraft(
-        String(Math.max(DINTERWEB_MIN_PACKAGE.price, getDinterwebMonthlyPrice(proposal))),
+        String(Math.max(dinterwebMinPackage.price, getDinterwebMonthlyPrice(proposal))),
       );
       setIsUpsellModalOpen(true);
       return;
@@ -1614,8 +1735,20 @@ export function SalesProposalWorkspace({
       return;
     }
 
-    const currentMonthlyCredits = Math.max(DINTERWEB_MIN_PACKAGE.credits, dinterwebMonthlyCredits);
-    const currentMonthlyPrice = Math.max(DINTERWEB_MIN_PACKAGE.price, dinterwebMonthlyPrice);
+    if (externalLinkPlanTerms) {
+      const { credits, price } = getExternalLinkPlanTerms(
+        dinterwebMonthlyCredits + externalLinkPlanTerms.credits * direction,
+      );
+
+      applyDinterwebCommercialTerms(credits, price, proposal.billingMode, proposal.periodMonths);
+      setDinterwebPlanCreditsDraft(String(credits));
+      setDinterwebPlanPriceDraft(String(price));
+      setFeedback({ tone: "success", message: `Capacidad configurada en ${credits} creditos por periodo.` });
+      return;
+    }
+
+    const currentMonthlyCredits = Math.max(dinterwebMinPackage.credits, dinterwebMonthlyCredits);
+    const currentMonthlyPrice = Math.max(dinterwebMinPackage.price, dinterwebMonthlyPrice);
     const nextMonthlyCredits = Math.max(
       dinterwebPackageCreditsStep,
       currentMonthlyCredits + dinterwebPackageCreditsStep * direction,
@@ -1699,31 +1832,55 @@ export function SalesProposalWorkspace({
   }
 
   function removeDinterwebCustomPackage() {
+    // Si en el modal se eligió otra tarifa, cambiarla ya deja la propuesta en su paquete base.
+    if (isPriceListDraftChanged) {
+      handlePriceListChange(priceListDraftId);
+      closeUpsellModal();
+      return;
+    }
+
     applyDinterwebCommercialTerms(
-      DINTERWEB_DEFAULT_PACKAGE.credits,
-      DINTERWEB_DEFAULT_PACKAGE.price,
+      dinterwebBasePackage.credits,
+      dinterwebBasePackage.price,
       proposal.billingMode,
       proposal.periodMonths,
     );
-    setDinterwebPlanCreditsDraft(String(DINTERWEB_DEFAULT_PACKAGE.credits));
-    setDinterwebPlanPriceDraft(String(DINTERWEB_DEFAULT_PACKAGE.price));
-    setDinterwebPackageCreditsStep(DINTERWEB_DEFAULT_PACKAGE.credits);
-    setDinterwebPackagePriceStep(DINTERWEB_DEFAULT_PACKAGE.price);
+    setDinterwebPlanCreditsDraft(String(dinterwebBasePackage.credits));
+    setDinterwebPlanPriceDraft(String(dinterwebBasePackage.price));
+    setDinterwebPackageCreditsStep(dinterwebBasePackage.credits);
+    setDinterwebPackagePriceStep(dinterwebBasePackage.price);
     setFeedback({
       tone: "success",
-      message: "El paquete volvio a la base de 80 creditos.",
+      message: `El paquete volvio a la base de ${dinterwebBasePackage.credits} creditos.`,
     });
     closeUpsellModal();
   }
 
   function confirmUpsell() {
+    if (isDinterwebVariant && externalLinkPlanTerms) {
+      const { credits, price } = getExternalLinkPlanTerms(dinterwebPlanCreditsDraft);
+
+      applyDinterwebCommercialTerms(credits, price, proposal.billingMode, proposal.periodMonths, {
+        minPackage: draftDinterwebPackages.min,
+      });
+      setDinterwebPlanCreditsDraft(String(credits));
+      setDinterwebPlanPriceDraft(String(price));
+      setFeedback({
+        tone: "success",
+        message: `Plan configurado en ${credits} creditos por periodo.`,
+      });
+      closeUpsellModal();
+      return;
+    }
+
     if (isDinterwebVariant) {
+      const draftMinPackage = draftDinterwebPackages.min;
       const nextMonthlyCredits = Math.max(
-        DINTERWEB_MIN_PACKAGE.credits,
+        draftMinPackage.credits,
         safeParseNumber(dinterwebPlanCreditsDraft),
       );
       const nextMonthlyPrice = Math.max(
-        DINTERWEB_MIN_PACKAGE.price,
+        draftMinPackage.price,
         safeParseNumber(dinterwebPlanPriceDraft),
       );
 
@@ -1736,14 +1893,18 @@ export function SalesProposalWorkspace({
       }
 
       if (
-        nextMonthlyCredits < DINTERWEB_MIN_PACKAGE.credits ||
-        nextMonthlyPrice < DINTERWEB_MIN_PACKAGE.price
+        nextMonthlyCredits < draftMinPackage.credits ||
+        nextMonthlyPrice < draftMinPackage.price
       ) {
         setFeedback({
           tone: "error",
-          message: `El plan no puede bajar de ${DINTERWEB_MIN_PACKAGE.credits} creditos ni de ${formatCurrency(DINTERWEB_MIN_PACKAGE.price, proposal.currency.toUpperCase())}.`,
+          message: `El plan no puede bajar de ${draftMinPackage.credits} creditos ni de ${formatCurrency(draftMinPackage.price, draftPlanCurrency)}.`,
         });
         return;
+      }
+
+      if (isPriceListDraftChanged) {
+        handlePriceListChange(priceListDraftId);
       }
 
       applyDinterwebCommercialTerms(
@@ -1751,6 +1912,7 @@ export function SalesProposalWorkspace({
         nextMonthlyPrice,
         proposal.billingMode,
         proposal.periodMonths,
+        { minPackage: draftMinPackage, patch: { currency: draftPlanCurrency.toLowerCase() } },
       );
       setDinterwebPackageCreditsStep(nextMonthlyCredits);
       setDinterwebPackagePriceStep(nextMonthlyPrice);
@@ -2102,6 +2264,7 @@ function mergeRecommendedGroups(
         },
         body: JSON.stringify({
           workspaceVariant: variant,
+          priceListLinkToken: externalLink?.token,
           startDate: proposal.startDate,
           selectedHubs: wizardHubs,
           portalState: wizardPortalState,
@@ -2259,7 +2422,7 @@ function mergeRecommendedGroups(
       }
 
       const response = await fetch(
-        draftToPersist.slug ? `/api/sales-proposals/${draftToPersist.slug}` : "/api/sales-proposals",
+        draftToPersist.slug ? `${proposalsApiBase}/${draftToPersist.slug}` : proposalsApiBase,
         {
           method: draftToPersist.slug ? "PUT" : "POST",
           headers: {
@@ -2286,7 +2449,8 @@ function mergeRecommendedGroups(
         setProposal(normalizedPayload);
       }
 
-      if (!draftToPersist.slug) {
+      // El vendedor externo se queda en su enlace: no tiene página de edición de la propuesta.
+      if (!draftToPersist.slug && !isExternalLink) {
         router.replace(`${routeBase}/${resolvedSlug}`);
       }
 
@@ -2300,7 +2464,7 @@ function mergeRecommendedGroups(
     );
 
     return resultPromise;
-  }, [proposal, routeBase, router]);
+  }, [isExternalLink, proposal, proposalsApiBase, routeBase, router]);
   persistProposalRef.current = persistProposal;
 
   async function activatePlan() {
@@ -2319,7 +2483,7 @@ function mergeRecommendedGroups(
       const persistedProposal = await persistProposal();
       const targetSlug = persistedProposal.slug;
 
-      const response = await fetch(`/api/sales-proposals/${targetSlug}/activate`, {
+      const response = await fetch(`${proposalsApiBase}/${targetSlug}/activate`, {
         method: "POST",
       });
       const payload = (await response.json()) as {
@@ -2595,10 +2759,10 @@ function mergeRecommendedGroups(
 
       if (normalizedProposal.workspaceVariant === "dinterweb") {
         setDinterwebPlanCreditsDraft(
-          String(Math.max(DINTERWEB_MIN_PACKAGE.credits, getDinterwebMonthlyCredits(normalizedProposal))),
+          String(Math.max(dinterwebMinPackage.credits, getDinterwebMonthlyCredits(normalizedProposal))),
         );
         setDinterwebPlanPriceDraft(
-          String(Math.max(DINTERWEB_MIN_PACKAGE.price, getDinterwebMonthlyPrice(normalizedProposal))),
+          String(Math.max(dinterwebMinPackage.price, getDinterwebMonthlyPrice(normalizedProposal))),
         );
       }
 
@@ -2614,6 +2778,152 @@ function mergeRecommendedGroups(
     } finally {
       setIsRemovingCoupon(false);
     }
+  }
+
+  // Listas que se muestran en el selector: las activas y, si la propuesta ya tiene una que se
+  // desactivó o eliminó después, también esa para no perderla de vista.
+  const priceListOptions: PriceListOption[] =
+    proposal.priceList && !availablePriceLists.some((option) => option.id === proposal.priceList?.id)
+      ? [...availablePriceLists, { ...proposal.priceList, countries: [] }]
+      : availablePriceLists;
+
+  // Tarifa elegida en el modal del paquete (aún sin guardar). Si es la misma de la propuesta se usa su
+  // snapshot congelado; si es otra, la opción vigente de la lista.
+  const isPriceListDraftChanged = (proposal.priceList?.id ?? "") !== priceListDraftId;
+  const draftPriceListOption = priceListOptions.find((option) => option.id === priceListDraftId) ?? null;
+  const draftPriceList: PriceListAdjustment | null = isPriceListDraftChanged
+    ? draftPriceListOption
+    : proposal.priceList;
+  // Una propuesta cotizada antes de los paquetes por lista conserva su paquete y su moneda.
+  const draftDinterwebPackages =
+    isPriceListDraftChanged && (!draftPriceList || draftPriceList.package)
+      ? resolveDinterwebPackages(draftPriceList)
+      : dinterwebPackages;
+  const draftPlanCurrency = (
+    isPriceListDraftChanged
+      ? draftPriceList?.package?.currency ?? (draftPriceList ? proposal.currency : "usd")
+      : proposal.currency
+  ).toUpperCase();
+
+  function handlePriceListDraftChange(priceListId: string) {
+    setPriceListDraftId(priceListId);
+
+    const isSameAsProposal = (proposal.priceList?.id ?? "") === priceListId;
+    const option = priceListOptions.find((entry) => entry.id === priceListId) ?? null;
+
+    // Al elegir otra tarifa, los campos pasan a su paquete base; al volver a la actual, a lo guardado.
+    if (isSameAsProposal) {
+      setDinterwebPlanCreditsDraft(
+        String(Math.max(dinterwebMinPackage.credits, getDinterwebMonthlyCredits(proposal))),
+      );
+      setDinterwebPlanPriceDraft(String(Math.max(dinterwebMinPackage.price, getDinterwebMonthlyPrice(proposal))));
+      return;
+    }
+
+    if (option && !option.package) return;
+
+    const nextBase = resolveDinterwebPackages(option).base;
+    setDinterwebPlanCreditsDraft(String(nextBase.credits));
+    setDinterwebPlanPriceDraft(String(nextBase.price));
+  }
+
+  // Al cambiar la lista, las tareas del catálogo ya agregadas pasan a los créditos de la nueva lista.
+  // Las que el vendedor ajustó a mano (o las manuales) conservan su valor.
+  function repriceInitiativesForPriceList(
+    initiatives: SalesProposalInitiativeDraft[],
+    previousPriceList: PriceListAdjustment | null,
+    nextPriceList: PriceListAdjustment | null,
+  ) {
+    const usesPackagePricing = proposal.billingMode !== "subscription";
+    const rawCreditsById = new Map(
+      rawInitialCatalog.map((item) => [item.id, safeParseNumber(item.credits)] as const),
+    );
+    const groupsWithItems = new Set(initialGroupMemberships.map((membership) => membership.group_id));
+    const rawGroupCreditsByTitle = new Map(
+      rawInitialGroups
+        .filter((group) => !groupsWithItems.has(group.id))
+        .map((group) => [normalizeCatalogText(group.name), safeParseNumber(group.credits)] as const),
+    );
+    const priceWith = (rawCredits: number, priceList: PriceListAdjustment | null) =>
+      getClientCatalogCredits(applyPriceListToCredits(rawCredits, priceList), usesPackagePricing);
+
+    return initiatives.map((initiative) => {
+      const groupRawCredits =
+        initiative.subitems.length === 1 && !initiative.subitems[0].catalogItemId
+          ? rawGroupCreditsByTitle.get(normalizeCatalogText(initiative.title))
+          : undefined;
+
+      return {
+        ...initiative,
+        subitems: initiative.subitems.map((subitem) => {
+          const rawCredits = subitem.catalogItemId ? rawCreditsById.get(subitem.catalogItemId) : groupRawCredits;
+
+          if (
+            rawCredits === undefined ||
+            safeParseNumber(subitem.unitCredits) !== priceWith(rawCredits, previousPriceList)
+          ) {
+            return subitem;
+          }
+
+          return { ...subitem, unitCredits: priceWith(rawCredits, nextPriceList) };
+        }),
+      };
+    });
+  }
+
+  function handlePriceListChange(priceListId: string) {
+    if (!isDinterwebVariant || isProposalCheckoutLocked) {
+      return;
+    }
+
+    // Los cupones fijan créditos y precio en la moneda en que se aplicaron.
+    if (hasAppliedCoupon) {
+      setFeedback({
+        tone: "error",
+        message: "Quita el cupon antes de cambiar la tarifa.",
+      });
+      return;
+    }
+
+    const option = priceListOptions.find((entry) => entry.id === priceListId) ?? null;
+    const nextPriceList: PriceListAdjustment | null = option
+      ? {
+          id: option.id,
+          name: option.name,
+          adjustmentType: option.adjustmentType,
+          percentage: option.percentage,
+          package: option.package,
+        }
+      : null;
+    const nextPackages = resolveDinterwebPackages(nextPriceList);
+    const nextCurrency = nextPriceList?.package?.currency ?? (nextPriceList ? proposal.currency : "usd");
+
+    // La propuesta arranca con el paquete de la lista (en su moneda). Una propuesta cotizada antes de
+    // los paquetes por lista (package null) conserva sus créditos y precio.
+    if (!nextPriceList || nextPriceList.package) {
+      applyDinterwebCommercialTerms(
+        nextPackages.base.credits,
+        nextPackages.base.price,
+        proposal.billingMode,
+        proposal.periodMonths,
+        { minPackage: nextPackages.min, patch: { currency: nextCurrency } },
+      );
+      setDinterwebPlanCreditsDraft(String(nextPackages.base.credits));
+      setDinterwebPlanPriceDraft(String(nextPackages.base.price));
+      setDinterwebPackageCreditsStep(nextPackages.base.credits);
+      setDinterwebPackagePriceStep(nextPackages.base.price);
+    }
+
+    setProposal((current) => ({
+      ...current,
+      priceList: nextPriceList,
+      initiatives: repriceInitiativesForPriceList(current.initiatives, current.priceList, nextPriceList),
+    }));
+    setFeedback({
+      tone: "success",
+      // Mensaje neutro: el cliente puede estar viendo la pantalla.
+      message: nextPriceList ? `Tarifa ${nextPriceList.name} aplicada.` : "Tarifa base aplicada.",
+    });
   }
 
   function handleRedeemCoupon() {
@@ -2726,8 +3036,8 @@ function mergeRecommendedGroups(
   const dinterwebMonthlyCredits = getDinterwebMonthlyCredits(proposal);
   const dinterwebMonthlyPrice = getDinterwebMonthlyPrice(proposal);
   const hasDinterwebCustomPackage =
-    dinterwebMonthlyCredits !== DINTERWEB_DEFAULT_PACKAGE.credits ||
-    dinterwebMonthlyPrice !== DINTERWEB_DEFAULT_PACKAGE.price;
+    dinterwebMonthlyCredits !== dinterwebBasePackage.credits ||
+    dinterwebMonthlyPrice !== dinterwebBasePackage.price;
   const upsellPackagePrice =
     packageOptions.find((option) => option.credits === upsellPackageCredits)?.price ??
     packageOptions[0].price;
@@ -2885,7 +3195,7 @@ function mergeRecommendedGroups(
             <BrandLogo href={workspaceHomeHref} priority />
           </div>
           <div className="flex items-center gap-4 text-[12.5px] font-medium text-[#516f90]">
-            {isDinterwebVariant ? (
+            {isDinterwebVariant && !isExternalLink ? (
               <>
                 <button
                   type="button"
@@ -2901,7 +3211,11 @@ function mergeRecommendedGroups(
               type="button"
               onClick={() => {
                 pendingProposalSlugRef.current = null;
-                setProposal(createNewSalesProposalDraft(variant, sellerPreset));
+                setProposal(
+                  externalLink
+                    ? createExternalLinkSalesProposalDraft(sellerPreset, externalLink.priceList)
+                    : createNewSalesProposalDraft(variant, sellerPreset),
+                );
               }}
               className="inline-flex items-center gap-1.5 transition hover:text-[#ff7a59]"
             >
@@ -2929,6 +3243,7 @@ function mergeRecommendedGroups(
                   <Link2 className="h-3.5 w-3.5" />
                   Compartir prospecto
                 </button>
+                {isExternalLink ? null : (
                 <button
                   type="button"
                   onClick={copyClientShareLink}
@@ -2938,6 +3253,7 @@ function mergeRecommendedGroups(
                   <Link2 className="h-3.5 w-3.5" />
                   Compartir cliente
                 </button>
+                )}
               </>
             ) : (
               <button
@@ -2995,16 +3311,19 @@ function mergeRecommendedGroups(
                   />
                 </div>
                 <span className="hidden h-4 w-px bg-[#dfe3eb] md:block" />
-                <div className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px] font-medium text-[#516f90] transition hover:bg-[#f5f8fa]">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  <span className="text-[12px] font-medium text-[#516f90]">Inicio:</span>
-                  <input
-                    type="date"
-                    value={proposal.startDate}
-                    onChange={(event) => updateProposalStartDate(event.target.value)}
-                    disabled={isProposalCheckoutLocked}
-                    className="w-[124px] border-0 border-b border-transparent bg-transparent p-0 text-[12px] font-semibold leading-none text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:text-[#8aa0b4]"
-                  />
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px] font-medium text-[#516f90] transition hover:bg-[#f5f8fa]">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    <span className="text-[12px] font-medium text-[#516f90]">Inicio:</span>
+                    <input
+                      type="date"
+                      value={proposal.startDate}
+                      onChange={(event) => updateProposalStartDate(event.target.value)}
+                      disabled={isProposalCheckoutLocked}
+                      className="w-[124px] border-0 border-b border-transparent bg-transparent p-0 text-[12px] font-semibold leading-none text-[#33475b] outline-none transition focus:border-[#00bda5] disabled:cursor-not-allowed disabled:text-[#8aa0b4]"
+                    />
+                  </div>
+
                 </div>
               </div>
 
@@ -3119,7 +3438,8 @@ function mergeRecommendedGroups(
                 </div>
               </div>
 
-              {isDinterwebVariant ? (
+              {/* Los enlaces externos solo venden paquetes: sin tipo de cobro, frecuencia ni caudal. */}
+              {isDinterwebVariant && !isExternalLink ? (
                 <div className="border-t border-[#dfe3eb] px-3 py-3">
                   <div className="grid gap-3">
                     <div className="grid gap-3 md:grid-cols-2">
@@ -3181,7 +3501,7 @@ function mergeRecommendedGroups(
               ) : null}
 
               {/* Por ahora el caudal solo lo define el vendedor de Dinterweb. */}
-              {isDinterwebVariant ? (
+              {isDinterwebVariant && !isExternalLink ? (
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <label className="space-y-1">
                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9cb1c6]">
@@ -3207,6 +3527,7 @@ function mergeRecommendedGroups(
               </div>
               ) : null}
 
+              {isExternalLink ? null : (
               <div className="border-t border-[#dfe3eb] px-3 py-3">
                 <div className="flex flex-col items-center gap-2.5">
                   <button
@@ -3252,6 +3573,7 @@ function mergeRecommendedGroups(
                   ) : null}
                 </div>
               </div>
+              )}
             </div>
           </div>
 
@@ -4872,17 +5194,44 @@ function mergeRecommendedGroups(
             <div className="text-center">
               <h3 className="text-[18px] font-bold text-[#33475b]">Expandir paquete base</h3>
               <p className="mt-2 text-[13px] text-[#516f90]">
-                El paquete inicia en 80 creditos por USD 1197. Desde aqui puedes redefinir los creditos y la inversion del plan, sin bajar de 60 creditos ni de USD 897.
+                El paquete inicia en {draftDinterwebPackages.base.credits} creditos por{" "}
+                {formatCurrency(draftDinterwebPackages.base.price, draftPlanCurrency)}. Desde aqui puedes
+                redefinir los creditos y la inversion del plan, sin bajar de {draftDinterwebPackages.min.credits}{" "}
+                creditos ni de {formatCurrency(draftDinterwebPackages.min.price, draftPlanCurrency)}.
               </p>
             </div>
+
+            {/* Tarifa (lista de precios): define el paquete, la moneda y los créditos de los casos de uso. */}
+            {!isExternalLink && (priceListOptions.length || proposal.priceList) ? (
+              <label className="mt-6 block space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#516f90]">Tarifa</span>
+                <select
+                  value={priceListDraftId}
+                  onChange={(event) => handlePriceListDraftChange(event.target.value)}
+                  className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
+                >
+                  <option value="">
+                    Base · {DINTERWEB_DEFAULT_PACKAGE.credits} CR {formatCurrency(DINTERWEB_DEFAULT_PACKAGE.price)}
+                  </option>
+                  {priceListOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                      {option.package
+                        ? ` · ${option.package.credits} CR ${formatCurrency(option.package.price, option.package.currency.toUpperCase())}`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
 
             <div className="mt-6 rounded-[6px] border border-[#dfe3eb] bg-[#f8fbfd] p-4">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-[14px] font-bold text-[#33475b]">Minimo permitido</p>
                   <p className="mt-1 text-[12px] text-[#516f90]">
-                    {DINTERWEB_MIN_PACKAGE.credits} CR por{" "}
-                    {formatCurrency(DINTERWEB_MIN_PACKAGE.price, proposal.currency.toUpperCase())} al mes base.
+                    {draftDinterwebPackages.min.credits} CR por{" "}
+                    {formatCurrency(draftDinterwebPackages.min.price, draftPlanCurrency)} al mes base.
                   </p>
                 </div>
                 <span className="rounded-[4px] border border-[#99f6e4] bg-[#f0fdfa] px-3 py-1 text-[11px] font-bold text-[#00bda5]">
@@ -4898,9 +5247,15 @@ function mergeRecommendedGroups(
                 </span>
                 <input
                   type="number"
-                  min={String(DINTERWEB_MIN_PACKAGE.credits)}
+                  min={String(draftDinterwebPackages.min.credits)}
+                  step={externalLinkPlanTerms ? String(externalLinkPlanTerms.credits) : undefined}
                   value={dinterwebPlanCreditsDraft}
-                  onChange={(event) => setDinterwebPlanCreditsDraft(event.target.value)}
+                  onChange={(event) => {
+                    setDinterwebPlanCreditsDraft(event.target.value);
+                    if (externalLinkPlanTerms) {
+                      setDinterwebPlanPriceDraft(String(getExternalLinkPlanTerms(event.target.value).price));
+                    }
+                  }}
                   className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 />
               </label>
@@ -4910,8 +5265,10 @@ function mergeRecommendedGroups(
                 </span>
                 <input
                   type="number"
-                  min={String(DINTERWEB_MIN_PACKAGE.price)}
+                  min={String(draftDinterwebPackages.min.price)}
                   value={dinterwebPlanPriceDraft}
+                  readOnly={Boolean(externalLinkPlanTerms)}
+                  title={externalLinkPlanTerms ? "Se calcula con los paquetes de la tarifa." : undefined}
                   onChange={(event) => setDinterwebPlanPriceDraft(event.target.value)}
                   className="h-10 w-full rounded-[4px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 />
@@ -4922,15 +5279,15 @@ function mergeRecommendedGroups(
               <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#33475b]">
                 <span>Total del plan</span>
                 <span>
-                  {Math.max(DINTERWEB_MIN_PACKAGE.credits, safeParseNumber(dinterwebPlanCreditsDraft))} CR
+                  {Math.max(draftDinterwebPackages.min.credits, safeParseNumber(dinterwebPlanCreditsDraft))} CR
                 </span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-4 text-[15px] font-extrabold">
                 <span className="text-[#33475b]">Valor por periodo</span>
                 <span className="text-[#ff7a59]">
                   {formatCurrency(
-                    Math.max(DINTERWEB_MIN_PACKAGE.price, safeParseNumber(dinterwebPlanPriceDraft)),
-                    proposal.currency.toUpperCase(),
+                    Math.max(draftDinterwebPackages.min.price, safeParseNumber(dinterwebPlanPriceDraft)),
+                    draftPlanCurrency,
                   )}
                 </span>
               </div>
@@ -5101,6 +5458,7 @@ function mergeRecommendedGroups(
           const draftOriginalCredits = calculateSalesInitiativeOriginalCredits(initiativeDraft);
           const canUseCommercialAgreement =
             isDinterwebVariant &&
+            !isExternalLink &&
             (proposal.status === "draft" || canWaiveAnyInitiative) &&
             canToggleCommercialWaiver(initiativeDraft, canWaiveAnyInitiative);
           const catalogGroupForDraft = findCatalogGroupForInitiative(initiativeDraft, catalogGroups);
@@ -5310,6 +5668,7 @@ function mergeRecommendedGroups(
                       </optgroup>
                     ))}
                   </select>
+                  {isExternalLink ? null : (
                   <button
                     type="button"
                     onClick={addManualDraftSubitem}
@@ -5317,6 +5676,7 @@ function mergeRecommendedGroups(
                   >
                     Añadir
                   </button>
+                  )}
                 </div>
 
                 <div className="mt-4 flex items-center justify-between border-t border-[#dfe3eb] pt-3">

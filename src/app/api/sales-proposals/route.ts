@@ -7,6 +7,8 @@ import {
   generateSalesProposalSlug,
   normalizeSalesProposalDraft,
 } from "@/lib/sales-proposals";
+import { resolveTrustedProposalPriceList } from "@/lib/price-lists-server";
+import { getSalesProposalBySlug, getSalesProposalMutationAccess } from "@/lib/sales-proposal-access";
 import { saveSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -54,8 +56,45 @@ export async function POST(request: Request) {
 
     body = applySalesCommercialWaiverPolicy(body, { isSuperadmin });
 
-    const slug = body.slug || generateSalesProposalSlug(body);
-    const proposal = await saveSalesProposal(body, slug);
+    // El board reenvía a esta ruta el slug de una propuesta recién creada cuando dos autoguardados se
+    // cruzan: en ese caso se actualiza la misma propuesta, como siempre. Pero esta ruta no pide sesión
+    // para HubSpot, así que solo se actualiza si quien llama tiene permiso sobre la propuesta existente
+    // (el mismo chequeo del PUT). Si no lo tiene, se crea una propuesta nueva con otro slug.
+    const requestedSlug = body.slug?.trim() || "";
+    const existingProposal = requestedSlug ? await getSalesProposalBySlug(requestedSlug) : null;
+
+    if (existingProposal) {
+      const proposalAccess = await getSalesProposalMutationAccess(requestedSlug);
+
+      if (proposalAccess.ok) {
+        const proposal = await saveSalesProposal(
+          {
+            ...body,
+            priceList: await resolveTrustedProposalPriceList(body.priceList, proposalAccess.proposal.priceList),
+          },
+          requestedSlug,
+        );
+
+        return NextResponse.json(proposal);
+      }
+    }
+
+    body = {
+      ...body,
+      priceList: await resolveTrustedProposalPriceList(body.priceList, null),
+      // Una propuesta nueva nace en borrador: el pago y la activación los marcan sus propios flujos.
+      status: "draft",
+      activatedClientId: null,
+      transferValidatedAt: null,
+      transferValidatedByUserId: null,
+    };
+
+    let slug = existingProposal ? generateSalesProposalSlug(body) : requestedSlug || generateSalesProposalSlug(body);
+    while (await getSalesProposalBySlug(slug)) {
+      slug = generateSalesProposalSlug(body);
+    }
+
+    const proposal = await saveSalesProposal({ ...body, id: undefined, slug }, slug);
 
     return NextResponse.json(proposal);
   } catch (caughtError) {

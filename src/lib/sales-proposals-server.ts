@@ -22,11 +22,15 @@ import {
   type SalesProposalPaymentMethod,
   type SalesProposalRecord,
 } from "@/lib/sales-proposals";
+import { toStripeUnitAmount } from "@/lib/currency";
 import { getClientCatalogCredits } from "@/lib/onboarding";
+import { applyPriceListToCredits } from "@/lib/price-lists";
+import { assignClientPriceList } from "@/lib/price-lists-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { recordManualTransferBillingCycles } from "@/lib/transfer-billing";
 import { isMissingSupabaseTable, safeParseNumber, slugify, toIsoDate } from "@/lib/utils";
 import type { Database } from "@/types/database";
+import { resolveAppOrigin } from "@/lib/app-origin";
 
 type RecordStripeCheckoutPaymentArgs =
   Database["public"]["Functions"]["record_stripe_checkout_payment"]["Args"];
@@ -144,13 +148,7 @@ function getStripe() {
 }
 
 function resolveOrigin(request: Request) {
-  const requestOrigin = request.headers.get("origin") || new URL(request.url).origin;
-
-  if (requestOrigin.includes("localhost") || requestOrigin.includes("127.0.0.1")) {
-    return requestOrigin.replace(/\/$/, "");
-  }
-
-  return (process.env.NEXT_PUBLIC_SITE_URL || requestOrigin).replace(/\/$/, "");
+  return resolveAppOrigin(request);
 }
 
 function resolveCurrency(value: string | null | undefined) {
@@ -611,7 +609,8 @@ export async function syncActivatedSalesProposalCommercialWaivers(input: {
         catalogCreditsById = new Map(
           ((catalogRows ?? []) as Pick<CreditCatalogItemRow, "id" | "credits">[]).map((item) => [
             item.id,
-            item.credits,
+            // Los créditos se cotizan con la lista de precios de la propuesta.
+            applyPriceListToCredits(item.credits, input.nextProposal.priceList),
           ]),
         );
       }
@@ -829,9 +828,10 @@ export async function updateSalesProposalProspectExtraPackages(
   }
 
   const proposal = await mapSalesProposalRecord(typedProposalRow);
+  // Con lista de precios, el prospecto amplía con el paquete de la lista (en la moneda de la propuesta).
   const nextProposal = setSalesProposalExtraPackages(
     proposal,
-    PUBLIC_EXTRA_CREDIT_PACKAGE,
+    proposal.priceList?.package ?? PUBLIC_EXTRA_CREDIT_PACKAGE,
     quantity,
   );
 
@@ -1000,7 +1000,7 @@ export async function createSalesProposalCheckout(
   const admin = createSupabaseAdminClient();
   const stripe = getStripe();
   const origin = resolveOrigin(request);
-  const amountInCents = Math.round(proposal.quotedPrice * 100);
+  const amountInCents = toStripeUnitAmount(proposal.quotedPrice, resolveCurrency(proposal.currency));
   const routeBase = getSalesProposalRouteBase(proposal);
 
   const baseMetadata = {
@@ -1233,6 +1233,22 @@ async function activateSalesProposalWithPaymentContext(
 
     if (proposalClientLinkError) {
       throw proposalClientLinkError;
+    }
+
+    // El cliente hereda la lista de precios de la propuesta: sus casos de uso se le siguen cotizando
+    // con ella. Una falla aquí no debe frenar la activación de un plan ya pagado: queda con los
+    // créditos base del catálogo y se registra.
+    if (proposal.priceList) {
+      try {
+        await assignClientPriceList(activatedClientId, proposal.priceList.id);
+      } catch (priceListError) {
+        console.error("sales_proposal_client_price_list_assign_failed", {
+          proposalId: mappedProposalId,
+          clientId: activatedClientId,
+          priceListId: proposal.priceList.id,
+          error: priceListError,
+        });
+      }
     }
 
     const { error: configError } = await admin.from("onboarding_configs").upsert(({

@@ -31,7 +31,10 @@ const catalogGroups: Array<{ label: string; links: NavLink[] }> = [
   },
 ];
 
-const catalogLinks: NavLink[] = [{ href: "/cs/cupones", label: "Cupones" }];
+const catalogLinks: NavLink[] = [
+  { href: "/cs/cupones", label: "Cupones" },
+  { href: "/cs/listas-precios", label: "Listas de precios" },
+];
 
 const dropdownLinkClass = (active: boolean) =>
   cn(
@@ -86,6 +89,7 @@ export function PrimaryNavigation({ platformRole }: PrimaryNavigationProps) {
           { href: "/cs/grupos", label: "Casos de Uso", icon: LayoutGrid },
           { href: "/cs/clientes", label: "Clientes", icon: LayoutGrid },
           { href: "/cs/cupones", label: "Cupones", icon: LayoutGrid },
+          { href: "/cs/listas-precios", label: "Listas de precios", icon: LayoutGrid },
           { href: "/cs/metas", label: "Metas CS", icon: LayoutGrid },
           { href: "/cs/ventas", label: "Ventas", icon: LayoutGrid },
         ]

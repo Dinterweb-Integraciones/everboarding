@@ -156,6 +156,12 @@ export type PublicOnboardingSnapshot = {
   paymentEmail: string | null;
   // Vencimiento más lejano de los créditos otorgados; al recargar un paquete se extiende.
   packageExpirationDate?: string | null;
+  // Moneda en que se muestran y cobran los precios, y paquete de ampliación de la lista de precios
+  // (de la propuesta o del cliente). Sin lista: USD y los paquetes por defecto.
+  pricing?: {
+    currency: string;
+    extraPackage: { credits: number; price: number } | null;
+  };
   // Solo clientes de paquetes: membresía que pueden pagar con "Únete a Everboarding"
   // (ver lib/recurrence-offer). El ahorro en créditos ya va incluido en credits.
   recurrenceOffer?: {

@@ -24,6 +24,12 @@ import {
   getSalesProposalBySlug,
 } from "@/lib/public-prospect";
 import { fetchRecurrenceOffer } from "@/lib/membership-checkout";
+import { applyPriceListToCatalogCredits } from "@/lib/price-lists";
+import {
+  getClientPriceListAdjustment,
+  getClientPriceListPackage,
+  resolveClientBillingCurrency,
+} from "@/lib/price-lists-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toIsoDate } from "@/lib/utils";
@@ -166,9 +172,20 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
 
   if (prospectProposal) {
     const baseSnapshot = buildPublicProspectSnapshotBase(prospectProposal);
+    // Los casos de uso se cotizan con la lista de precios de la propuesta.
+    const listedCatalogRows = applyPriceListToCatalogCredits(typedCatalogRows, prospectProposal.priceList);
+    const listedCatalogGroupRows = applyPriceListToCatalogCredits(
+      typedCatalogGroupRows,
+      prospectProposal.priceList,
+    );
+    const prospectPackage = prospectProposal.priceList?.package ?? null;
     const snapshot: PublicOnboardingSnapshot = {
       ...baseSnapshot,
-      catalog: typedCatalogRows.map((item) => ({
+      pricing: {
+        currency: prospectProposal.currency,
+        extraPackage: prospectPackage ? { credits: prospectPackage.credits, price: prospectPackage.price } : null,
+      },
+      catalog: listedCatalogRows.map((item) => ({
         ...item,
         credits: Number(item.credits ?? 0),
         sort_order: Number(item.sort_order ?? 0),
@@ -177,7 +194,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
         ...category,
         sort_order: Number(category.sort_order ?? 0),
       })),
-      catalogGroups: typedCatalogGroupRows.map((group) => ({
+      catalogGroups: listedCatalogGroupRows.map((group) => ({
         ...group,
         credits: Number(group.credits ?? 0),
         sort_order: Number(group.sort_order ?? 0),
@@ -228,6 +245,12 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     );
   }
 
+  // Los casos de uso del cliente se cotizan con la lista de precios que heredó de su propuesta.
+  const clientPriceList = await getClientPriceListAdjustment(data.client.id);
+  const clientCatalogRows = applyPriceListToCatalogCredits(typedCatalogRows, clientPriceList);
+  const clientCatalogGroupRows = applyPriceListToCatalogCredits(typedCatalogGroupRows, clientPriceList);
+  const clientPricePackage = await getClientPriceListPackage(data.client.id);
+  const clientCurrency = resolveClientBillingCurrency(clientPricePackage);
   const billingResult = await admin.rpc("get_client_billing_status" as never, {
     p_client_id: data.client.id,
   } as never);
@@ -276,7 +299,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
           }))),
       ),
     })),
-    catalog: typedCatalogRows.map((item) => ({
+    catalog: clientCatalogRows.map((item) => ({
       ...item,
       credits: Number(item.credits ?? 0),
       sort_order: Number(item.sort_order ?? 0),
@@ -285,7 +308,7 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
       ...category,
       sort_order: Number(category.sort_order ?? 0),
     })),
-    catalogGroups: typedCatalogGroupRows.map((group) => ({
+    catalogGroups: clientCatalogGroupRows.map((group) => ({
       ...group,
       credits: Number(group.credits ?? 0),
       sort_order: Number(group.sort_order ?? 0),
@@ -301,6 +324,12 @@ export default async function PublicSharedPage({ params }: PublicSharedPageProps
     })),
     paymentEmail: data.payment_email,
     packageExpirationDate: latestGrantRow?.expires_at ?? null,
+    pricing: {
+      currency: clientCurrency,
+      extraPackage: clientPricePackage
+        ? { credits: clientPricePackage.credits, price: clientPricePackage.price }
+        : null,
+    },
     recurrenceOffer: recurrenceOffer
       ? {
           credits: recurrenceOffer.credits,

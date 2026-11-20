@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
+import { listSelectablePriceListOptions } from "@/lib/price-lists-server";
 import { requireUser } from "@/lib/auth";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import { canAccessAdminCatalogs } from "@/lib/platform-access";
@@ -122,8 +123,11 @@ export default async function DinterwebSalesProposalPage({
     notFound();
   }
 
+  const availablePriceLists = await listSelectablePriceListOptions();
+
   return (
     <SalesProposalWorkspace
+      availablePriceLists={availablePriceLists}
       initialCatalog={catalogRows ?? []}
       initialGroups={groupRows ?? []}
       initialGroupCategories={groupCategoryRows ?? []}

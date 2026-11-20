@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { ClientsCatalogManager, type ClientCatalogRow } from "@/components/cs/clients-catalog-manager";
 import { requireUser } from "@/lib/auth";
 import { canAccessAdminCatalogs } from "@/lib/platform-access";
+import { formatPriceListAdjustment, toPriceListAdjustment } from "@/lib/price-lists";
+import { listPriceLists } from "@/lib/price-lists-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/types/database";
 
@@ -61,8 +63,23 @@ export default async function ClientsCatalogPage() {
       updated_at: client.updated_at,
       seller_name: seller?.full_name ?? seller?.email ?? null,
       csm_name: csm?.full_name ?? csm?.email ?? null,
+      // clients.price_list_id no está en database.ts (ver límite de complejidad de tipos).
+      price_list_id: (client as { price_list_id?: string | null }).price_list_id ?? null,
     };
   });
+  const priceLists = await listPriceLists().catch((error) => {
+    console.error("clients_catalog_price_lists_load_failed", error);
+    return [];
+  });
 
-  return <ClientsCatalogManager initialClients={clients} />;
+  return (
+    <ClientsCatalogManager
+      initialClients={clients}
+      priceLists={priceLists.map((priceList) => ({
+        id: priceList.id,
+        label: `${priceList.name} · ${formatPriceListAdjustment(toPriceListAdjustment(priceList))}`,
+        is_active: priceList.is_active,
+      }))}
+    />
+  );
 }

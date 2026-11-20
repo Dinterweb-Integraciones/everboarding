@@ -120,6 +120,8 @@ type OnboardingClientPageProps = {
   recurrenceOffer: RecurrenceOffer | null;
   // Solo llega para el equipo (CS/admin/superadmin); null oculta el panel.
   clientObservations: string | null;
+  // Moneda del plan: la de la lista de precios del cliente (USD sin lista).
+  currency?: string;
 };
 
 // El CS ve el valor base (el precio del catálogo, el que suma a su meta) y, en clientes de
@@ -511,6 +513,7 @@ export function OnboardingClientPage({
   hasPaidBillingCycle,
   recurrenceOffer: initialRecurrenceOffer,
   clientObservations,
+  currency = "usd",
 }: OnboardingClientPageProps) {
   const supabase = createSupabaseBrowserClient();
   const [client, setClient] = useState(initialData.client);
@@ -660,6 +663,7 @@ export function OnboardingClientPage({
   const negotiatedPlanCredits = config.custom_plan_credits ?? config.base_capacity;
   const negotiatedPlanPeriodMonths = (config.custom_plan_period_months ?? 1) as PlanPeriodMonths;
   const negotiatedPlanPrice = getEffectivePlanPrice(config);
+  const planCurrency = currency.toUpperCase();
   const negotiatedPlanBillingMode = config.custom_plan_billing_mode ?? "subscription";
   const isRecurringPlan = negotiatedPlanBillingMode === "subscription";
   const hasPaidPlanAccess = billing.current_cycle_paid || billing.active_credits > 0;
@@ -3274,7 +3278,7 @@ export function OnboardingClientPage({
                   <div className="flex items-center gap-2">
                     <span>Oferta:</span>
                     <span className="text-[#33475b]">
-                      {negotiatedPlanCredits} CR · {formatCurrency(negotiatedPlanPrice)}
+                      {negotiatedPlanCredits} CR · {formatCurrency(negotiatedPlanPrice, planCurrency)}
                     </span>
                   </div>
                   <span className="h-5 w-px bg-[#dfe3eb]" aria-hidden="true" />
@@ -3422,7 +3426,7 @@ export function OnboardingClientPage({
                   Precio negociado
                 </p>
                 <p className="mt-2 text-[18px] font-extrabold text-[#33475b]">
-                  {formatCurrency(negotiatedPlanPrice)}
+                  {formatCurrency(negotiatedPlanPrice, planCurrency)}
                 </p>
                 <p className="mt-1 text-[11px] text-[#516f90]">{negotiatedPlanCadence}</p>
               </div>
@@ -4659,7 +4663,7 @@ export function OnboardingClientPage({
                       Precio
                     </p>
                     <p className="mt-2 text-[24px] font-bold text-[#33475b]">
-                      {formatCurrency(negotiatedPlanPrice)}
+                      {formatCurrency(negotiatedPlanPrice, planCurrency)}
                     </p>
                     <p className="mt-1 text-[12px] text-[#516f90]">{negotiatedPlanCadence}</p>
                   </div>
@@ -4676,7 +4680,7 @@ export function OnboardingClientPage({
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">
                     <span>Precio negociado</span>
                     <strong className="text-[#33475b]">
-                      {formatCurrency(negotiatedPlanPrice)}
+                      {formatCurrency(negotiatedPlanPrice, planCurrency)}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between rounded-[10px] bg-[#f8fafc] px-4 py-3">

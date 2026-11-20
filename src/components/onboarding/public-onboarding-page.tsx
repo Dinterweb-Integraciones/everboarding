@@ -623,14 +623,19 @@ export function PublicOnboardingPage({
       ? Math.max(0, Number(config.custom_plan_price))
       : getEffectivePlanPrice(config);
   const contractedPlanCredits = Math.max(config.custom_plan_credits ?? config.base_capacity, 0);
-  const clientExpansionPackage = resolveClientExpansionPackage(contractedPlanCredits, initialData.client.id);
+  // Moneda y paquete de ampliación de la lista de precios (de la propuesta o del cliente).
+  const displayCurrency = (initialData.pricing?.currency ?? "usd").toUpperCase();
+  const listExtraPackage = initialData.pricing?.extraPackage ?? null;
+  const prospectExtraPackage = listExtraPackage ?? PUBLIC_EXTRA_CREDIT_PACKAGE;
+  const clientExpansionPackage =
+    listExtraPackage ?? resolveClientExpansionPackage(contractedPlanCredits, initialData.client.id);
   const persistedProspectExtraPackageQuantity = prospectProposal?.extraPackageQuantity ?? 0;
   const prospectExtraPackageQuantityDelta =
     prospectExtraPackageQuantity - persistedProspectExtraPackageQuantity;
   const prospectExtraCreditsAdded =
-    prospectExtraPackageQuantityDelta * PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+    prospectExtraPackageQuantityDelta * prospectExtraPackage.credits;
   const prospectExtraPriceAdded =
-    prospectExtraPackageQuantityDelta * PUBLIC_EXTRA_CREDIT_PACKAGE.price;
+    prospectExtraPackageQuantityDelta * prospectExtraPackage.price;
   const prospectPercentageOff =
     audience === "prospect" && prospectProposal?.appliedCouponType === "percentage"
       ? prospectProposal.appliedCouponPercentageOff ?? 0
@@ -649,9 +654,9 @@ export function PublicOnboardingPage({
         : paymentAmount + prospectExtraPriceAdded
       : paymentAmount;
   const prospectExtraPackageDraftCredits =
-    prospectExtraPackageDraftQuantity * PUBLIC_EXTRA_CREDIT_PACKAGE.credits;
+    prospectExtraPackageDraftQuantity * prospectExtraPackage.credits;
   const prospectExtraPackageDraftPrice =
-    prospectExtraPackageDraftQuantity * PUBLIC_EXTRA_CREDIT_PACKAGE.price;
+    prospectExtraPackageDraftQuantity * prospectExtraPackage.price;
   const prospectExtraPackageDraftTotalCredits =
     contractedPlanCredits + prospectExtraPackageDraftCredits;
   const prospectExtraPackageDraftTotalPrice =
@@ -729,11 +734,11 @@ export function PublicOnboardingPage({
         ? prospectDisplayedPaymentAmount <= 0
           ? "Activar plan sin pago"
           : usesStripeMembership
-            ? `Pagar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(prospectDisplayedPaymentAmount)}`
-            : `Pagar propuesta ${formatCurrency(prospectDisplayedPaymentAmount)}`
+            ? `Pagar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(prospectDisplayedPaymentAmount, displayCurrency)}`
+            : `Pagar propuesta ${formatCurrency(prospectDisplayedPaymentAmount, displayCurrency)}`
         : usesStripeMembership
-          ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount)}`
-          : `Pagar ${formatCurrency(paymentAmount)}`;
+          ? `Activar membresia ${getPlanCadenceLabel(config.custom_plan_period_months)} ${formatCurrency(paymentAmount, displayCurrency)}`
+          : `Pagar ${formatCurrency(paymentAmount, displayCurrency)}`;
   const activeInitiativeIsCommerciallyWaived = activeInitiativePreview
     ? isCommerciallyWaivedInitiative(activeInitiativePreview)
     : false;
@@ -1728,7 +1733,7 @@ export function PublicOnboardingPage({
                           {paymentAmountLabel}
                         </p>
                         <p className="mt-1 whitespace-nowrap text-[18px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums] sm:text-[20px]">
-                          {formatCurrency(prospectDisplayedPaymentAmount)}
+                          {formatCurrency(prospectDisplayedPaymentAmount, displayCurrency)}
                         </p>
                       </div>
                       <div className="mx-1 hidden w-px bg-[#dfe3eb] sm:block" />
@@ -1774,7 +1779,7 @@ export function PublicOnboardingPage({
                           <div className="w-full rounded-[4px] border border-[#d7efe8] bg-[#f7fffc] px-3 py-2 text-[11px] text-[#516f90]">
                             <div className="flex items-center justify-between gap-3">
                               <span className="font-semibold text-[#33475b]">
-                                {prospectExtraPackageQuantity}x paquete extra de {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR
+                                {prospectExtraPackageQuantity}x paquete extra de {prospectExtraPackage.credits} CR
                               </span>
                               <div className="flex items-center gap-3">
                                 <button
@@ -1857,7 +1862,7 @@ export function PublicOnboardingPage({
                           Inversión total
                         </p>
                         <p className="mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none text-[#33475b] [font-variant-numeric:tabular-nums]">
-                          {formatCurrency(clientExpansionPackage.price)}
+                          {formatCurrency(clientExpansionPackage.price, displayCurrency)}
                         </p>
                       </div>
                       <div className="my-2 hidden w-px bg-[#dfe3eb] sm:block" />
@@ -2489,7 +2494,7 @@ export function PublicOnboardingPage({
           completed: metrics.consumed,
           lost: metrics.lost,
           total: metrics.total,
-          priceLabel: formatCurrency(prospectDisplayedPaymentAmount),
+          priceLabel: formatCurrency(prospectDisplayedPaymentAmount, displayCurrency),
           creditsLabel: `${prospectDisplayedPlanCredits} CR`,
           cadenceLabel: getPlanCadenceLabel(config.custom_plan_period_months),
         }}
@@ -3237,12 +3242,12 @@ export function PublicOnboardingPage({
             <div className="mt-6 flex flex-col items-center gap-2">
               <div className="flex w-full max-w-[340px] items-center gap-3">
                 <select
-                  value={PUBLIC_EXTRA_CREDIT_PACKAGE.credits}
+                  value={prospectExtraPackage.credits}
                   onChange={() => undefined}
                   className="h-9 flex-1 rounded-[2px] border border-[#cbd6e2] bg-white px-3 text-[13px] font-bold text-[#33475b] outline-none transition focus:border-[#00bda5]"
                 >
-                  <option value={PUBLIC_EXTRA_CREDIT_PACKAGE.credits}>
-                    {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} créditos
+                  <option value={prospectExtraPackage.credits}>
+                    {prospectExtraPackage.credits} créditos
                   </option>
                 </select>
                 <button
@@ -3255,7 +3260,7 @@ export function PublicOnboardingPage({
                 </button>
               </div>
               <p className="text-[12px] text-[#516f90]">
-                Valor por paquete: {formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)}
+                Valor por paquete: {formatCurrency(prospectExtraPackage.price, displayCurrency)}
               </p>
             </div>
 
@@ -3267,7 +3272,7 @@ export function PublicOnboardingPage({
               <div className="mt-4 space-y-3 text-[13px] text-[#33475b]">
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-bold">Plan actual {contractedPlanCredits} CR:</span>
-                  <span className="font-bold">{formatCurrency(paymentAmount)}</span>
+                  <span className="font-bold">{formatCurrency(paymentAmount, displayCurrency)}</span>
                 </div>
 
                 {prospectExtraPackageDraftQuantity > 0 ? (
@@ -3284,14 +3289,14 @@ export function PublicOnboardingPage({
                       ×
                     </button>
                     <span className="flex-1">
-                      {prospectExtraPackageDraftQuantity}x Paquete {PUBLIC_EXTRA_CREDIT_PACKAGE.credits} CR{" "}
+                      {prospectExtraPackageDraftQuantity}x Paquete {prospectExtraPackage.credits} CR{" "}
                       <span className="text-[11px] text-[#516f90]">
-                        ({formatCurrency(PUBLIC_EXTRA_CREDIT_PACKAGE.price)} c/u)
+                        ({formatCurrency(prospectExtraPackage.price, displayCurrency)} c/u)
                       </span>
                       :
                     </span>
                     <span className="font-bold">
-                      {formatCurrency(prospectExtraPackageDraftPrice)}
+                      {formatCurrency(prospectExtraPackageDraftPrice, displayCurrency)}
                     </span>
                   </div>
                 ) : (
@@ -3311,7 +3316,7 @@ export function PublicOnboardingPage({
                   <div className="flex items-center justify-between gap-4 text-[15px] font-extrabold">
                     <span className="text-[#33475b]">Total a pagar:</span>
                     <span className="text-[#ff7a59]">
-                      {formatCurrency(prospectExtraPackageDraftTotalPrice)}
+                      {formatCurrency(prospectExtraPackageDraftTotalPrice, displayCurrency)}
                     </span>
                   </div>
                 </div>
@@ -3378,7 +3383,7 @@ export function PublicOnboardingPage({
                   <span className="font-bold">
                     Paquete adicional {clientExpansionPackage.credits} CR:
                   </span>
-                  <span className="font-bold">{formatCurrency(clientExpansionPackage.price)}</span>
+                  <span className="font-bold">{formatCurrency(clientExpansionPackage.price, displayCurrency)}</span>
                 </div>
                 <div className="border-t border-[#99f6e4] pt-3">
                   <div className="flex items-center justify-between gap-4 text-[14px] font-bold text-[#00bda5]">

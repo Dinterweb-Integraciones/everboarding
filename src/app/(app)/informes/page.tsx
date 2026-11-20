@@ -945,8 +945,18 @@ export default async function ReportsPage() {
     const contractedCredits =
       config?.custom_plan_credits ?? (config?.base_capacity ?? 0) * periodMonths;
     const latestGrant = latestGrantByClient.get(row.client_id);
+    // En paquetes el ciclo es el último paquete cargado (grant), no el ciclo de cobro: una recarga
+    // manual o por transferencia no crea ciclo de cobro, y el del primer paquete queda desfasado.
+    const isPackageClient = row.billing === "paquetes";
     const currentCycleStartAt =
-      latestPaidCycleStarts.get(row.client_id) ?? latestGrant?.grant_date ?? isoDateDaysAgo(30);
+      (isPackageClient ? latestGrant?.grant_date : undefined) ??
+      latestPaidCycleStarts.get(row.client_id) ??
+      latestGrant?.grant_date ??
+      isoDateDaysAgo(30);
+    const currentCycleEndAt =
+      (isPackageClient ? latestGrant?.expires_at : undefined) ??
+      latestPaidCycleEnds.get(row.client_id) ??
+      null;
 
     return {
       ...row,
@@ -965,7 +975,7 @@ export default async function ReportsPage() {
       contracted_credits_period_months: periodMonths,
       flow_credits: config?.flow_credits ?? null,
       current_cycle_start_at: currentCycleStartAt,
-      current_cycle_end_at: latestPaidCycleEnds.get(row.client_id) ?? null,
+      current_cycle_end_at: currentCycleEndAt,
       is_active: activeClientIds.has(row.client_id),
       observations: observationsByClientId.get(row.client_id) ?? null,
       cycle_colors: cycleColorsByClientId.get(row.client_id) ?? null,

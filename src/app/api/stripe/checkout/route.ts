@@ -12,13 +12,16 @@ import {
   type PublicClientSummary,
   type PublicOnboardingAudience,
 } from "@/lib/onboarding";
+import { toStripeUnitAmount } from "@/lib/currency";
 import { fetchRecurrenceOffer } from "@/lib/membership-checkout";
+import { getClientPriceListPackage, resolveClientBillingCurrency } from "@/lib/price-lists-server";
 import { buildPublicProspectSnapshotBase, getSalesProposalBySlug } from "@/lib/public-prospect";
 import { buildRecurrenceUpgradeMetadata } from "@/lib/recurrence-offer";
 import { activateSalesProposal } from "@/lib/sales-proposals-server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUserError } from "@/lib/utils";
+import { resolveAppOrigin } from "@/lib/app-origin";
 
 type CheckoutRequestBody = {
   audience?: PublicOnboardingAudience;
@@ -40,13 +43,7 @@ function getStripe() {
 }
 
 function resolveOrigin(request: Request) {
-  const requestOrigin = request.headers.get("origin") || new URL(request.url).origin;
-
-  if (requestOrigin.includes("localhost") || requestOrigin.includes("127.0.0.1")) {
-    return requestOrigin.replace(/\/$/, "");
-  }
-
-  return (process.env.NEXT_PUBLIC_SITE_URL || requestOrigin).replace(/\/$/, "");
+  return resolveAppOrigin(request);
 }
 
 function resolveCurrency() {
@@ -251,7 +248,11 @@ export async function POST(request: Request) {
       0,
       Math.round(Number(data.config.custom_plan_credits ?? data.config.base_capacity)),
     );
-    const expansionPackage = resolveClientExpansionPackage(contractedCredits, data.client.id);
+    // Con lista de precios, el cliente amplía con el paquete de su lista y paga en su moneda.
+    const clientPricePackage = await getClientPriceListPackage(data.client.id);
+    const currency = resolveClientBillingCurrency(clientPricePackage);
+    const expansionPackage =
+      clientPricePackage ?? resolveClientExpansionPackage(contractedCredits, data.client.id);
     const amount =
       purchaseKind === "extra_package"
         ? expansionPackage.price
@@ -259,7 +260,7 @@ export async function POST(request: Request) {
             data.config.custom_plan_price ??
               suggestPlanPrice(data.config.custom_plan_credits ?? data.config.base_capacity),
           );
-    const amountInCents = Math.round(amount * 100);
+    const amountInCents = toStripeUnitAmount(amount, currency);
     const periodMonths = data.config.custom_plan_period_months ?? 1;
     const usesSubscription =
       purchaseKind === "plan" && data.config.custom_plan_billing_mode !== "one_time";
@@ -316,7 +317,7 @@ export async function POST(request: Request) {
         {
           quantity: 1,
           price_data: {
-            currency: resolveCurrency(),
+            currency,
             unit_amount: amountInCents,
             ...(usesSubscription
               ? {

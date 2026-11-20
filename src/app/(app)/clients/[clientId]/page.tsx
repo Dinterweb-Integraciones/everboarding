@@ -5,6 +5,8 @@ import { requireUser } from "@/lib/auth";
 import { isClientStaffRole } from "@/lib/client-staff-access";
 import { fetchClientMembership } from "@/lib/membership-access";
 import { fetchRecurrenceOffer } from "@/lib/membership-checkout";
+import { applyPriceListToCatalogCredits } from "@/lib/price-lists";
+import { getClientBillingCurrency, getClientPriceListAdjustment } from "@/lib/price-lists-server";
 import { canManagePlatformUsers, canViewPrivateCatalogGroups } from "@/lib/platform-access";
 import {
   createDefaultConfig,
@@ -308,6 +310,12 @@ export default async function ClientDetailPage({
     throw new Error("No pudimos cargar los ciclos pagados del cliente.");
   }
 
+  // Los casos de uso del cliente se cotizan con la lista de precios que heredó de su propuesta.
+  const [clientPriceList, clientCurrency] = await Promise.all([
+    getClientPriceListAdjustment(clientRecord.id),
+    getClientBillingCurrency(clientRecord.id),
+  ]);
+
   // Oferta de recurrencia que ve el cliente en su vista pública; solo la configura un superadmin.
   const recurrenceOffer =
     canManagePlatformUsers(platformRole) && configRecord.custom_plan_billing_mode === "one_time"
@@ -336,8 +344,8 @@ export default async function ClientDetailPage({
           expiring_soon_credits: expiringSoonCredits,
         },
         initiatives,
-        catalog: catalogRows ?? [],
-        catalogGroups: visibleCatalogGroupRows,
+        catalog: applyPriceListToCatalogCredits(catalogRows ?? [], clientPriceList),
+        catalogGroups: applyPriceListToCatalogCredits(visibleCatalogGroupRows, clientPriceList),
         catalogGroupCategories: catalogGroupCategoryRows ?? [],
         catalogGroupCategoryLinks: visibleCatalogGroupCategoryLinkRows,
         catalogGroupMemberships: visibleCatalogGroupMembershipRows,
@@ -352,6 +360,7 @@ export default async function ClientDetailPage({
       canSharePublicLinks={accessRole === "owner" || platformRole === "superadmin"}
       canToggleClientActive={isClientStaff}
       canChangeBillingMode={canManagePlatformUsers(platformRole)}
+      currency={clientCurrency}
       hasPaidBillingCycle={(paidBillingCycleCount ?? 0) > 0}
       recurrenceOffer={recurrenceOffer}
       clientObservations={clientObservations}

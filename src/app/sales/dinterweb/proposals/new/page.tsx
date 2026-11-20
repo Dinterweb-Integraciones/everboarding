@@ -1,4 +1,5 @@
 import { SalesProposalWorkspace } from "@/components/sales/sales-proposal-workspace";
+import { listSelectablePriceListOptions } from "@/lib/price-lists-server";
 import { requireUser } from "@/lib/auth";
 import { getDinterwebSellerIdentity } from "@/lib/dinterweb-sellers";
 import type {
@@ -114,8 +115,11 @@ export default async function NewDinterwebSalesProposalPage({
     }
   }
 
+  const availablePriceLists = await listSelectablePriceListOptions();
+
   return (
     <SalesProposalWorkspace
+      availablePriceLists={availablePriceLists}
       initialCatalog={catalogRows}
       initialGroups={groupRows}
       initialGroupCategories={groupCategoryRows}
